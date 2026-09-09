@@ -1,0 +1,204 @@
+# Win98 Site Builder — design (working title)
+
+*Status: design for review, no code yet. Decisions below were made with Jack on 2026-09-09; open items are marked.*
+
+## 1. Vision
+
+A hosted, Windows-98-styled site builder for web 1.0 pages. `sitename/~jack/` is a small multi-page personal site; the same URL in edit mode opens a fake Win98 desktop with three main windows: **Paint** (this jspaint fork, extended with animated GIF stickers and editable text layers — the Blingee/PicMix half), a **Page Editor** (stacked blocks: headings, marquees, dividers, collages, guestbook, counter…), and a **GifCities** browser you drag stickers and dividers from. One document, two first-class exports: the page is a real HTML file you can host anywhere, and any collage — or the whole page — renders to a looping animated GIF you can paste into a chat.
+
+Reference vibe: <https://renaandjack.com/wedding> — centered flow, `<marquee>`, MP3 with a play button, GeoCities GIFs as dividers, pastel `bgcolor`.
+
+## 2. Decisions so far
+
+| Question | Decision |
+| --- | --- |
+| Primary artifact | Both first-class: HTML page + animated GIF render |
+| Page model | Flowing centered document of blocks; collages and floating text inside; a doodle layer over the whole page |
+| Page width | Fixed **800px centered**, one constant (`PAGE_WIDTH`), user-choosable later |
+| Users / hosting | Hosted for non-technical users eventually; **Cloudflare** all the way; `*.workers.dev` for now (no domain) |
+| Accounts | Later. Now: single shared secret for Jack |
+| App shell | Fake Win98 desktop (os-gui): Paint + Page Editor + GifCities + a "My Site" folder window |
+| Blocks v1 | Headings/paragraphs/links, marquee, GIF dividers & stickers, tables/colored boxes, image maps, background music + tiled wallpaper, guestbook, visitor counter, raw HTML |
+| Painting | Collage blocks are Paint canvases; plus a transparent doodle layer over the page |
+| GIF export | Per collage block, and the whole page |
+| GIF source | GifCities for now; users upload their own GIFs/MP3s/wallpapers |
+| Text | Classic web-safe fonts rendered by the browser (Comic Sans MS, Times, Arial, Impact, Courier…), editable, linkable |
+| AI | Optional assist later; the document must stay agent-editable; nothing AI-facing in v1 |
+| Pages | Multiple pages per site with internal links |
+| Import | Best-effort import of simple foreign HTML; our own dialect round-trips losslessly |
+| Build order | **Blingee half first** (Paint stickers/text/GIF export), then the page editor and hosting |
+| Document format | **HTML dialect — the page is the file** (see §3) |
+
+## 3. The document: an HTML dialect
+
+A site is a folder; a page is an HTML file in a dialect the editor can parse back losslessly. Nothing else is the source of truth.
+
+```
+~jack/
+  index.html          pages are plain HTML in the dialect
+  about.html
+  style.css           optional, per site
+  gifs/               stickers and dividers (copied from GifCities or uploaded)
+  collages/hero.png   the bitmap part of a collage
+  doodles/index.png   the page's doodle layer
+  midi/song.mp3
+```
+
+### 3.1 Page skeleton
+
+```html
+<!DOCTYPE html>
+<html data-page-width="800">
+<head>
+<meta charset="utf-8">
+<title>Jack's Page</title>
+<link rel="stylesheet" href="/~jack/style.css">
+</head>
+<body bgcolor="#ffffd9" background="gifs/stars.gif">
+<center>
+  …blocks…
+</center>
+<img class="doodle" src="doodles/index.png">
+</body>
+</html>
+```
+
+Rules that make it parseable:
+- `body > center` is the page; each direct child of `<center>` is one **block**. Width comes from `data-page-width` (the one constant) and a tiny generated stylesheet.
+- Obsolete-but-still-rendered HTML is allowed and preferred for the look: `<center>`, `<marquee>`, `<font face color size>`, `bgcolor`, `background`, `<table border bgcolor>`. Every browser still renders them.
+- Editor-only metadata goes in `data-*` attributes; never in scripts or comments. A page must render correctly with no JavaScript.
+- Unknown block-level elements are preserved verbatim as a **raw HTML block** — this is also how import works.
+
+### 3.2 Block vocabulary
+
+| Block | Markup |
+| --- | --- |
+| Heading / paragraph | `<h1><font face="Comic Sans MS" color="#ff1493">…</font></h1>`, `<p>…<a href="about.html">…</a></p>` |
+| Marquee | `<marquee behavior="scroll" scrollamount="4">…</marquee>` |
+| Divider / image | `<img src="gifs/divider.gif" alt="">` |
+| Link list | `<ul class="links"><li><a href>…` |
+| Table / colored box | `<table class="box" bgcolor="#fff" border="3" bordercolor="#ff69b4"><tr><td>…` |
+| Image map | `<img src usemap="#m1"><map name="m1"><area shape coords href>` |
+| Music | `<x-music src="midi/song.mp3" autoplay="no">` → Worker renders `<audio>` + a play button |
+| Guestbook | `<x-guestbook>` → Worker renders entries + a POST form (CGI-style) |
+| Counter | `<x-counter>` → Worker renders the number, DO increments |
+| Collage | see 3.3 |
+| Raw HTML | anything else, kept verbatim |
+
+### 3.3 Collage (the Blingee)
+
+```html
+<div class="collage" style="width:600px;height:400px">
+  <img class="bitmap" src="collages/hero.png">                                   <!-- the Paint bitmap -->
+  <img class="sticker" src="gifs/sparkle.gif" style="left:20px;top:30px;width:64px;height:64px">
+  <img class="sticker" src="gifs/frog.gif" style="left:400px;top:200px;width:120px;height:90px;transform:scaleX(-1)">
+  <a class="text" href="about.html" style="left:200px;top:300px;font:bold 24px Impact;color:#ff1493">about me</a>
+  <span class="text" style="left:40px;top:340px;font:16px 'Comic Sans MS';color:#000">~ est. 1999 ~</span>
+</div>
+```
+
+Layers are children in z-order: one bitmap, any number of stickers (animated GIFs, left as GIFs so the browser animates them), any number of text layers (real text, optionally links). Position/size/font are plain inline CSS — the export *is* the document, and an agent can edit it.
+
+### 3.4 Doodle layer
+
+`<img class="doodle">` is a page-sized transparent PNG positioned over the 800px column (`pointer-events: none`). Painting on the page in the editor writes this file. Requires the fixed width to stay aligned.
+
+### 3.5 Extensibility: `<x-*>` elements are the plugin system
+
+Every dynamic or non-trivial block is a custom element in the page file, and *that tag is the contract*. Adding a feature means adding one entry to a registry, never a new file format:
+
+```js
+// worker/x-elements/guestbook.js (sketch)
+export default {
+  tag: "x-guestbook",
+  // 1. how the sites Worker renders it when serving the page (server-side, no JS on the page)
+  render({ attrs, site, state }) { /* entries + POST form */ },
+  // 2. what the editor shows for it (a block card + properties)
+  editor: { label: "Guestbook", icon: "guestbook.png", attrs: { title: "text" } },
+  // 3. what happens on POST /~name/x/guestbook (optional; the DO gives it per-site storage)
+  action({ form, state }) { /* append entry */ },
+};
+```
+
+Rules for `<x-*>` elements:
+- **Fallback content is required.** Whatever is inside the tag is what a browser shows if the page is served raw (exported zip, GitHub Pages, a floppy): `<x-counter>you are visitor #???</x-counter>`. Unknown `<x-*>` tags are inert `HTMLUnknownElement`s, so a page never breaks.
+- Attributes are the only inputs (`<x-music src="midi/song.mp3" loop="yes">`). No JSON in attributes, no scripts.
+- The Worker replaces `<x-*>` **outside** the browser: server-side substitution at serve time. Rendered output must itself be valid dialect (so a rendered page can be re-imported).
+- Editor registration and server rendering live in the same registry file so a tag can't exist half-way.
+- Third parties (later): an `<x-*>` tag could be resolved by a URL registry (`<x-weather data-src="https://…">`), sandboxed in an iframe. Not v1, but the tag model leaves room for it.
+
+Planned tags: `x-guestbook`, `x-counter`, `x-music`, `x-updated` (last-modified stamp), `x-webring` (prev/next links), `x-blink`? — the classic set. Everything else is plain HTML.
+
+## 4. Serving (Cloudflare)
+
+- **Worker `sites`** (the sandbox, §9): `GET /~name/` and `/~name/<path>` → object from R2 `sites/name/…`. Pages are served as-is except that `<x-*>` elements are rendered server-side via the registry (§3.5), backed by a per-site Durable Object (guestbook entries, counter). No JavaScript needed on a published page.
+- **Worker `editor`** (separate origin — see §9): the desktop app (jspaint + editor windows) as static assets, plus the API: save page, upload asset, list site folder, GifCities search proxy, guestbook post, counter, live-editing room.
+- **Storage**: R2 for files (free tier 10 GB; per-site quota), one DO per site for coordination (guestbook, counter, live presence), reusing today's `Room` pattern.
+- **Publish = save.** No wrangler, no deploy step: the editor PUTs the file into R2 and the page is live. Today's preview-alias machinery is no longer needed for users.
+
+## 5. The editor (fake Win98 desktop)
+
+os-gui already provides windows with minimize/taskbar targets; 98.js.org (same author as jspaint) is the reference for a desktop shell. Windows:
+
+- **Paint** — jspaint, for collage blocks and the doodle layer. Opens a collage in place; *Save* writes bitmap + layers back into the page.
+- **Page Editor** — the page at 800px with block handles (select, move up/down, delete, properties); double-click a collage → Paint; text blocks edit inline with a classic-font `<font>` toolbar.
+- **GifCities** — search box, results grid; drag onto a collage → sticker, onto the page → divider. The Worker proxies `gifcities.org/search?q=…` (server-rendered HTML, no API, no CORS) and copies chosen GIFs into the site's `gifs/` (so pages never depend on GifCities uptime).
+- **My Site** — the folder view (GeoCities File Manager energy): pages, gifs, midi; upload, rename, delete; "Export site as .zip"; "Import HTML".
+- Taskbar with the open windows; Start-menu-style New Page / Save / Preview.
+
+## 6. Paint extensions (the Blingee half — phase 1)
+
+Reuse jspaint's primitives rather than replacing them:
+
+- **Sticker layer** — `OnCanvasSticker extends OnCanvasObject`: an animated `<img>` overlay positioned/scaled by `position()` at any magnification, `Handles` for move/resize (as `OnCanvasSelection` does), flip, delete, z-order. Detected on paste/drop: `GIF8` magic + more than one Graphic Control Extension = animated → sticker instead of a rasterized selection. Clipboard reality: copying a GIF from a web page yields a rasterized PNG plus `text/html`; we parse `<img src>` from the HTML item and fetch the GIF (via the Worker when CORS blocks).
+- **Text layer** — `OnCanvasTextBox` today rasterizes on commit. Add a persistent mode: the box stays a layer (`<font face>`-style fonts, color, size, optional link), rendered by the browser, only rasterized on "Flatten".
+- **Layers window** — list, reorder, hide, flatten. Bitmap stays the base.
+- **History** — `gif_layers` / `text_layers` snapshots on history nodes (the `textbox_*` fields are the precedent); blobs in a `Map` by id.
+- **Document I/O** — collage ⇄ the §3.3 markup + PNG + GIF blobs. Local save: a folder-ish `.zip` or a single `.html` with data URLs. Later, the same payload is what the editor PUTs to R2.
+- **Fonts** — the FontBox lists the classic web-safe set first (Comic Sans MS, Times New Roman, Arial, Impact, Courier New, Georgia, Verdana, Trebuchet MS).
+
+## 7. GIF export
+
+- **Collage → .gif**: decode each sticker's frames (`ImageDecoder` where available, `gifuct-js` fallback), build a common timeline (LCM of frame periods, capped — e.g. ≤ 10 s / ≤ 100 frames, with a note when capped), composite bitmap + stickers + text per frame onto a canvas, encode with the `gif.js` already in `lib/`. Same compositor draws stickers in a static frame for PNG export.
+- **Whole page → .gif**: render the page column with the existing `<foreignObject>` renderer (`src/agent-drive.js`) for the static parts, composite stickers/marquee frames per tick, encode. Big files at 800px × page height — cap duration/frame rate and warn.
+
+## 8. Import
+
+- Our dialect: lossless by construction.
+- Foreign simple HTML (test fixture: the wedding page): top-level children of `<body>`/`<center>` map to blocks when they're known tags (`h1–h6`, `p`, `marquee`, `img`, `table`, `ul`, `audio`), else become raw HTML blocks; images are downloaded into `gifs/`; inline `<style>` is kept as raw. Good enough to bring the wedding page in and keep editing it.
+
+## 9. Security & multi-tenancy — decided: a sandboxed `sites` Worker
+
+User pages are user-authored HTML. They are served by a **separate, deliberately weak Worker** on its own origin:
+
+- **Own origin** (`sites-<acct>.workers.dev`, later `sitename.com`), never the editor's (`editor-<acct>.workers.dev`). A page cannot read the editor's cookies or edit secret, full stop.
+- **Minimal bindings**: read-only access to the `sites` R2 bucket and the per-site Durable Object used by `<x-*>` renderers. No editor API, no secrets, no write access to R2. If the sandbox is compromised, there is nothing to take but public pages.
+- **Content-Security-Policy on every page**: `default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'none'` (raise `script-src` only for our own optional live-edit snippet, nonce'd). `X-Frame-Options`/`frame-ancestors` so pages can't be framed by the editor for clickjacking, and vice versa.
+- **Sanitize on save** in the editor Worker: raw HTML blocks lose `<script>`, `on*=` handlers, `javascript:`/`data:text/html` URLs, `<iframe>`/`<object>`/`<embed>`; `<x-*>` attributes are validated against the registry; guestbook entries are plain text. Sanitize again at serve time (defense in depth; the serve-time pass is cheap).
+- **Uploads**: allow-list by magic bytes (gif/png/jpg/webp/mp3/mid/wav), size caps, per-site quota; served with `Content-Type` fixed from the sniffed type and `X-Content-Type-Options: nosniff`.
+- **Dynamic actions** (`POST /~name/x/guestbook`) go to the sandbox Worker → DO with rate limits per IP; the editor never proxies user-page traffic.
+
+## 10. Phased plan
+
+| Phase | Deliverable | Rough size |
+| --- | --- | --- |
+| 0 | Repo layout: `desktop/` (shell + editor windows), `worker/` (sites + editor Workers), jspaint stays at root as the Paint app; `PAGE_WIDTH` constant; this doc | ½ day |
+| 1 | **Blingee**: sticker + text layers in Paint, layers window, history, collage ⇄ dialect I/O, collage GIF export, local .html/.gif save | 3–4 days |
+| 2 | **Hosting skeleton**: `sites` Worker (R2 serve, `~name`), `editor` Worker (save/upload/list, shared secret), My Site window, publish = save | 2 days |
+| 3 | **Page Editor + desktop**: blocks (§3.2), 800px page view, inline text editing with classic fonts, doodle layer, GifCities window + proxy, taskbar | 4–5 days |
+| 4 | **Dynamic blocks + import**: guestbook, counter, music, wallpaper, image maps, whole-page GIF, HTML import (wedding page as fixture), zip export | 3 days |
+| 5 | **Accounts** (magic link or passkeys), quotas, moderation basics | later |
+
+## 11. What carries over from the agent-drive work
+
+- The `Room` Durable Object (live fan-out) becomes the per-site DO; the RESTSession trick stays useful for live editing.
+- The in-browser `<foreignObject>` page renderer is the static part of whole-page GIF export.
+- Preview-alias deploys and the agent-server's git/wrangler flow become a personal dev tool; hosted pages are saved to R2, not deployed. The LLM "draw to edit" flow returns later as *AI assist* operating on the dialect.
+
+## 12. Open items
+
+- Product name / eventual domain.
+- Reference pages for "looks decent" (Jack to send).
+- GifCities proxy (verified 2026-09-09): `GET gifcities.org/search?q=…&offset=N&page_size=M` returns server-rendered HTML; each hit is `<div class="result"><a href="<archived page>"><img width height src="https://blob.gifcities.org/gifcities/<hash>.gif"></a></div>`, so the proxy is a ~40-line HTML→JSON scrape with width/height included. No CORS on search or blobs → everything through the Worker; cache searches in KV; attribute Internet Archive in the window.
+- Whole-page GIF caps (duration, fps, max height) — pick defaults once the compositor exists.
+- Magnification vs. stickers in Paint: stickers should render crisp (`image-rendering: pixelated`) at zoom like the bitmap does.

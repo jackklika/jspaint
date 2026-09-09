@@ -6,6 +6,7 @@
 import { $ColorBox } from "./$ColorBox.js";
 import { $ToolBox } from "./$ToolBox.js";
 import { Handles } from "./Handles.js";
+import { publish_site, save_iteration } from "./agent-drive.js";
 // import { get_direction, localize } from "./app-localization.js";
 import { default_palette, get_winter_palette } from "./color-data.js";
 import { image_formats } from "./file-format-data.js";
@@ -19,6 +20,7 @@ import { stopSimulatingGestures } from "./simulate-random-gestures.js";
 import { disable_speech_recognition, enable_speech_recognition, trace_and_sketch_stop } from "./speech-recognition.js";
 import { localStore } from "./storage.js";
 import { get_theme, set_theme } from "./theme.js";
+import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_selected_sticker, init_stickers, is_animated_gif, nudge_selected_sticker } from "./stickers.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
 // #region Exports
@@ -496,6 +498,7 @@ const canvas_handles = new Handles({
 	size_only: true,
 });
 window.canvas_handles = canvas_handles;
+init_stickers();
 
 const $top = $(E("div")).addClass("component-area top").prependTo($V);
 window.$top = $top;
@@ -868,6 +871,10 @@ $("body").on("dragover dragenter", (/** @type {JQuery.DragOverEvent | JQuery.Dra
 							show_error_message(localize("File not found."), error);
 							return;
 						}
+						if (await is_animated_gif(file)) {
+							add_sticker_from_blob(file, to_canvas_coords(event.originalEvent));
+							return;
+						}
 						open_from_file(file, handle);
 						if (window._open_images_serially) {
 							// For testing a suite of files:
@@ -892,6 +899,8 @@ $("body").on("dragover dragenter", (/** @type {JQuery.DragOverEvent | JQuery.Dra
 						clearInterval(iid);
 					}
 				}, 1500);
+			} else if (await is_animated_gif(dt.files[0])) {
+				add_sticker_from_blob(dt.files[0], to_canvas_coords(event.originalEvent));
 			} else {
 				// Normal behavior: only open one file.
 				open_from_file(dt.files[0]);
@@ -926,6 +935,25 @@ $G.on("keydown", (e) => {
 		e.preventDefault();
 		return;
 	}
+	if (
+		// Ctrl+Alt+I / Ctrl+Alt+P: Agent Drive (Save Iteration / Publish to Web)
+		// Handled before the generic Ctrl+<key> switch below, which would otherwise
+		// treat Ctrl+Alt+I as Invert Colors. Checking e.code covers macOS, where Option+<key> changes e.key.
+		(e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey &&
+		(e.key.toUpperCase() === "I" || e.code === "KeyI")
+	) {
+		save_iteration();
+		e.preventDefault();
+		return;
+	}
+	if (
+		(e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey &&
+		(e.key.toUpperCase() === "P" || e.code === "KeyP")
+	) {
+		publish_site();
+		e.preventDefault();
+		return;
+	}
 	// @TODO: return if menus/menubar focused or focus in dialog window
 	// or maybe there's a better way to do this that works more generally
 	// maybe it should only handle the event if document.activeElement is the body or html element?
@@ -942,6 +970,24 @@ $G.on("keydown", (e) => {
 	// also, ideally check that modifiers *aren't* pressed
 	// probably best to use a library at this point!
 
+	if (get_selected_sticker()) {
+		const step = e.shiftKey ? 10 : 1;
+		switch (e.key) {
+			case "ArrowLeft": nudge_selected_sticker(-step, 0); e.preventDefault(); return;
+			case "ArrowRight": nudge_selected_sticker(+step, 0); e.preventDefault(); return;
+			case "ArrowUp": nudge_selected_sticker(0, -step); e.preventDefault(); return;
+			case "ArrowDown": nudge_selected_sticker(0, +step); e.preventDefault(); return;
+			case "Delete":
+			case "Backspace":
+				delete_selected_sticker();
+				e.preventDefault();
+				return;
+			case "Escape":
+				deselect_sticker();
+				e.preventDefault();
+				return;
+		}
+	}
 	if (selection) {
 		const nudge_selection = (delta_x, delta_y) => {
 			selection.x += delta_x;
@@ -1264,25 +1310,51 @@ $G.on("cut copy paste", (e) => {
 			}
 		}
 	} else if (e.type === "paste") {
-		for (const item of cd.items) {
-			if (item.type.match(/^text\/(?:x-data-uri|uri-list|plain)|URL$/)) {
-				item.getAsString((text) => {
-					const uris = get_uris(text);
-					if (uris.length > 0) {
-						load_image_from_uri(uris[0]).then((info) => {
-							paste(info.image || make_canvas(info.image_data));
-						}, (error) => {
-							show_resource_load_error_message(error);
-						});
-					} else {
-						show_error_message("The information on the Clipboard can't be inserted into Paint.");
-					}
-				});
-				break;
-			} else if (item.type.match(/^image\//)) {
-				paste_image_from_file(item.getAsFile());
-				break;
-			}
+		const items = [...cd.items];
+		const image_item = items.find((item) => item.type.match(/^image\//));
+		const html_item = items.find((item) => item.type === "text/html");
+		const text_item = items.find((item) => item.type.match(/^text\/(?:x-data-uri|uri-list|plain)|URL$/));
+		const paste_from_uri = (uri) => {
+			load_image_from_uri(uri).then(async (info) => {
+				// Keep animated GIFs animated (see stickers.js).
+				if (info.source_blob && await is_animated_gif(info.source_blob)) {
+					await add_sticker_from_blob(info.source_blob);
+				} else {
+					paste(info.image || make_canvas(info.image_data));
+				}
+			}, (error) => {
+				show_resource_load_error_message(error);
+			});
+		};
+		const paste_from_text = () => {
+			text_item.getAsString((text) => {
+				const uris = get_uris(text);
+				if (uris.length > 0) {
+					paste_from_uri(uris[0]);
+				} else {
+					show_error_message("The information on the Clipboard can't be inserted into Paint.");
+				}
+			});
+		};
+		if (image_item && image_item.type === "image/gif") {
+			paste_image_from_file(image_item.getAsFile());
+		} else if (html_item) {
+			// Copying a GIF from a web page puts a *rasterized* PNG on the clipboard, plus HTML with the
+			// original <img src>. Prefer the source URL when it's a GIF, so the animation survives.
+			html_item.getAsString((html) => {
+				const src = new DOMParser().parseFromString(html, "text/html").querySelector("img[src]")?.getAttribute("src");
+				if (src && /\.gif([?#]|$)/i.test(src)) {
+					paste_from_uri(src);
+				} else if (image_item) {
+					paste_image_from_file(image_item.getAsFile());
+				} else if (text_item) {
+					paste_from_text();
+				}
+			});
+		} else if (text_item) {
+			paste_from_text();
+		} else if (image_item) {
+			paste_image_from_file(image_item.getAsFile());
 		}
 	}
 });

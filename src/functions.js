@@ -13,6 +13,8 @@ import { image_formats } from "./file-format-data.js";
 import { $G, E, TAU, debounce, from_canvas_coords, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, is_discord_embed, is_pride_month, make_canvas, render_access_key, to_canvas_coords } from "./helpers.js";
 import { apply_image_transformation, draw_grid, draw_selection_box, flip_horizontal, flip_vertical, invert_monochrome, invert_rgb, rotate, stretch_and_skew, threshold_black_and_white } from "./image-manipulation.js";
 import { show_imgur_uploader } from "./imgur.js";
+import { HTML_FORMAT_ID, open_collage_from_file, serialize_collage_html } from "./collage-format.js";
+import { add_sticker_from_blob, clear_stickers, is_animated_gif, restore_stickers, snapshot_stickers } from "./stickers.js";
 import { showMessageBox } from "./msgbox.js";
 import { localStore } from "./storage.js";
 import { TOOL_CURVE, TOOL_FREE_FORM_SELECT, TOOL_POLYGON, TOOL_SELECT, TOOL_TEXT, tools } from "./tools.js";
@@ -653,6 +655,7 @@ function reset_file() {
 function reset_canvas_and_history() {
 	undos.length = 0;
 	redos.length = 0;
+	clear_stickers();
 	current_history_node = root_history_node = make_history_node({
 		name: localize("New"),
 		icon: get_help_folder_icon("p_blank.png"),
@@ -688,6 +691,7 @@ function reset_canvas_and_history() {
  * @param {number=} options.textbox_width - the width of the textbox, if any
  * @param {number=} options.textbox_height - the height of the textbox, if any
  * @param {TextToolFontOptions | null=} options.text_tool_font - the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox)
+ * @param {StickerSnapshot[] | null=} options.stickers - the animated GIF sticker layer (see stickers.js)
  * @param {boolean=} options.tool_transparent_mode - whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
  * @param {string | CanvasPattern=} options.foreground_color - selected foreground color (left click)
  * @param {string | CanvasPattern=} options.background_color - selected background color (right click)
@@ -711,6 +715,7 @@ function make_history_node({
 	textbox_width, // the width of the textbox, if any
 	textbox_height, // the height of the textbox, if any
 	text_tool_font = null, // the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox)
+	stickers = null, // the animated GIF sticker layer, if any (see stickers.js)
 	tool_transparent_mode = false, // whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
 	foreground_color, // selected foreground color (left click)
 	background_color, // selected background color (right click)
@@ -733,6 +738,7 @@ function make_history_node({
 		textbox_width,
 		textbox_height,
 		text_tool_font,
+		stickers,
 		tool_transparent_mode,
 		foreground_color,
 		background_color,
@@ -1024,6 +1030,10 @@ function open_from_file(file, source_file_handle) {
 		});
 		return;
 	}
+	if (file.type === HTML_FORMAT_ID || (file instanceof File && /\.html?$/i.test(file.name))) {
+		open_collage_from_file(file);
+		return;
+	}
 	// Try loading as an image file first, then as a palette file, but show a combined error message if both fail.
 	read_image_file(file, (as_image_error, image_info) => {
 		if (as_image_error) {
@@ -1218,14 +1228,14 @@ function file_save(maybe_saved_callback = () => { }, update_from_saved = true) {
 	});
 }
 
-function file_save_as(maybe_saved_callback = () => { }, update_from_saved = true) {
+function file_save_as(maybe_saved_callback = () => { }, update_from_saved = true, format_id = file_format) {
 	deselect();
 	systemHooks.showSaveFileDialog({
 		dialogTitle: localize("Save As"),
 		formats: image_formats,
-		defaultFileName: file_name,
+		defaultFileName: format_id === HTML_FORMAT_ID ? file_name.replace(/\.(bmp|dib|a?png|gif|jpe?g|jpe|jfif|tiff?|webp|raw|html?)$/i, "") + ".html" : file_name,
 		defaultPath: typeof system_file_handle === "string" ? system_file_handle : null,
-		defaultFileFormatID: file_format,
+		defaultFileFormatID: format_id,
 		getBlob: (new_file_type) => {
 			return new Promise((resolve) => {
 				write_image_file(main_canvas, new_file_type, (blob) => {
@@ -1794,12 +1804,21 @@ function show_news() {
  * @param {Blob} blob
  */
 function paste_image_from_file(blob) {
-	read_image_file(blob, (error, info) => {
-		if (error) {
-			show_file_format_errors({ as_image_error: error });
+	// Animated GIFs stay animated: they become a sticker layer instead of a rasterized selection.
+	is_animated_gif(blob).then((animated) => {
+		if (animated) {
+			add_sticker_from_blob(blob).catch((error) => {
+				show_error_message("Failed to add the GIF as a sticker.", error);
+			});
 			return;
 		}
-		paste(info.image || make_canvas(info.image_data));
+		read_image_file(blob, (error, info) => {
+			if (error) {
+				show_file_format_errors({ as_image_error: error });
+				return;
+			}
+			paste(info.image || make_canvas(info.image_data));
+		});
 	});
 }
 
@@ -2034,6 +2053,7 @@ function go_to_history_node(target_history_node, canceling) {
 	update_title();
 
 	main_ctx.copy(target_history_node.image_data);
+	restore_stickers(target_history_node.stickers);
 	if (target_history_node.selection_image_data) {
 		if (selection) {
 			selection.destroy();
@@ -2161,6 +2181,7 @@ function undoable({ name, icon, use_loose_canvas_changes, soft, assume_saved }, 
 		textbox_width: textbox && textbox.width,
 		textbox_height: textbox && textbox.height,
 		text_tool_font: JSON.parse(JSON.stringify(text_tool_font)),
+		stickers: snapshot_stickers(),
 		tool_transparent_mode,
 		foreground_color: selected_colors.foreground,
 		background_color: selected_colors.background,
@@ -2188,6 +2209,7 @@ function make_or_update_undoable(undoable_meta, undoable_action) {
 		current_history_node.selection_image_data = selection && selection.canvas.ctx.getImageData(0, 0, selection.canvas.width, selection.canvas.height);
 		current_history_node.selection_x = selection && selection.x;
 		current_history_node.selection_y = selection && selection.y;
+		current_history_node.stickers = snapshot_stickers();
 		if (undoable_meta.update_name) {
 			current_history_node.name = undoable_meta.name;
 		}
@@ -3843,7 +3865,14 @@ function save_as_prompt({
 function write_image_file(canvas, mime_type, blob_callback) {
 	const ctx = canvas.getContext("2d");
 	const bmp_match = mime_type.match(/^image\/(?:x-)?bmp\s*(?:-(\d+)bpp)?/);
-	if (bmp_match) {
+	if (mime_type === HTML_FORMAT_ID) {
+		// A collage web page (docs/DESIGN.md §3.3): the bitmap plus the animated GIF stickers as real <img>s.
+		serialize_collage_html({ canvas }).then((html) => {
+			blob_callback(new Blob([html], { type: HTML_FORMAT_ID }));
+		}, (error) => {
+			show_error_message("Failed to save the web page.", error);
+		});
+	} else if (bmp_match) {
 		const file_content = encodeBMP(ctx.getImageData(0, 0, canvas.width, canvas.height), parseInt(bmp_match[1] || "24", 10));
 		const blob = new Blob([file_content]);
 		sanity_check_blob(blob, () => {
@@ -4091,6 +4120,9 @@ function read_image_file(blob, callback) {
  * @param {Blob} blob - The saved file blob.
  */
 function update_from_saved_file(blob) {
+	if (blob.type === HTML_FORMAT_ID) {
+		return; // web pages aren't re-read for color reduction; the canvas is already what was saved
+	}
 	read_image_file(blob, (error, info) => {
 		if (error) {
 			show_error_message("The file has been saved, however... " + localize("Paint cannot read this file."), error);

@@ -3,17 +3,25 @@
 /* global $canvas_area, $colorbox, $status_area, $toolbox, available_languages, get_iso_language_name, get_language, get_language_emoji, get_language_endonym, localize, magnification, main_canvas, menu_bar, MENU_DIVIDER, redos, selection, set_language, show_grid, show_thumbnail, systemHooks, textbox, undos */
 // import { available_languages, get_iso_language_name, get_language, get_language_emoji, get_language_endonym, localize, set_language } from "./app-localization.js";
 import { OnCanvasTextBox } from "./OnCanvasTextBox.js";
+import { is_agent_window_open, publish_site, save_iteration, toggle_agent_window } from "./agent-drive.js";
 import { show_edit_colors_window } from "./edit-colors.js";
 import { palette_formats } from "./file-format-data.js";
 import { are_you_sure, change_url_param, choose_file_to_paste, clear, delete_selection, deselect, edit_copy, edit_cut, edit_paste, file_load_from_url, file_new, file_open, file_print, file_save, file_save_as, image_attributes, image_flip_and_rotate, image_invert_colors, image_stretch_and_skew, redo, render_history_as_gif, sanity_check_blob, save_selection_to_file, select_all, set_magnification, show_about_paint, show_custom_zoom_window, show_document_history, show_file_format_errors, show_multi_user_setup_dialog, show_news, toggle_grid, toggle_thumbnail, undo, view_bitmap } from "./functions.js";
 import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
+import { export_collage_gif } from "./gif-export.js";
 import { manage_storage } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
 import { simulateRandomGesturesPeriodically, simulatingGestures, stopSimulatingGestures } from "./simulate-random-gestures.js";
 import { speech_recognition_active, speech_recognition_available } from "./speech-recognition.js";
 import { get_theme, set_theme } from "./theme.js";
+import { flatten_stickers, flip_selected_sticker, get_selected_sticker, get_stickers } from "./stickers.js";
+
+/** File > Save as Web Page: the regular Save As flow, preselecting the collage web page format. */
+function save_collage_as_web_page() {
+	file_save_as(undefined, false, "text/html");
+}
 
 const looksLikeChrome = !!(window.chrome && (window.chrome.loadTimes || window.chrome.csi));
 // NOTE: Microsoft Edge includes window.chrome.app
@@ -76,6 +84,22 @@ const menus = {
 			action: () => { file_save_as(); },
 			description: localize("Saves the active document with a new name."),
 		},
+		{
+			label: localize("Save as Animated &GIF..."),
+			speech_recognition: [
+				"save as animated gif", "save as an animated gif", "export animated gif", "export as animated gif", "export gif", "render animated gif", "make an animated gif",
+			],
+			action: () => { export_collage_gif(); },
+			description: localize("Saves the picture and its stickers as a looping animated GIF."),
+		},
+		{
+			label: localize("Save as Web Page (&HTML)..."),
+			speech_recognition: [
+				"save as web page", "save as html", "save as a web page", "export web page", "export html", "export as html",
+			],
+			action: () => { save_collage_as_web_page(); },
+			description: localize("Saves the picture and its stickers as a web page, with the stickers still animating."),
+		},
 		MENU_DIVIDER,
 		{
 			label: localize("&Load From URL"),
@@ -133,6 +157,27 @@ const menus = {
 				});
 			},
 			description: localize("Uploads the active document to Imgur"),
+		},
+		MENU_DIVIDER,
+		{
+			label: localize("Save &Iteration to Agent"),
+			...shortcut("Ctrl+Alt+I"),
+			speech_recognition: [
+				"save iteration", "send to agent", "send iteration to agent", "save iteration to agent",
+				"send drawing to agent", "send the drawing to the agent", "update the website", "update the site",
+			],
+			action: () => { save_iteration(); },
+			description: localize("Sends the drawing to the agent server to update the website."),
+		},
+		{
+			label: localize("Pu&blish to Web"),
+			...shortcut("Ctrl+Alt+P"),
+			speech_recognition: [
+				"publish", "publish to web", "publish to the web", "publish the website", "publish the site", "publish site",
+				"deploy", "deploy the website", "deploy the site", "push the code", "push to github",
+			],
+			action: () => { publish_site(); },
+			description: localize("Commits and pushes the website so the deploy workflow publishes it."),
 		},
 		MENU_DIVIDER,
 		{
@@ -648,6 +693,28 @@ const menus = {
 			description: localize("Inverts the colors of the picture or a selection."),
 		},
 		{
+			label: localize("Flip Sticker &Horizontal"),
+			speech_recognition: ["flip sticker", "flip sticker horizontal", "flip sticker horizontally", "mirror sticker"],
+			enabled: () => !!get_selected_sticker(),
+			action: () => { flip_selected_sticker("x"); },
+			description: localize("Flips the selected sticker horizontally."),
+		},
+		{
+			label: localize("Flip Sticker &Vertical"),
+			speech_recognition: ["flip sticker vertical", "flip sticker vertically"],
+			enabled: () => !!get_selected_sticker(),
+			action: () => { flip_selected_sticker("y"); },
+			description: localize("Flips the selected sticker vertically."),
+		},
+		{
+			label: localize("Flatten Stic&kers"),
+			speech_recognition: ["flatten stickers", "flatten the stickers", "merge stickers", "merge stickers into the image", "rasterize stickers"],
+			enabled: () => get_stickers().length > 0,
+			action: () => { flatten_stickers(); },
+			description: localize("Draws the stickers (animated GIFs) into the picture as pixels and removes them."),
+		},
+		MENU_DIVIDER,
+		{
 			label: `${localize("&Attributes")}...`,
 			...shortcut("Ctrl+E"),
 			speech_recognition: [
@@ -855,6 +922,19 @@ const menus = {
 		// 	},
 		// 	description: localize("Configures JS Paint."),
 		// }
+		{
+			emoji_icon: "🤖",
+			label: localize("&Agent Window"),
+			speech_recognition: [
+				"agent window", "show agent window", "hide agent window", "toggle agent window", "open agent window", "close agent window",
+				"agent panel", "show agent panel", "hide agent panel",
+			],
+			checkbox: {
+				toggle: () => { toggle_agent_window(); },
+				check: () => is_agent_window_open(),
+			},
+			description: localize("Shows or hides the window for driving a website-editing agent with your drawing."),
+		},
 		{
 			emoji_icon: "🤪",
 			label: localize("&Draw Randomly"),

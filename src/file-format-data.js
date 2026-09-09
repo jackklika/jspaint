@@ -48,6 +48,8 @@ add_image_format("image/webp", "WebP (*.webp)");
 add_image_format("image/gif", "GIF (*.gif)");
 add_image_format("image/tiff", "TIFF (*.tif;*.tiff)");
 add_image_format("image/jpeg", "JPEG (*.jpg;*.jpeg;*.jpe;*.jfif)");
+// A collage: the bitmap plus animated GIF stickers, as a self-contained web page (see collage-format.js).
+add_image_format("text/html", "Web Page (*.html;*.htm)");
 add_image_format("image/x-bmp-1bpp", "Monochrome Bitmap (*.bmp;*.dib)");
 add_image_format("image/x-bmp-4bpp", "16 Color Bitmap (*.bmp;*.dib)");
 add_image_format("image/x-bmp-8bpp", "256 Color Bitmap (*.bmp;*.dib)");

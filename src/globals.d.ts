@@ -805,6 +805,8 @@ interface HistoryNode {
 	textbox_height: number;
 	/** the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox) */
 	text_tool_font: TextToolFontOptions | null;
+	/** the animated GIF sticker layer, if any (see stickers.js) */
+	stickers: StickerSnapshot[] | null;
 	/** whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque */
 	tool_transparent_mode: boolean;
 	/** selected foreground color (left click) */
@@ -817,6 +819,18 @@ interface HistoryNode {
 	name: string;
 	/** a visual representation of the operation type, shown in the history window, e.g. get_help_folder_icon("p_blank.png") */
 	icon: HTMLImageElement | HTMLCanvasElement | null;
+}
+
+/** One sticker (animated GIF layer) as stored on history nodes and in the collage format. */
+interface StickerSnapshot {
+	id: string;
+	source_id: string;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	flip_x: boolean;
+	flip_y: boolean;
 }
 
 interface ActionMetadata {
