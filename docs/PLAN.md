@@ -43,12 +43,14 @@ Phase 2 notes (2026-09-09): everything verified against local `wrangler dev` (sh
 
 ## Phase 3 — Page Editor + desktop
 
-- [ ] 3.1 `desktop/` shell: os-gui desktop with taskbar; windows: Paint, Page Editor, GifCities, My Site.
-- [ ] 3.2 Page Editor: parse dialect → blocks; block handles (select, move, delete, properties); inline text editing with a `<font>` toolbar (classic fonts); add-block menu.
+- [x] 3.1 `desktop/` shell: os-gui desktop with taskbar + Start menu; windows: Paint (the app in a frame), Page Editor, GIFs, My Site. Served by the editor Worker at `/desktop/`.
+- [x] 3.2 Page Editor: parse dialect → blocks; select/move/delete per block; inline `contenteditable` text with an execCommand `<font>` toolbar (classic fonts, size, color, B/I/U, links, alignment); Add: heading, paragraph, marquee, line, GIF (window), image upload, collage (Paint round-trip via postMessage), raw HTML, every registry `<x-*>`; Page Properties (title, colors, wallpaper); pages dropdown + New.
 - [ ] 3.3 Doodle layer: transparent Paint canvas over the 800px column → `img.doodle`.
-- [ ] 3.4 GifCities window: search via proxy, drag → sticker (collage) or divider (page); copies GIF into `gifs/`.
-- [ ] 3.5 My Site window: folder view, upload, rename, delete, new page, zip export.
+- [x] 3.4 GIFs window (desktop): search via the editor proxy; click or drag into the Page Editor → uploaded to `gifs/<sha1>.gif` and inserted as an image block. (Paint keeps its own picker for stickers.)
+- [x] 3.5 My Site window: file list, open page, view, delete, upload assets, new page. (Rename and zip export still to do.)
 - [ ] 3.6 Live preview of the page while editing (reuse the Room DO pattern).
+
+Phase 3 notes (2026-09-09): Paint runs in an `<iframe src="../index.html?desktop=1">`; `src/desktop-bridge.js` decides desktop mode once at load (sessions.js rewrites the URL) and exposes File › Send to Page Editor, which posts the collage (data-URL assets) to the desktop; `desktop/page-editor.js` `import_collage` uploads the assets content-addressed and inserts the block. In the editor, site files are displayed through the editor's own API path (same origin, public reads) and saved as site-relative URLs; clones for serialization use inert `<template>` content because setting `src` on a detached `<img>` fetches. `desktop.test.mjs` covers sign-in → blocks → save → sites Worker → collage round-trip. Remaining in Phase 3: 3.3 doodle layer, 3.6 live preview, rename/zip in My Site.
 
 ## Phase 4 — dynamic blocks, media, import
 

@@ -6,13 +6,15 @@
 //   GET    /api/sites/:name/files/<path>            read a file (HEAD to check existence)
 //   PUT    /api/sites/:name/files/<path>            write a file (HTML is sanitized; images/audio are sniffed)
 //   DELETE /api/sites/:name/files/<path>
+//   GET    /api/x-elements                          the <x-*> registry's editor metadata (no auth)
 //   GET    /api/gifcities/search?q=&offset=&page_size=   GifCities search scraped to JSON (no auth, cached)
 //   GET    /api/gifcities/gif/:id                   relay a GifCities GIF with CORS (no auth, cached)
 //
-// Auth: `Authorization: Bearer <SITE_EDIT_SECRET>` on everything under /api/sites and /api/whoami.
+// Auth: `Authorization: Bearer <SITE_EDIT_SECRET>` on /api/whoami, listing, and writes. Reads of site files are public.
 // Accounts come later; today one secret edits every site (docs/PLAN.md phase 5).
 import { content_type_for, is_html_path, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
+import { x_elements } from "../shared/x-elements/index.js";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const CORS_HEADERS = {
@@ -170,6 +172,13 @@ export default {
 				const upstream = await fetch(`https://blob.gifcities.org/gifcities/${gif_match[1]}.gif`, { headers: GIFCITIES_HEADERS, cf: { cacheTtl: 86400, cacheEverything: true } });
 				if (!upstream.ok) { return json({ error: `GifCities returned HTTP ${upstream.status}` }, 502); }
 				return new Response(upstream.body, { headers: { ...CORS_HEADERS, "Content-Type": "image/gif", "Cache-Control": "public, max-age=86400" } });
+			}
+			if (url.pathname === "/api/x-elements") {
+				return json([...x_elements.values()].map((definition) => ({ tag: definition.tag, attrs: definition.attrs, editor: definition.editor })));
+			}
+			// Reading site files needs no secret: they're public on the sites Worker anyway. Writing does.
+			if ((request.method === "GET" || request.method === "HEAD") && /^\/api\/sites\/[^/]+\/files\/./.test(url.pathname)) {
+				return handle_site_files(request, url, env);
 			}
 			if (!authorized(request, env.SITE_EDIT_SECRET)) {
 				return json({ error: "Unauthorized: send Authorization: Bearer <edit secret>" }, 401);

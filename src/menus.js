@@ -10,6 +10,7 @@ import { are_you_sure, change_url_param, choose_file_to_paste, clear, delete_sel
 import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
+import { is_in_desktop, send_collage_to_desktop } from "./desktop-bridge.js";
 import { show_publish_dialog } from "./site-publish.js";
 import { export_collage_gif } from "./gif-export.js";
 import { is_gif_picker_open, toggle_gif_picker } from "./gif-picker.js";
@@ -104,6 +105,13 @@ const menus = {
 			],
 			action: () => { save_collage_as_web_page(); },
 			description: localize("Saves the picture and its stickers as a web page, with the stickers still animating."),
+		},
+		{
+			label: localize("Send to Page &Editor"),
+			speech_recognition: ["send to page editor", "send to the page editor", "put this on the page", "add to page"],
+			enabled: () => is_in_desktop(),
+			action: () => { send_collage_to_desktop(); },
+			description: localize("Puts this collage on the page you're editing in the site builder."),
 		},
 		{
 			label: localize("Save to &My Site..."),

@@ -302,6 +302,20 @@ export default [
 	},
 	{
 		"files": [
+			"desktop/**/*.js",
+		],
+		"languageOptions": {
+			"sourceType": "module",
+			"globals": {
+				...globals.browser,
+				"$": "readonly",
+				"jQuery": "readonly",
+				"$Window": "readonly",
+			},
+		},
+	},
+	{
+		"files": [
 			"worker/**/*.js",
 			"worker/**/*.mjs",
 		],

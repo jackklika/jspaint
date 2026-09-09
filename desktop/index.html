@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Site Builder</title>
+	<link rel="icon" href="../favicon.ico">
+	<link href="../lib/os-gui/build/layout.css" rel="stylesheet">
+	<link href="../lib/os-gui/build/windows-98.css" rel="stylesheet">
+	<link href="../lib/98.css/98.custom-build.css" rel="stylesheet">
+	<link href="desktop.css" rel="stylesheet">
+</head>
+<body>
+	<div id="desktop" class="desktop">
+		<div id="icons" class="desktop-icons"></div>
+	</div>
+	<div id="taskbar" class="taskbar">
+		<button id="start-button" class="start-button" type="button"><img src="../images/icons/16x16.png" alt="" width="16" height="16"> Start</button>
+		<div id="tasks" class="tasks"></div>
+		<div id="tray" class="tray"><span id="site-indicator" class="site-indicator"></span><span id="clock" class="clock"></span></div>
+	</div>
+	<div id="start-menu" class="start-menu" hidden></div>
+	<script src="../lib/jquery-3.4.1.min.js"></script>
+	<script src="../lib/os-gui/parse-theme.js"></script>
+	<script src="../lib/os-gui/$Window.js"></script>
+	<script type="module" src="desktop.js"></script>
+</body>
+</html>
