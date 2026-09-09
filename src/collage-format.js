@@ -13,6 +13,7 @@
 import { open_from_image_info, read_image_file, show_error_message, write_image_file } from "./functions.js";
 import { PAGE_WIDTH } from "./site-constants.js";
 import { get_sticker_source, get_stickers, register_sticker_source, restore_stickers, snapshot_stickers } from "./stickers.js";
+import { font_css, get_text_layers, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
 
 const HTML_FORMAT_ID = "text/html";
 
@@ -22,7 +23,8 @@ const COLLAGE_CSS = `
 .collage > .bitmap { display: block; image-rendering: pixelated; }
 .collage > .sticker, .collage > .text { position: absolute; }
 .collage > .sticker { image-rendering: pixelated; }
-.collage > .text { line-height: normal; white-space: pre; }
+.collage > .text { box-sizing: border-box; margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: break-word; overflow: hidden; text-decoration: none; }
+.collage > a.text { text-decoration: underline; }
 `.trim();
 
 /**
@@ -77,6 +79,16 @@ async function serialize_collage_html({ canvas = main_canvas, title = file_name,
 			sticker_tags.push(`\t\t<img class="sticker" src="${src}" alt="" style="left:${sticker.x}px;top:${sticker.y}px;width:${sticker.width}px;height:${sticker.height}px${transform}">`);
 		}
 	}
+	const text_tags = [];
+	if (canvas === main_canvas) {
+		for (const layer of get_text_layers()) {
+			const style = `left:${layer.x}px;top:${layer.y}px;width:${layer.width}px;height:${layer.height}px;` +
+				Object.entries(font_css(layer.font)).map(([k, v]) => `${k}:${v}`).join(";");
+			const tag = layer.href ? "a" : "span";
+			const href = layer.href ? ` href="${escape_html(layer.href)}"` : "";
+			text_tags.push(`\t\t<${tag} class="text"${href} style="${escape_html(style)}">${escape_html(layer.text)}</${tag}>`);
+		}
+	}
 	const page_title = title.replace(/\.(bmp|dib|a?png|gif|jpe?g|jpe|jfif|tiff?|webp|raw|html?)$/i, "") || "Untitled";
 	return `<!DOCTYPE html>
 <html data-page-width="${PAGE_WIDTH}">
@@ -92,7 +104,7 @@ ${COLLAGE_CSS}
 <center>
 	<div class="collage" style="width:${canvas.width}px;height:${canvas.height}px">
 		<img class="bitmap" src="${bitmap_src}" width="${canvas.width}" height="${canvas.height}" alt="">
-${sticker_tags.join("\n")}
+${[...sticker_tags, ...text_tags].join("\n")}
 	</div>
 </center>
 </body>
@@ -106,6 +118,7 @@ ${sticker_tags.join("\n")}
  * @property {number} height
  * @property {string} bitmap_src
  * @property {{ src: string, x: number, y: number, width: number, height: number, flip_x: boolean, flip_y: boolean }[]} stickers
+ * @property {TextLayerSnapshot[]} text_layers
  */
 
 /**
@@ -135,13 +148,50 @@ function parse_collage_html(html) {
 			flip_y: /scaleY\(\s*-1/.test(transform) || (scale_match ? parseFloat(scale_match[2] ?? scale_match[1]) < 0 : false),
 		});
 	}
+	/** @type {TextLayerSnapshot[]} */
+	const text_layers = [];
+	for (const [index, el] of [...collage.querySelectorAll(".text")].entries()) {
+		const style = /** @type {HTMLElement} */ (el).style;
+		const size_match = /^([\d.]+)(pt|px)$/.exec(style.fontSize || "");
+		const size = size_match ? (size_match[2] === "px" ? parseFloat(size_match[1]) * 0.75 : parseFloat(size_match[1])) : 12;
+		const line_height = px(style.lineHeight);
+		text_layers.push({
+			id: `t${index + 1}`,
+			x: px(style.left),
+			y: px(style.top),
+			width: px(style.width),
+			height: px(style.height),
+			text: el.textContent || "",
+			font: {
+				family: normalize_font_family(style.fontFamily),
+				size,
+				line_scale: line_height && size ? line_height / size : 20 / 12,
+				bold: /bold|[6-9]00/.test(style.fontWeight),
+				italic: style.fontStyle === "italic",
+				underline: /underline/.test(style.textDecoration || style.textDecorationLine || ""),
+				color: style.color || "#000",
+				background: style.background && style.background !== "transparent" ? style.backgroundColor || style.background : "",
+			},
+			href: el.getAttribute("href") || "",
+		});
+	}
 	const style = /** @type {HTMLElement} */ (collage).style;
 	return {
+		text_layers,
 		width: px(style.width) || Number(bitmap.getAttribute("width")) || 0,
 		height: px(style.height) || Number(bitmap.getAttribute("height")) || 0,
 		bitmap_src: bitmap.getAttribute("src") || "",
 		stickers,
 	};
+}
+
+/**
+ * The Text tool keeps font families quoted (`"Arial"`, as FontDetective reports them); CSSOM strips the quotes.
+ * @param {string} family
+ */
+function normalize_font_family(family) {
+	const first = (family || "").split(",")[0].trim().replace(/^["']|["']$/g, "");
+	return first ? `"${first}"` : '"Arial"';
 }
 
 /**
@@ -210,8 +260,10 @@ async function open_collage_from_file(file) {
 				}
 			}
 			restore_stickers(snapshots);
-			// The stickers are part of the opened state, not a change to it.
+			restore_text_layers(parsed.text_layers);
+			// The layers are part of the opened state, not a change to it.
 			current_history_node.stickers = snapshot_stickers();
+			current_history_node.text_layers = snapshot_text_layers();
 			file_format = HTML_FORMAT_ID; // so File > Save writes the web page again
 		});
 	});

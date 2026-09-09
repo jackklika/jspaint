@@ -3,6 +3,7 @@
 import { $ToolWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
 import { $G, E, supports_vertical_writing_mode } from "./helpers.js";
+import { is_web_text_mode, set_web_text_mode } from "./text-layers.js";
 
 const eachFont = async (callback, afterAllCallback) => {
 	function localFontAccessUnavailable() {
@@ -83,7 +84,17 @@ function $FontBox() {
 	// const $vertical = $Toggle(3, "vertical", "Vertical Writing Mode", localize("Vertical writing works best with Far East scripts."));
 	$vertical.prop("disabled", !supports_vertical_writing_mode());
 
-	$button_group.append($bold, $italic, $underline, $vertical);
+	// Web text: keep finished text as an editable, linkable layer instead of pixels (see text-layers.js).
+	const $web_text = $(E("button")).addClass("toggle web-text-toggle").attr({
+		type: "button",
+		"aria-pressed": String(is_web_text_mode()),
+		"aria-label": "Web Text",
+		title: localize("Keeps the text as text (editable, can be a link) instead of drawing it as pixels."),
+	}).text("Web");
+	$web_text.on("mousedown", (e) => { e.preventDefault(); }); // keep focus in the text editor
+	$web_text.on("click", () => { set_web_text_mode(!is_web_text_mode()); });
+	$G.on("web-text-mode-changed", () => { $web_text.attr("aria-pressed", String(is_web_text_mode())); });
+	$button_group.append($bold, $italic, $underline, $vertical, $web_text);
 	$fb.append($family, $size, $button_group);
 
 	const update_font = () => {
@@ -93,21 +104,42 @@ function $FontBox() {
 	};
 
 	const originalFamily = text_tool_font.family;
+	// The classic web-safe fonts go first, in this order, above a separator; everything else is alphabetical below it.
+	// (Web text layers render in the visitor's browser, so these are the ones that look the same everywhere.)
+	const classic_families = ["Arial", "Comic Sans MS", "Courier New", "Georgia", "Impact", "Times New Roman", "Trebuchet MS", "Verdana"];
+	const $separator = $(E("option")).prop("disabled", true).text("──────────").addClass("font-separator");
 	eachFont((font) => {
 		const $option = $(E("option"));
 		$option.val(font).text(font.name);
-		// Insert in alphabetical order
-		const $options = $family.children("option");
-		let i = 0;
-		for (; i < $options.length; i++) {
-			if ($options.eq(i).text().localeCompare(font.name) > 0) {
-				break;
+		const classic_index = classic_families.indexOf(font.name);
+		if (classic_index !== -1) {
+			if (!$separator.parent().length) {
+				$family.prepend($separator);
 			}
-		}
-		if ($options.eq(i).length) {
-			$options.eq(i).before($option);
+			// Insert among the classic fonts, in classic order
+			/** @type {JQuery<HTMLElement>} */
+			let $before = $separator;
+			for (const $classic of $family.children("option.classic-font").toArray().map((el) => $(el))) {
+				if (classic_families.indexOf($classic.text()) > classic_index) {
+					$before = $classic;
+					break;
+				}
+			}
+			$option.addClass("classic-font").insertBefore($before);
 		} else {
-			$family.append($option);
+			// Insert in alphabetical order, after the separator
+			const $options = $family.children("option").not(".classic-font").not(".font-separator");
+			let i = 0;
+			for (; i < $options.length; i++) {
+				if ($options.eq(i).text().localeCompare(font.name) > 0) {
+					break;
+				}
+			}
+			if ($options.eq(i).length) {
+				$options.eq(i).before($option);
+			} else {
+				$family.append($option);
+			}
 		}
 		// Select the first known-available font, just in case FontDetective.each is slow.
 		if (!text_tool_font.family) {

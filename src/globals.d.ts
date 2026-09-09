@@ -807,6 +807,8 @@ interface HistoryNode {
 	text_tool_font: TextToolFontOptions | null;
 	/** the animated GIF sticker layer, if any (see stickers.js) */
 	stickers: StickerSnapshot[] | null;
+	/** the web text layers, if any (see text-layers.js) */
+	text_layers: TextLayerSnapshot[] | null;
 	/** whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque */
 	tool_transparent_mode: boolean;
 	/** selected foreground color (left click) */
@@ -831,6 +833,31 @@ interface StickerSnapshot {
 	height: number;
 	flip_x: boolean;
 	flip_y: boolean;
+}
+
+/** Font of a text layer: solid colors only, sizes in points, like the Text tool. */
+interface TextLayerFont {
+	family: string;
+	size: number;
+	line_scale: number;
+	bold: boolean;
+	italic: boolean;
+	underline: boolean;
+	color: string;
+	/** empty string for transparent */
+	background: string;
+}
+
+/** One web text layer as stored on history nodes and in the collage format. */
+interface TextLayerSnapshot {
+	id: string;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	text: string;
+	font: TextLayerFont;
+	href: string;
 }
 
 interface ActionMetadata {

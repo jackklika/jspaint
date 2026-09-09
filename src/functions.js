@@ -15,6 +15,7 @@ import { apply_image_transformation, draw_grid, draw_selection_box, flip_horizon
 import { show_imgur_uploader } from "./imgur.js";
 import { HTML_FORMAT_ID, open_collage_from_file, serialize_collage_html } from "./collage-format.js";
 import { add_sticker_from_blob, clear_stickers, is_animated_gif, restore_stickers, snapshot_stickers } from "./stickers.js";
+import { clear_text_layers, create_text_layer_from_textbox, is_web_text_mode, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
 import { showMessageBox } from "./msgbox.js";
 import { localStore } from "./storage.js";
 import { TOOL_CURVE, TOOL_FREE_FORM_SELECT, TOOL_POLYGON, TOOL_SELECT, TOOL_TEXT, tools } from "./tools.js";
@@ -656,6 +657,7 @@ function reset_canvas_and_history() {
 	undos.length = 0;
 	redos.length = 0;
 	clear_stickers();
+	clear_text_layers();
 	current_history_node = root_history_node = make_history_node({
 		name: localize("New"),
 		icon: get_help_folder_icon("p_blank.png"),
@@ -692,6 +694,7 @@ function reset_canvas_and_history() {
  * @param {number=} options.textbox_height - the height of the textbox, if any
  * @param {TextToolFontOptions | null=} options.text_tool_font - the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox)
  * @param {StickerSnapshot[] | null=} options.stickers - the animated GIF sticker layer (see stickers.js)
+ * @param {TextLayerSnapshot[] | null=} options.text_layers - the web text layers (see text-layers.js)
  * @param {boolean=} options.tool_transparent_mode - whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
  * @param {string | CanvasPattern=} options.foreground_color - selected foreground color (left click)
  * @param {string | CanvasPattern=} options.background_color - selected background color (right click)
@@ -716,6 +719,7 @@ function make_history_node({
 	textbox_height, // the height of the textbox, if any
 	text_tool_font = null, // the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox)
 	stickers = null, // the animated GIF sticker layer, if any (see stickers.js)
+	text_layers = null, // the web text layers, if any (see text-layers.js)
 	tool_transparent_mode = false, // whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
 	foreground_color, // selected foreground color (left click)
 	background_color, // selected background color (right click)
@@ -739,6 +743,7 @@ function make_history_node({
 		textbox_height,
 		text_tool_font,
 		stickers,
+		text_layers,
 		tool_transparent_mode,
 		foreground_color,
 		background_color,
@@ -2054,6 +2059,7 @@ function go_to_history_node(target_history_node, canceling) {
 
 	main_ctx.copy(target_history_node.image_data);
 	restore_stickers(target_history_node.stickers);
+	restore_text_layers(target_history_node.text_layers);
 	if (target_history_node.selection_image_data) {
 		if (selection) {
 			selection.destroy();
@@ -2182,6 +2188,7 @@ function undoable({ name, icon, use_loose_canvas_changes, soft, assume_saved }, 
 		textbox_height: textbox && textbox.height,
 		text_tool_font: JSON.parse(JSON.stringify(text_tool_font)),
 		stickers: snapshot_stickers(),
+		text_layers: snapshot_text_layers(),
 		tool_transparent_mode,
 		foreground_color: selected_colors.foreground,
 		background_color: selected_colors.background,
@@ -2210,6 +2217,7 @@ function make_or_update_undoable(undoable_meta, undoable_action) {
 		current_history_node.selection_x = selection && selection.x;
 		current_history_node.selection_y = selection && selection.y;
 		current_history_node.stickers = snapshot_stickers();
+		current_history_node.text_layers = snapshot_text_layers();
 		if (undoable_meta.update_name) {
 			current_history_node.name = undoable_meta.name;
 		}
@@ -2509,11 +2517,18 @@ function meld_textbox_into_canvas(going_to_history_node) {
 			icon: get_icon_for_tool(get_tool_by_id(TOOL_TEXT)),
 			soft: true,
 		}, () => { });
+		// @ts-ignore (web_text_layer_id is set by text-layers.js when re-editing a layer)
+		const as_web_text = (is_web_text_mode() || textbox.web_text_layer_id) && !text_tool_font.vertical;
 		undoable({
 			name: "Finish Text",
 			icon: get_icon_for_tool(get_tool_by_id(TOOL_TEXT)),
 		}, () => {
-			main_ctx.drawImage(textbox.canvas, textbox.x, textbox.y);
+			if (as_web_text) {
+				// Keep it as text: an editable, linkable layer (see text-layers.js).
+				create_text_layer_from_textbox(textbox);
+			} else {
+				main_ctx.drawImage(textbox.canvas, textbox.x, textbox.y);
+			}
 			textbox.destroy();
 			textbox = null;
 		});

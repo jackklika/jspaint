@@ -11,6 +11,7 @@ import { Handles } from "./Handles.js";
 import { OnCanvasObject } from "./OnCanvasObject.js";
 import { make_or_update_undoable, undoable } from "./functions.js";
 import { $G, E, get_help_folder_icon, make_css_cursor, to_canvas_coords } from "./helpers.js";
+import { deselect_text_layer } from "./text-layers.js";
 
 /**
  * @typedef {object} StickerSource
@@ -277,6 +278,7 @@ function select_sticker(sticker) {
 	}
 	selected_sticker = sticker;
 	if (sticker) {
+		deselect_text_layer();
 		sticker.set_selected(true);
 		// Bring to the top of the layer order, in the DOM and in the model.
 		stickers = stickers.filter((other) => other !== sticker).concat(sticker);

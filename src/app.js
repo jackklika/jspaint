@@ -21,6 +21,7 @@ import { disable_speech_recognition, enable_speech_recognition, trace_and_sketch
 import { localStore } from "./storage.js";
 import { get_theme, set_theme } from "./theme.js";
 import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_selected_sticker, init_stickers, is_animated_gif, nudge_selected_sticker } from "./stickers.js";
+import { delete_selected_text_layer, deselect_text_layer, get_selected_text_layer, init_text_layers, nudge_selected_text_layer } from "./text-layers.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
 // #region Exports
@@ -499,6 +500,7 @@ const canvas_handles = new Handles({
 });
 window.canvas_handles = canvas_handles;
 init_stickers();
+init_text_layers();
 
 const $top = $(E("div")).addClass("component-area top").prependTo($V);
 window.$top = $top;
@@ -970,6 +972,24 @@ $G.on("keydown", (e) => {
 	// also, ideally check that modifiers *aren't* pressed
 	// probably best to use a library at this point!
 
+	if (get_selected_text_layer() && !textbox) {
+		const step = e.shiftKey ? 10 : 1;
+		switch (e.key) {
+			case "ArrowLeft": nudge_selected_text_layer(-step, 0); e.preventDefault(); return;
+			case "ArrowRight": nudge_selected_text_layer(+step, 0); e.preventDefault(); return;
+			case "ArrowUp": nudge_selected_text_layer(0, -step); e.preventDefault(); return;
+			case "ArrowDown": nudge_selected_text_layer(0, +step); e.preventDefault(); return;
+			case "Delete":
+			case "Backspace":
+				delete_selected_text_layer();
+				e.preventDefault();
+				return;
+			case "Escape":
+				deselect_text_layer();
+				e.preventDefault();
+				return;
+		}
+	}
 	if (get_selected_sticker()) {
 		const step = e.shiftKey ? 10 : 1;
 		switch (e.key) {

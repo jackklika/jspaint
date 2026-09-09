@@ -10,6 +10,7 @@ import { sanity_check_blob, show_error_message } from "./functions.js";
 import { E, make_canvas } from "./helpers.js";
 import { GIF_EXPORT_MAX_DURATION_MS, GIF_EXPORT_MAX_FRAMES } from "./site-constants.js";
 import { get_sticker_source, get_stickers } from "./stickers.js";
+import { draw_text_layers } from "./text-layers.js";
 
 /**
  * @typedef {object} DecodedFrame
@@ -154,6 +155,7 @@ function composite_frame(ctx, t, decoded) {
 		ctx.drawImage(frame.canvas, -sticker.width / 2, -sticker.height / 2, sticker.width, sticker.height);
 		ctx.restore();
 	}
+	draw_text_layers(ctx);
 }
 
 /**

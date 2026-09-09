@@ -17,6 +17,7 @@ import { simulateRandomGesturesPeriodically, simulatingGestures, stopSimulatingG
 import { speech_recognition_active, speech_recognition_available } from "./speech-recognition.js";
 import { get_theme, set_theme } from "./theme.js";
 import { flatten_stickers, flip_selected_sticker, get_selected_sticker, get_stickers } from "./stickers.js";
+import { flatten_text_layers, get_selected_text_layer, get_text_layers, show_text_layer_link_dialog } from "./text-layers.js";
 
 /** File > Save as Web Page: the regular Save As flow, preselecting the collage web page format. */
 function save_collage_as_web_page() {
@@ -712,6 +713,20 @@ const menus = {
 			enabled: () => get_stickers().length > 0,
 			action: () => { flatten_stickers(); },
 			description: localize("Draws the stickers (animated GIFs) into the picture as pixels and removes them."),
+		},
+		{
+			label: localize("Text Layer &Link..."),
+			speech_recognition: ["text link", "set text link", "make the text a link", "link the text", "add a link to the text", "remove text link"],
+			enabled: () => !!get_selected_text_layer(),
+			action: () => { show_text_layer_link_dialog(); },
+			description: localize("Makes the selected text layer a link, or removes its link."),
+		},
+		{
+			label: localize("Flatten Text La&yers"),
+			speech_recognition: ["flatten text", "flatten text layers", "flatten the text", "rasterize text", "rasterize the text"],
+			enabled: () => get_text_layers().length > 0,
+			action: () => { flatten_text_layers(); },
+			description: localize("Draws the web text layers into the picture as pixels and removes them."),
 		},
 		MENU_DIVIDER,
 		{
