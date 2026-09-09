@@ -15,6 +15,7 @@
 //   GET|PUT /api/rooms/:id/data           JS Paint's built-in multi-user RESTSession protocol (whole canvas as a
 //                                           data URI, synced after every stroke). Used for *live preview*: each
 //                                           write updates public/latest.png (+ the display page) and redeploys.
+//   GET  /api/gifcities/search?q=&offset=  GifCities search scraped to JSON; GET /api/gifcities/gif/:id relays a GIF (CORS)
 //   GET  /files/<path>                    static files from the site repo (public/, screenshots/)
 //   GET  /<anything else>                 JS Paint itself (this repo), so http://localhost:4097/#session:live
 //                                           runs JS Paint on the same origin as the room API
@@ -693,6 +694,64 @@ function handle_room_write(data_uri) {
 
 // #endregion
 
+// #region GifCities proxy (for the GIF picker in Paint)
+
+// gifcities.org has no JSON API and no CORS: search is server-rendered HTML and the GIFs live on
+// blob.gifcities.org. This scrapes the results into JSON and relays the GIF bytes with CORS headers.
+// The hosted version moves these two endpoints into the editor Worker.
+const GIFCITIES_PAGE_SIZE_MAX = 100;
+/** @type {Map<string, { time: number, data: any }>} */
+const gifcities_cache = new Map();
+const GIFCITIES_CACHE_MS = 60 * 60 * 1000;
+const GIFCITIES_HEADERS = { "User-Agent": "jspaint-site-builder (dev; https://github.com/jackklika/jspaint)" };
+
+/**
+ * @param {string} query
+ * @param {number} offset
+ * @param {number} page_size
+ */
+async function gifcities_search(query, offset, page_size) {
+	const key = `${query}\u0000${offset}\u0000${page_size}`;
+	const cached = gifcities_cache.get(key);
+	if (cached && Date.now() - cached.time < GIFCITIES_CACHE_MS) {
+		return cached.data;
+	}
+	const upstream = await fetch(`https://gifcities.org/search?q=${encodeURIComponent(query)}&offset=${offset}&page_size=${page_size}`, { headers: GIFCITIES_HEADERS });
+	if (!upstream.ok) {
+		throw new Error(`GifCities search failed: HTTP ${upstream.status}`);
+	}
+	const html = await upstream.text();
+	const results = [];
+	const pattern = /<img[^>]*?width="(\d+)"[^>]*?height="(\d+)"[^>]*?src="https:\/\/blob\.gifcities\.org\/gifcities\/([A-Z0-9]+)\.gif"/g;
+	let match;
+	while ((match = pattern.exec(html))) {
+		results.push({
+			id: match[3],
+			width: Number(match[1]),
+			height: Number(match[2]),
+			url: `/api/gifcities/gif/${match[3]}`,
+			source: `https://gifcities.org/detail/${match[3]}`,
+		});
+	}
+	const data = { query, offset, page_size, results, next_offset: results.length >= page_size ? offset + page_size : null };
+	gifcities_cache.set(key, { time: Date.now(), data });
+	return data;
+}
+
+/**
+ * @param {string} id
+ * @returns {Promise<Buffer>}
+ */
+async function gifcities_fetch_gif(id) {
+	const upstream = await fetch(`https://blob.gifcities.org/gifcities/${id}.gif`, { headers: GIFCITIES_HEADERS });
+	if (!upstream.ok) {
+		throw new Error(`GifCities GIF fetch failed: HTTP ${upstream.status}`);
+	}
+	return Buffer.from(await upstream.arrayBuffer());
+}
+
+// #endregion
+
 // #region HTTP
 
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
@@ -850,6 +909,23 @@ const server = http.createServer(async (req, res) => {
 		} else if (room_match && req.method === "PUT") {
 			handle_room_write((await read_body(req)).toString("utf8"));
 			send_text(res, 200, "ok");
+		} else if (req.method === "GET" && url.pathname === "/api/gifcities/search") {
+			const page_size = Math.min(GIFCITIES_PAGE_SIZE_MAX, Math.max(1, Number(url.searchParams.get("page_size")) || 40));
+			const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+			send_json(res, 200, await gifcities_search((url.searchParams.get("q") || "").trim().slice(0, 100), offset, page_size));
+		} else if (req.method === "GET" && url.pathname.startsWith("/api/gifcities/gif/")) {
+			const id = url.pathname.slice("/api/gifcities/gif/".length);
+			if (!/^[A-Z0-9]{20,40}$/.test(id)) {
+				send_json(res, 400, { error: "Bad GIF id" });
+				return;
+			}
+			const gif = await gifcities_fetch_gif(id);
+			res.writeHead(200, {
+				"Content-Type": "image/gif",
+				"Content-Length": gif.length,
+				"Cache-Control": "public, max-age=86400",
+			});
+			res.end(gif);
 		} else if (req.method === "GET" && url.pathname.startsWith("/files/")) {
 			await send_file(res, SITE_DIR, decodeURIComponent(url.pathname.slice("/files/".length)));
 		} else if (req.method === "GET" && !url.pathname.startsWith("/api/")) {

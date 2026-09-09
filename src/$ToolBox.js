@@ -4,6 +4,7 @@ import { $Component } from "./$Component.js";
 // import { get_direction, localize } from "./app-localization.js";
 import { select_tool, select_tools } from "./functions.js";
 import { $G, E, make_css_cursor } from "./helpers.js";
+import { toggle_gif_picker } from "./gif-picker.js";
 import { get_theme } from "./theme.js";
 
 
@@ -17,6 +18,9 @@ let theme_dev_blob_url;
 function $ToolBox(tools, is_extras) {
 	const $tools = $(E("div")).addClass("tools");
 	const $tool_options = $(E("div")).addClass("tool-options");
+	// Opens the GIF picker (GifCities search) to add animated stickers. See gif-picker.js.
+	const $gif_button = $(E("button")).addClass("gif-picker-button").attr({ type: "button", title: localize("Find animated GIFs to add as stickers") }).text("GIFs");
+	$gif_button.on("click", () => { toggle_gif_picker(); });
 
 	let showing_tooltips = false;
 	$tools.on("pointerleave", () => {
@@ -98,7 +102,7 @@ function $ToolBox(tools, is_extras) {
 		is_extras ? "Extra Tools" : localize("Tools"),
 		is_extras ? "tools-component extra-tools-component" : "tools-component",
 		"tall",
-		$tools.add($tool_options)
+		$tools.add($tool_options).add($gif_button)
 	));
 	$c.appendTo(get_direction() === "rtl" ? $right : $left); // opposite ColorBox by default
 	$c.update_selected_tool = () => {

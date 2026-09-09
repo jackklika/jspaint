@@ -11,6 +11,7 @@ import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
 import { export_collage_gif } from "./gif-export.js";
+import { is_gif_picker_open, toggle_gif_picker } from "./gif-picker.js";
 import { is_layers_window_open, toggle_layers_window } from "./layers-window.js";
 import { manage_storage } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
@@ -507,6 +508,15 @@ const menus = {
 				check: () => is_layers_window_open(),
 			},
 			description: localize("Shows or hides the Layers window: stickers and web text above the picture."),
+		},
+		{
+			label: localize("&GIF Picker"),
+			speech_recognition: ["gif picker", "find gifs", "search gifs", "show gif picker", "hide gif picker", "gifcities", "open gif picker"],
+			checkbox: {
+				toggle: () => { toggle_gif_picker(); },
+				check: () => is_gif_picker_open(),
+			},
+			description: localize("Shows or hides the GIF picker: search GifCities and add animated stickers."),
 		},
 		MENU_DIVIDER,
 		{

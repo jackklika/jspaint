@@ -22,6 +22,7 @@ import { localStore } from "./storage.js";
 import { get_theme, set_theme } from "./theme.js";
 import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_selected_sticker, init_stickers, is_animated_gif, nudge_selected_sticker } from "./stickers.js";
 import { delete_selected_text_layer, deselect_text_layer, get_selected_text_layer, init_text_layers, nudge_selected_text_layer } from "./text-layers.js";
+import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
 // #region Exports
@@ -824,7 +825,8 @@ $G.on("scroll focusin", () => {
 $("body").on("dragover dragenter", (/** @type {JQuery.DragOverEvent | JQuery.DragEnterEvent} */event) => {
 	const dt = event.originalEvent.dataTransfer;
 	const has_files = dt && Array.from(dt.types).includes("Files");
-	if (has_files) {
+	const has_gif = dt && Array.from(dt.types).includes(GIF_DRAG_TYPE);
+	if (has_files || has_gif) {
 		event.preventDefault();
 	}
 }).on("drop", async (event) => {
@@ -833,6 +835,12 @@ $("body").on("dragover dragenter", (/** @type {JQuery.DragOverEvent | JQuery.Dra
 	}
 	const dt = event.originalEvent.dataTransfer;
 	const has_files = dt && Array.from(dt.types).includes("Files");
+	if (dt && Array.from(dt.types).includes(GIF_DRAG_TYPE)) {
+		// Dragged from the GIF picker: becomes a sticker where it was dropped.
+		event.preventDefault();
+		add_gif_from_url(dt.getData(GIF_DRAG_TYPE), to_canvas_coords(event.originalEvent));
+		return;
+	}
 	if (has_files) {
 		event.preventDefault();
 		// @TODO: sort files/items in priority of image, theme, palette
