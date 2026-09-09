@@ -296,6 +296,7 @@ function restore_text_layers(snapshots) {
 		next_text_layer_id = Math.max(next_text_layer_id, parseInt(snapshot.id.slice(1), 10) + 1 || next_text_layer_id);
 	}
 	select_text_layer(text_layers.find((layer) => layer.id === selected_id) || null);
+	$G.triggerHandler("layers-changed");
 }
 
 function clear_text_layers() {
@@ -311,9 +312,8 @@ function select_text_layer(layer) {
 	if (layer) {
 		deselect_sticker();
 		layer.set_selected(true);
-		text_layers = text_layers.filter((other) => other !== layer).concat(layer);
-		layer.$el.appendTo($canvas_area);
 	}
+	$G.triggerHandler("layers-changed");
 }
 
 function deselect_text_layer() {
@@ -402,6 +402,55 @@ function draw_text_layers(ctx) {
 	}
 }
 
+/** Re-appends text layer elements so DOM order matches the model (bottom to top). Text stays above stickers. */
+function apply_text_layer_order() {
+	for (const layer of text_layers) {
+		layer.$el.appendTo($canvas_area);
+	}
+	$G.triggerHandler("layers-changed");
+}
+
+/**
+ * Moves a text layer up (+1) or down (-1) in the stacking order, as an undoable step.
+ * @param {OnCanvasText} layer
+ * @param {1 | -1} direction
+ */
+function reorder_text_layer(layer, direction) {
+	const index = text_layers.indexOf(layer);
+	const target = index + direction;
+	if (index === -1 || target < 0 || target >= text_layers.length) {
+		return false;
+	}
+	undoable({ name: direction > 0 ? "Raise Text" : "Lower Text", icon: text_icon() }, () => {
+		text_layers.splice(index, 1);
+		text_layers.splice(target, 0, layer);
+		apply_text_layer_order();
+	});
+	return true;
+}
+
+/**
+ * Rasterizes one text layer into the bitmap and removes it.
+ * @param {OnCanvasText} layer
+ */
+function flatten_text_layer(layer) {
+	undoable({ name: "Flatten Text", icon: text_icon() }, () => {
+		layer.draw(main_ctx);
+		text_layers = text_layers.filter((other) => other !== layer);
+		layer.destroy();
+	});
+}
+
+/**
+ * @param {OnCanvasText} layer
+ */
+function delete_text_layer(layer) {
+	undoable({ name: "Delete Text", icon: get_help_folder_icon("p_delete.png") }, () => {
+		text_layers = text_layers.filter((other) => other !== layer);
+		layer.destroy();
+	});
+}
+
 /** Rasterizes all text layers into the bitmap and removes them, as one undoable step. */
 function flatten_text_layers() {
 	if (text_layers.length === 0) {
@@ -460,9 +509,11 @@ export {
 	clear_text_layers,
 	create_text_layer_from_textbox,
 	delete_selected_text_layer,
+	delete_text_layer,
 	deselect_text_layer,
 	draw_text_layers,
 	edit_text_layer,
+	flatten_text_layer,
 	flatten_text_layers,
 	font_css,
 	get_selected_text_layer,
@@ -471,6 +522,7 @@ export {
 	is_web_text_mode,
 	nudge_selected_text_layer,
 	render_text_layer_to_canvas,
+	reorder_text_layer,
 	restore_text_layers,
 	select_text_layer,
 	set_web_text_mode,

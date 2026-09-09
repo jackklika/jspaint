@@ -3,6 +3,7 @@
 import { $DialogWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
 import { E, is_discord_embed } from "./helpers.js";
+import { remove_layers_sidecar } from "./layer-storage.js";
 import { showMessageBox } from "./msgbox.js";
 
 /** @type {OSGUI$Window & I$DialogWindow} */
@@ -82,6 +83,7 @@ function manage_storage() {
 			$tr.next().find(".remove-button").focus();
 
 			localStorage.removeItem(k);
+			remove_layers_sidecar(k.replace("image#", ""));
 			$tr.remove();
 			if ($table.find("tr").length == 0) {
 				$message.html("<p>All clear!</p>");

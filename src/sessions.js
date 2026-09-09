@@ -9,6 +9,7 @@ import { $G, debounce, get_help_folder_icon, image_data_match, is_discord_embed,
 import { storage_quota_exceeded } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
 import { localStore } from "./storage.js";
+import { restore_layers_sidecar, save_layers_sidecar } from "./layer-storage.js";
 
 const log = (...args) => {
 	window.console?.log(...args);
@@ -133,6 +134,13 @@ class LocalSession {
 					}
 				}
 			});
+			// Stickers and text layers ride along in a sidecar entry (layer-storage.js).
+			save_layers_sidecar(session_id, (err) => {
+				// @ts-ignore (quotaExceeded is added by storage.js)
+				if (err && err.quotaExceeded) {
+					storage_quota_exceeded();
+				}
+			});
 		};
 		this.save_image_to_storage_soon = debounce(this.save_image_to_storage_immediately, 100);
 		localStore.get(ls_key, (err, uri) => {
@@ -147,7 +155,9 @@ class LocalSession {
 				}
 			} else if (uri) {
 				load_image_from_uri(uri).then((info) => {
-					open_from_image_info(info, null, null, true, true);
+					open_from_image_info(info, () => {
+						restore_layers_sidecar(session_id);
+					}, null, true, true);
 				}, (error) => {
 					show_error_message("Failed to open image from local storage.", error);
 				});

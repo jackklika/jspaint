@@ -11,6 +11,7 @@ import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
 import { export_collage_gif } from "./gif-export.js";
+import { is_layers_window_open, toggle_layers_window } from "./layers-window.js";
 import { manage_storage } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
 import { simulateRandomGesturesPeriodically, simulatingGestures, stopSimulatingGestures } from "./simulate-random-gestures.js";
@@ -497,6 +498,15 @@ const menus = {
 				check: () => show_font_box,
 			},
 			description: localize("Shows or hides the text toolbar."),
+		},
+		{
+			label: localize("&Layers"),
+			speech_recognition: ["layers", "show layers", "hide layers", "layers window", "toggle layers", "show the layers window", "hide the layers window"],
+			checkbox: {
+				toggle: () => { toggle_layers_window(); },
+				check: () => is_layers_window_open(),
+			},
+			description: localize("Shows or hides the Layers window: stickers and web text above the picture."),
 		},
 		MENU_DIVIDER,
 		{

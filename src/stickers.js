@@ -265,6 +265,7 @@ function restore_stickers(snapshots) {
 	}
 	const previously_selected = stickers.find((sticker) => sticker.id === selected_id);
 	select_sticker(previously_selected || null);
+	$G.triggerHandler("layers-changed");
 }
 
 function clear_stickers() {
@@ -280,10 +281,8 @@ function select_sticker(sticker) {
 	if (sticker) {
 		deselect_text_layer();
 		sticker.set_selected(true);
-		// Bring to the top of the layer order, in the DOM and in the model.
-		stickers = stickers.filter((other) => other !== sticker).concat(sticker);
-		sticker.$el.appendTo($canvas_area);
 	}
+	$G.triggerHandler("layers-changed");
 }
 
 function deselect_sticker() {
@@ -368,6 +367,64 @@ function draw_stickers(ctx) {
 	}
 }
 
+/** Re-appends sticker elements so DOM order matches the model (bottom to top). */
+function apply_sticker_order() {
+	for (const sticker of stickers) {
+		sticker.$el.appendTo($canvas_area);
+	}
+	$G.triggerHandler("layers-changed");
+}
+
+/**
+ * Moves a sticker up (+1) or down (-1) in the stacking order, as an undoable step.
+ * @param {OnCanvasSticker} sticker
+ * @param {1 | -1} direction
+ */
+function reorder_sticker(sticker, direction) {
+	const index = stickers.indexOf(sticker);
+	const target = index + direction;
+	if (index === -1 || target < 0 || target >= stickers.length) {
+		return false;
+	}
+	undoable({
+		name: direction > 0 ? "Raise Sticker" : "Lower Sticker",
+		icon: sticker_icon(),
+	}, () => {
+		stickers.splice(index, 1);
+		stickers.splice(target, 0, sticker);
+		apply_sticker_order();
+	});
+	return true;
+}
+
+/**
+ * Rasterizes one sticker into the bitmap and removes it.
+ * @param {OnCanvasSticker} sticker
+ */
+function flatten_sticker(sticker) {
+	undoable({
+		name: "Flatten Sticker",
+		icon: sticker_icon(),
+	}, () => {
+		sticker.draw(main_ctx);
+		stickers = stickers.filter((other) => other !== sticker);
+		sticker.destroy();
+	});
+}
+
+/**
+ * @param {OnCanvasSticker} sticker
+ */
+function delete_sticker(sticker) {
+	undoable({
+		name: "Delete Sticker",
+		icon: get_help_folder_icon("p_delete.png"),
+	}, () => {
+		stickers = stickers.filter((other) => other !== sticker);
+		sticker.destroy();
+	});
+}
+
 /** Rasterizes all stickers into the bitmap and removes them, as one undoable step. */
 function flatten_stickers() {
 	if (stickers.length === 0) {
@@ -420,8 +477,10 @@ export {
 	add_sticker_from_blob,
 	clear_stickers,
 	delete_selected_sticker,
+	delete_sticker,
 	deselect_sticker,
 	draw_stickers,
+	flatten_sticker,
 	flatten_stickers,
 	flip_selected_sticker,
 	get_selected_sticker,
@@ -431,6 +490,7 @@ export {
 	is_animated_gif,
 	nudge_selected_sticker,
 	register_sticker_source,
+	reorder_sticker,
 	restore_stickers,
 	select_sticker,
 	snapshot_stickers
