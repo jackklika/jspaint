@@ -16,7 +16,9 @@
 		"*.psd",
 		"*.mp4",
 		"localization",
-		"agent-server/config.json" // contains a random secret
+		"agent-server/config.json", // contains a random secret
+		"worker/editor/dist",
+		"worker/.wrangler"
 	],
 	"words": [
 		"abcdefghijklmnopqrstuvwxyzabcdef",
@@ -51,6 +53,10 @@
 		"sandboxed",
 		"IHDR",
 		"blish",
+		"assetsignore",
+		"xlink",
+		"formaction",
+		"bgcolor",
 		"pageerror",
 		"domcontentloaded",
 		"noopener",

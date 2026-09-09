@@ -10,6 +10,7 @@ import { are_you_sure, change_url_param, choose_file_to_paste, clear, delete_sel
 import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
+import { show_publish_dialog } from "./site-publish.js";
 import { export_collage_gif } from "./gif-export.js";
 import { is_gif_picker_open, toggle_gif_picker } from "./gif-picker.js";
 import { is_layers_window_open, toggle_layers_window } from "./layers-window.js";
@@ -103,6 +104,12 @@ const menus = {
 			],
 			action: () => { save_collage_as_web_page(); },
 			description: localize("Saves the picture and its stickers as a web page, with the stickers still animating."),
+		},
+		{
+			label: localize("Save to &My Site..."),
+			speech_recognition: ["save to my site", "publish to my site", "put this on my site", "upload to my site", "save to the web", "publish page"],
+			action: () => { show_publish_dialog(); },
+			description: localize("Publishes the picture and its stickers as a page on your site."),
 		},
 		MENU_DIVIDER,
 		{

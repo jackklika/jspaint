@@ -16,6 +16,8 @@ export default [
 			"**/out/", // Electron build
 			"**/build/", // maybe nothing
 			"**/dist/", // maybe nothing
+			"**/worker/editor/dist/", // built copy of the Paint app for the editor Worker
+			"**/.wrangler/",
 			"**/localization/*/*.js", // generated files (note that there is some non-generated JS directly in `localization/`, hence not using `**/localization/**/*.js`)
 		],
 	},
@@ -295,6 +297,23 @@ export default [
 				"file_name": "readonly",
 				"undos": "readonly",
 				"saved": "writable",
+			},
+		},
+	},
+	{
+		"files": [
+			"worker/**/*.js",
+			"worker/**/*.mjs",
+		],
+		"languageOptions": {
+			"sourceType": "module",
+			"globals": {
+				...globals.browser,
+				...globals.node,
+				"HTMLRewriter": "readonly",
+				"R2Bucket": "readonly",
+				"DurableObjectNamespace": "readonly",
+				"Fetcher": "readonly",
 			},
 		},
 	},

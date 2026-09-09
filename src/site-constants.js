@@ -9,3 +9,9 @@ export const GIF_EXPORT_MAX_DURATION_MS = 10000;
 
 /** Most frames an animated GIF export will contain; longer timelines are quantized to fit. */
 export const GIF_EXPORT_MAX_FRAMES = 200;
+
+/** The hosted editor Worker (Paint app + publish API + GifCities proxy). Overridable in File > Save to My Site. */
+export const DEFAULT_EDITOR_URL = "https://jspaint-editor.jklika2.workers.dev";
+
+/** Where published sites live: `${DEFAULT_SITES_URL}/~name/`. */
+export const DEFAULT_SITES_URL = "https://jspaint-sites.jklika2.workers.dev";

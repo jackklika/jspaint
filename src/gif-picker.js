@@ -6,9 +6,18 @@
 // the agent server's proxy (agent-server/server.js); the hosted editor will proxy through its Worker.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { get_server_url } from "./agent-drive.js";
+import { get_site_editor_url } from "./site-publish.js";
 import { show_error_message } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { add_sticker_from_blob } from "./stickers.js";
+
+/** The GifCities proxy: the hosted editor Worker, or the local agent server when Paint runs from it. */
+function proxy_base() {
+	if (location.origin.startsWith("http://localhost") && get_server_url().startsWith(location.origin)) {
+		return get_server_url();
+	}
+	return get_site_editor_url();
+}
 
 /** dataTransfer type for dragging a result from the picker onto the canvas (handled in app.js) */
 const GIF_DRAG_TYPE = "application/x-jspaint-gif-url";
@@ -62,13 +71,13 @@ async function search(query, append = false) {
 	$status.text(localize("Searching..."));
 	$more?.prop("disabled", true);
 	try {
-		const response = await fetch(`${get_server_url()}/api/gifcities/search?q=${encodeURIComponent(current_query)}&offset=${next_offset}&page_size=${PAGE_SIZE}`);
+		const response = await fetch(`${proxy_base()}/api/gifcities/search?q=${encodeURIComponent(current_query)}&offset=${next_offset}&page_size=${PAGE_SIZE}`);
 		if (!response.ok) {
 			throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
 		}
 		const data = await response.json();
 		for (const result of data.results) {
-			const url = `${get_server_url()}${result.url}`;
+			const url = `${proxy_base()}${result.url}`;
 			const $tile = $(E("button")).addClass("gif-tile").attr({
 				type: "button",
 				draggable: "true",

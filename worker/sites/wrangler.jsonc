@@ -1,0 +1,25 @@
+{
+	// jspaint-sites: the sandbox. Serves ~name pages from R2 and nothing else (docs/DESIGN.md §9).
+	// Deliberately weak: read-only bucket access, one Durable Object for <x-*> state, no secrets.
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "jspaint-sites",
+	"main": "index.js",
+	"compatibility_date": "2026-09-08",
+	"workers_dev": true,
+	"preview_urls": false,
+	"observability": { "enabled": true },
+	"r2_buckets": [
+		{ "binding": "SITES", "bucket_name": "jspaint-sites" }
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "SITE_STATE", "class_name": "SiteState" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SiteState"] }
+	],
+	"vars": {
+		"EDITOR_URL": "https://jspaint-editor.jklika2.workers.dev"
+	}
+}
