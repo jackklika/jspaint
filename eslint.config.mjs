@@ -277,6 +277,29 @@ export default [
 	},
 	{
 		"files": [
+			"test/site-builder/**/*.mjs",
+		],
+		"languageOptions": {
+			"sourceType": "module",
+			"globals": {
+				...globals.node,
+				...globals.browser, // page.evaluate callbacks run in the page
+				"GIF": "readonly",
+				"ImageDecoder": "readonly",
+				"current_history_node": "readonly",
+				"main_canvas": "readonly",
+				"main_ctx": "readonly",
+				"selection": "readonly",
+				"textbox": "readonly",
+				"file_format": "readonly",
+				"file_name": "readonly",
+				"undos": "readonly",
+				"saved": "writable",
+			},
+		},
+	},
+	{
+		"files": [
 			"agent-server/**/*.js",
 		],
 		"languageOptions": {

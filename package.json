@@ -111,6 +111,7 @@
     "globals": "^15.3.0",
     "npm-run-all": "^4.1.5",
     "onchange": "^7.1.0",
+    "playwright": "^1.63.0",
     "os-gui": "0.7.3",
     "rtlcss": "^4.1.1",
     "start-server-and-test": "^2.0.3",
@@ -142,6 +143,8 @@
     "cy:run": "cypress run",
     "cy:accept": "cypress run --env updateSnapshots=true",
     "test": "start-server-and-test test:start-server http://localhost:11822 cy:run",
+    "site-builder:run": "node test/site-builder/run.mjs",
+    "test:site-builder": "start-server-and-test test:start-server http://localhost:11822 site-builder:run",
     "accept": "start-server-and-test test:start-server http://localhost:11822 cy:accept"
   },
   "repository": {
