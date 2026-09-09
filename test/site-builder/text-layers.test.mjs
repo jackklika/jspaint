@@ -32,7 +32,7 @@ assert.deepEqual(await layers(), ['t1:"Hello web page"@50,50 "Arial" href=']);
 
 // Link dialog
 await page.mouse.click(...middle);
-await click_menu_item(page, "Text Layer Link...");
+await click_menu_item(page, "Add Link to Element...");
 await page.waitForSelector(".dialog-window input[type=text]", { timeout: 5000 });
 await page.fill(".dialog-window input[type=text]", "https://example.com/");
 await page.keyboard.press("Enter");

@@ -20,7 +20,7 @@ import { stopSimulatingGestures } from "./simulate-random-gestures.js";
 import { disable_speech_recognition, enable_speech_recognition, trace_and_sketch_stop } from "./speech-recognition.js";
 import { localStore } from "./storage.js";
 import { get_theme, set_theme } from "./theme.js";
-import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_selected_sticker, init_stickers, is_animated_gif, nudge_selected_sticker } from "./stickers.js";
+import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_selected_sticker, init_stickers, is_animated_gif, nudge_selected_sticker, rotate_selected_sticker } from "./stickers.js";
 import { delete_selected_text_layer, deselect_text_layer, get_selected_text_layer, init_text_layers, nudge_selected_text_layer } from "./text-layers.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
@@ -1156,13 +1156,17 @@ $G.on("keydown", (e) => {
 			case "<":
 			case "[":
 			case "{":
-				rotate(-TAU / 4);
+				if (!rotate_selected_sticker(-90)) { // a selected sticker rotates instead of the picture
+					rotate(-TAU / 4);
+				}
 				break;
 			case ".": // ">" without Shift
 			case ">":
 			case "]":
 			case "}":
-				rotate(+TAU / 4);
+				if (!rotate_selected_sticker(90)) {
+					rotate(+TAU / 4);
+				}
 				break;
 			case "Z":
 				if (e.shiftKey) {

@@ -37,7 +37,7 @@ const decode_cache = new Map();
  */
 async function decode_gif(blob) {
 	const ImageDecoderClass = /** @type {any} */ (window).ImageDecoder;
-	if (!ImageDecoderClass) {
+	if (!ImageDecoderClass || blob.type !== "image/gif") {
 		// No WebCodecs: fall back to the first frame (static).
 		const img = new Image();
 		const url = URL.createObjectURL(blob);
@@ -150,6 +150,7 @@ function composite_frame(ctx, t, decoded) {
 		const frame = frame_at(gif, t);
 		ctx.save();
 		ctx.translate(sticker.x + sticker.width / 2, sticker.y + sticker.height / 2);
+		ctx.rotate((sticker.rotation || 0) * Math.PI / 180);
 		ctx.scale(sticker.flip_x ? -1 : 1, sticker.flip_y ? -1 : 1);
 		ctx.imageSmoothingEnabled = false;
 		ctx.drawImage(frame.canvas, -sticker.width / 2, -sticker.height / 2, sticker.width, sticker.height);

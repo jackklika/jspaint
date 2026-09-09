@@ -1,4 +1,5 @@
 // @ts-check
+/* global selection:writable */
 /* global $canvas_area, main_canvas, main_ctx, magnification */
 // Stickers: animated GIFs that live on top of the bitmap as their own layer instead of being rasterized.
 //
@@ -8,6 +9,7 @@
 // and redo, and they're serialized as `img.sticker` elements in the collage format (docs/DESIGN.md §3.3).
 // The bitmap stays the base layer; raster tools paint under stickers. "Flatten" draws them into the bitmap.
 import { Handles } from "./Handles.js";
+import { $DialogWindow } from "./$ToolWindow.js";
 import { OnCanvasObject } from "./OnCanvasObject.js";
 import { make_or_update_undoable, undoable } from "./functions.js";
 import { $G, E, get_help_folder_icon, make_css_cursor, to_canvas_coords } from "./helpers.js";
@@ -60,12 +62,26 @@ async function is_animated_gif(blob) {
 }
 
 /**
+ * @param {Uint8Array} head - the first bytes of a file
+ * @returns {string | null} MIME type by magic number
+ */
+function sniff_image_type(head) {
+	if (head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) { return "image/gif"; }
+	if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4E) { return "image/png"; }
+	if (head[0] === 0xFF && head[1] === 0xD8) { return "image/jpeg"; }
+	if (head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42) { return "image/webp"; }
+	return null;
+}
+
+/**
  * @param {Blob} blob
  * @returns {Promise<StickerSource>}
  */
-function register_sticker_source(blob) {
-	if (blob.type !== "image/gif") {
-		blob = new Blob([blob], { type: "image/gif" }); // fetched GIFs often arrive as application/octet-stream; the format relies on the type
+async function register_sticker_source(blob) {
+	// Fetched images often arrive as application/octet-stream; the collage format relies on a real type.
+	const type = sniff_image_type(new Uint8Array(await blob.slice(0, 12).arrayBuffer())) || blob.type || "image/png";
+	if (blob.type !== type) {
+		blob = new Blob([blob], { type });
 	}
 	const url = URL.createObjectURL(blob);
 	return new Promise((resolve, reject) => {
@@ -101,12 +117,14 @@ class OnCanvasSticker extends OnCanvasObject {
 		this.source_id = snapshot.source_id;
 		this.flip_x = !!snapshot.flip_x;
 		this.flip_y = !!snapshot.flip_y;
+		this.rotation = snapshot.rotation || 0;
+		this.href = snapshot.href || "";
 
 		const source = sticker_sources.get(this.source_id);
 		this.$el.addClass("sticker");
 		this.$img = $(E("img")).attr({ src: source ? source.url : "", alt: "", draggable: "false" }).appendTo(this.$el);
 		this.$img.css({ cursor: make_css_cursor("move", [8, 8], "move"), touchAction: "none" });
-		this.update_flip();
+		this.update_transform();
 
 		this.handles = new Handles({
 			$handles_container: this.$el,
@@ -169,8 +187,10 @@ class OnCanvasSticker extends OnCanvasObject {
 	position() {
 		super.position(true);
 	}
-	update_flip() {
-		this.$img.css({ transform: `scale(${this.flip_x ? -1 : 1}, ${this.flip_y ? -1 : 1})` });
+	/** Applies rotation, flips, and the link marker. Rotation is on the image, so the handles stay axis-aligned. */
+	update_transform() {
+		this.$img.css({ transform: `rotate(${this.rotation}deg) scale(${this.flip_x ? -1 : 1}, ${this.flip_y ? -1 : 1})` });
+		this.$el.toggleClass("has-link", !!this.href).attr("title", this.href || null);
 	}
 	/** @param {boolean} selected */
 	set_selected(selected) {
@@ -183,7 +203,7 @@ class OnCanvasSticker extends OnCanvasObject {
 	}
 	/** @returns {StickerSnapshot} */
 	snapshot() {
-		return { id: this.id, source_id: this.source_id, x: this.x, y: this.y, width: this.width, height: this.height, flip_x: this.flip_x, flip_y: this.flip_y };
+		return { id: this.id, source_id: this.source_id, x: this.x, y: this.y, width: this.width, height: this.height, flip_x: this.flip_x, flip_y: this.flip_y, rotation: this.rotation, href: this.href };
 	}
 	/**
 	 * Draws the sticker's current frame (the first frame, per the canvas spec) into a context.
@@ -196,6 +216,7 @@ class OnCanvasSticker extends OnCanvasObject {
 		}
 		ctx.save();
 		ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+		ctx.rotate(this.rotation * Math.PI / 180);
 		ctx.scale(this.flip_x ? -1 : 1, this.flip_y ? -1 : 1);
 		ctx.drawImage(img, -this.width / 2, -this.height / 2, this.width, this.height);
 		ctx.restore();
@@ -238,6 +259,8 @@ async function add_sticker_from_blob(blob, { x, y } = {}) {
 			height,
 			flip_x: false,
 			flip_y: false,
+			rotation: 0,
+			href: "",
 		});
 		stickers.push(sticker);
 		select_sticker(sticker);
@@ -352,7 +375,118 @@ function flip_selected_sticker(axis) {
 		} else {
 			sticker.flip_y = !sticker.flip_y;
 		}
-		sticker.update_flip();
+		sticker.update_transform();
+	});
+	return true;
+}
+
+/**
+ * Rotates the selected sticker by some degrees (clockwise), as an undoable step.
+ * @param {number} degrees
+ */
+function rotate_selected_sticker(degrees) {
+	const sticker = selected_sticker;
+	if (!sticker) {
+		return false;
+	}
+	set_sticker_rotation(sticker, sticker.rotation + degrees);
+	return true;
+}
+
+/**
+ * @param {OnCanvasSticker} sticker
+ * @param {number} degrees - absolute, clockwise
+ */
+function set_sticker_rotation(sticker, degrees) {
+	const rotation = ((Math.round(degrees) % 360) + 360) % 360;
+	if (rotation === sticker.rotation) {
+		return;
+	}
+	undoable({
+		name: "Rotate Sticker",
+		icon: get_help_folder_icon(degrees >= sticker.rotation ? "p_rotate_cw.png" : "p_rotate_ccw.png"),
+	}, () => {
+		sticker.rotation = rotation;
+		sticker.update_transform();
+	});
+}
+
+/** Image > Rotate Sticker By Angle…: any angle, clockwise. */
+function show_rotate_sticker_dialog() {
+	const sticker = selected_sticker;
+	if (!sticker) {
+		return;
+	}
+	const $w = $DialogWindow("Rotate Sticker");
+	$w.addClass("horizontal-buttons");
+	const $label = $(E("label")).text("Angle (degrees, clockwise): ").appendTo($w.$main);
+	const $input = $(E("input")).attr({ type: "number", step: "1", min: "-360", max: "360" }).val(String(sticker.rotation)).css({ width: 70 }).appendTo($label);
+	$w.$Button("OK", () => {
+		$w.close();
+		const degrees = Number($input.val());
+		if (Number.isFinite(degrees)) {
+			set_sticker_rotation(sticker, degrees);
+		}
+	}, { type: "submit" });
+	$w.$Button("Cancel", () => { $w.close(); });
+	$w.center();
+	$input.focus();
+	/** @type {HTMLInputElement} */ ($input[0]).select();
+}
+
+/**
+ * Sets or removes the selected sticker's link.
+ * @param {string} href
+ */
+function set_selected_sticker_link(href) {
+	const sticker = selected_sticker;
+	if (!sticker || href === sticker.href) {
+		return false;
+	}
+	undoable({
+		name: href ? "Set Sticker Link" : "Remove Sticker Link",
+		icon: sticker_icon(),
+	}, () => {
+		sticker.href = href;
+		sticker.update_transform();
+	});
+	return true;
+}
+
+/**
+ * Image > Make Sticker from Selection: turns the current selection (any pasted or selected image)
+ * into a sticker layer, so it can be rotated, linked, and kept as a real image on the page.
+ */
+async function make_sticker_from_selection() {
+	if (!selection) {
+		return false;
+	}
+	const { x, y, width, height } = selection;
+	const blob = await new Promise((resolve) => selection.canvas.toBlob(resolve, "image/png"));
+	const source = await register_sticker_source(blob);
+	if (!selection) {
+		return false; // it went away while encoding
+	}
+	undoable({
+		name: "Make Sticker",
+		icon: sticker_icon(),
+	}, () => {
+		selection.destroy(); // without drawing it back into the picture
+		selection = null;
+		const sticker = new OnCanvasSticker({
+			id: `s${next_sticker_id++}`,
+			source_id: source.id,
+			x,
+			y,
+			width,
+			height,
+			flip_x: false,
+			flip_y: false,
+			rotation: 0,
+			href: "",
+		});
+		stickers.push(sticker);
+		select_sticker(sticker);
 	});
 	return true;
 }
@@ -469,6 +603,15 @@ function init_stickers() {
 			outline: 1px dashed #000;
 			outline-offset: 0;
 		}
+		.sticker.has-link::after {
+			content: "🔗";
+			position: absolute;
+			right: -4px;
+			top: -4px;
+			font-size: 10px;
+			line-height: 1;
+			pointer-events: none;
+		}
 	`).appendTo(document.head);
 }
 
@@ -488,10 +631,14 @@ export {
 	get_stickers,
 	init_stickers,
 	is_animated_gif,
+	make_sticker_from_selection,
 	nudge_selected_sticker,
 	register_sticker_source,
 	reorder_sticker,
 	restore_stickers,
+	rotate_selected_sticker,
 	select_sticker,
+	set_selected_sticker_link,
+	show_rotate_sticker_dialog,
 	snapshot_stickers
 };

@@ -833,6 +833,10 @@ interface StickerSnapshot {
 	height: number;
 	flip_x: boolean;
 	flip_y: boolean;
+	/** degrees, clockwise, around the center (default 0) */
+	rotation?: number;
+	/** link target; empty for none */
+	href?: string;
 }
 
 /** Font of a text layer: solid colors only, sizes in points, like the Text tool. */

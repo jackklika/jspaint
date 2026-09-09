@@ -8,7 +8,6 @@
 // `stickers` field) and serialized as `span.text` / `a.text` in the collage format (docs/DESIGN.md §3.3).
 // For flattening and GIF export each layer keeps a rasterized copy of itself, rendered the same way the
 // textbox previews text (an SVG <foreignObject>).
-import { $DialogWindow } from "./$ToolWindow.js";
 import { Handles } from "./Handles.js";
 import { OnCanvasObject } from "./OnCanvasObject.js";
 import { OnCanvasTextBox } from "./OnCanvasTextBox.js";
@@ -365,31 +364,20 @@ function nudge_selected_text_layer(dx, dy) {
 	return true;
 }
 
-/** Image > Text Layer Link…: sets or removes the selected layer's link. */
-function show_text_layer_link_dialog() {
+/**
+ * Sets or removes the selected text layer's link.
+ * @param {string} href
+ */
+function set_selected_text_layer_link(href) {
 	const layer = selected_text_layer;
-	if (!layer) {
-		return;
+	if (!layer || href === layer.href) {
+		return false;
 	}
-	const $w = $DialogWindow("Text Layer Link");
-	$w.addClass("horizontal-buttons");
-	const $label = $(E("label")).text("Address (URL): ").appendTo($w.$main);
-	const $input = $(E("input")).attr({ type: "text", spellcheck: "false", placeholder: "https://example.com/ or about.html" }).val(layer.href).css({ width: 300 }).appendTo($label);
-	const apply = (/** @type {string} */ href) => {
-		$w.close();
-		if (href === layer.href) { return; }
-		undoable({ name: href ? "Set Text Link" : "Remove Text Link", icon: text_icon() }, () => {
-			layer.href = href;
-			layer.render();
-		});
-	};
-	$w.$Button("OK", () => { apply(String($input.val()).trim()); }, { type: "submit" });
-	if (layer.href) {
-		$w.$Button("Remove Link", () => { apply(""); });
-	}
-	$w.$Button("Cancel", () => { $w.close(); });
-	$w.center();
-	$input.focus();
+	undoable({ name: href ? "Set Text Link" : "Remove Text Link", icon: text_icon() }, () => {
+		layer.href = href;
+		layer.render();
+	});
+	return true;
 }
 
 /**
@@ -525,7 +513,7 @@ export {
 	reorder_text_layer,
 	restore_text_layers,
 	select_text_layer,
+	set_selected_text_layer_link,
 	set_web_text_mode,
-	show_text_layer_link_dialog,
 	snapshot_text_layers
 };

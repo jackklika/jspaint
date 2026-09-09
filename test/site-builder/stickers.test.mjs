@@ -35,6 +35,33 @@ assert.deepEqual((await state()).stickers, ["s1@110,50 40x30"]);
 await click_menu_item(page, "Flip Sticker Horizontal");
 assert.deepEqual((await state()).stickers, ["s1@110,50 40x30 fx"]);
 
+// Rotate with Ctrl+. / Ctrl+, (the picture's own rotate keys, redirected to the selected sticker), and via menu
+await page.keyboard.press("Control+.");
+assert.equal(await page.evaluate(() => current_history_node.stickers[0].rotation), 90);
+assert.equal(await page.evaluate(() => current_history_node.name), "Rotate Sticker");
+await page.keyboard.press("Control+,");
+assert.equal(await page.evaluate(() => current_history_node.stickers[0].rotation), 0);
+await click_menu_item(page, "Rotate Sticker Left");
+assert.equal(await page.evaluate(() => current_history_node.stickers[0].rotation), 270);
+assert.match(await page.evaluate(() => document.querySelector(".sticker img").style.transform), /rotate\(270deg\)/);
+await click_menu_item(page, "Rotate Sticker By Angle...");
+await page.waitForSelector(".dialog-window input[type=number]", { timeout: 5000 });
+await page.fill(".dialog-window input[type=number]", "45");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(200);
+assert.equal(await page.evaluate(() => current_history_node.stickers[0].rotation), 45);
+
+// Link via Edit > Add Link to Element…
+await click_menu_item(page, "Add Link to Element...");
+await page.waitForSelector(".dialog-window input[type=text]", { timeout: 5000 });
+await page.fill(".dialog-window input[type=text]", "https://example.com/sticker");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(200);
+assert.equal(await page.evaluate(() => current_history_node.stickers[0].href), "https://example.com/sticker");
+assert.equal(await page.evaluate(() => document.querySelector(".sticker").classList.contains("has-link")), true);
+await page.keyboard.press("Control+z");
+assert.equal(await page.evaluate(() => current_history_node.stickers[0].href), "");
+
 // Painting on the canvas away from the sticker still works and deselects it
 const c = await canvas_box(page);
 const before = await page.evaluate(() => main_ctx.getImageData(400, 300, 1, 1).data.join(","));
@@ -65,6 +92,12 @@ await paste_file(page, await make_gif(page, { frames: ["#123456"] }), "static.gi
 await page.waitForTimeout(600);
 assert.equal(await page.evaluate(() => !!selection), true, "static GIF became a selection");
 assert.equal((await state()).count, 1);
+
+// …but Image > Make Sticker from Selection turns any selection into a sticker layer (PNG source)
+await click_menu_item(page, "Make Sticker from Selection");
+await page.waitForFunction(() => document.querySelectorAll(".sticker").length === 2, null, { timeout: 5000 });
+assert.equal(await page.evaluate(() => !!selection), false);
+assert.equal(await page.evaluate(() => current_history_node.name), "Make Sticker");
 
 await close();
 console.log("stickers: ok");

@@ -23,6 +23,8 @@ const COLLAGE_CSS = `
 .collage > .bitmap { display: block; image-rendering: pixelated; }
 .collage > .sticker, .collage > .text { position: absolute; }
 .collage > .sticker { image-rendering: pixelated; }
+.collage > a.sticker { display: block; }
+.collage > a.sticker > img { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
 .collage > .text { box-sizing: border-box; margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: break-word; overflow: hidden; text-decoration: none; }
 .collage > a.text { text-decoration: underline; }
 `.trim();
@@ -75,8 +77,15 @@ async function serialize_collage_html({ canvas = main_canvas, title = file_name,
 			const source = get_sticker_source(sticker.source_id);
 			if (!source) { continue; }
 			const src = await asset_url(source.blob, "sticker", index++);
-			const transform = sticker.flip_x || sticker.flip_y ? `;transform:scale(${sticker.flip_x ? -1 : 1}, ${sticker.flip_y ? -1 : 1})` : "";
-			sticker_tags.push(`\t\t<img class="sticker" src="${src}" alt="" style="left:${sticker.x}px;top:${sticker.y}px;width:${sticker.width}px;height:${sticker.height}px${transform}">`);
+			const transforms = [];
+			if (sticker.rotation) { transforms.push(`rotate(${sticker.rotation}deg)`); }
+			if (sticker.flip_x || sticker.flip_y) { transforms.push(`scale(${sticker.flip_x ? -1 : 1}, ${sticker.flip_y ? -1 : 1})`); }
+			const style = `left:${sticker.x}px;top:${sticker.y}px;width:${sticker.width}px;height:${sticker.height}px${transforms.length ? `;transform:${transforms.join(" ")}` : ""}`;
+			if (sticker.href) {
+				sticker_tags.push(`\t\t<a class="sticker" href="${escape_html(sticker.href)}" style="${style}"><img src="${src}" alt=""></a>`);
+			} else {
+				sticker_tags.push(`\t\t<img class="sticker" src="${src}" alt="" style="${style}">`);
+			}
 		}
 	}
 	const text_tags = [];
@@ -117,7 +126,7 @@ ${[...sticker_tags, ...text_tags].join("\n")}
  * @property {number} width
  * @property {number} height
  * @property {string} bitmap_src
- * @property {{ src: string, x: number, y: number, width: number, height: number, flip_x: boolean, flip_y: boolean }[]} stickers
+ * @property {{ src: string, x: number, y: number, width: number, height: number, flip_x: boolean, flip_y: boolean, rotation: number, href: string }[]} stickers
  * @property {TextLayerSnapshot[]} text_layers
  */
 
@@ -134,12 +143,18 @@ function parse_collage_html(html) {
 	}
 	const px = (/** @type {string} */ value) => parseFloat(value) || 0;
 	const stickers = [];
-	for (const el of collage.querySelectorAll("img.sticker")) {
+	for (const el of collage.querySelectorAll(".sticker")) {
 		const style = /** @type {HTMLElement} */ (el).style;
 		const transform = style.transform || "";
 		const scale_match = /scale\(\s*(-?[\d.]+)\s*(?:,\s*(-?[\d.]+))?\s*\)/.exec(transform);
+		const rotate_match = /rotate\(\s*(-?[\d.]+)deg\s*\)/.exec(transform);
+		const is_link = el.tagName === "A";
+		const img = is_link ? el.querySelector("img") : el;
+		if (!img) { continue; }
 		stickers.push({
-			src: el.getAttribute("src") || "",
+			src: img.getAttribute("src") || "",
+			href: is_link ? el.getAttribute("href") || "" : "",
+			rotation: rotate_match ? ((Math.round(parseFloat(rotate_match[1])) % 360) + 360) % 360 : 0,
 			x: px(style.left),
 			y: px(style.top),
 			width: px(style.width),
@@ -254,6 +269,8 @@ async function open_collage_from_file(file) {
 						height: sticker.height || source.height,
 						flip_x: sticker.flip_x,
 						flip_y: sticker.flip_y,
+						rotation: sticker.rotation,
+						href: sticker.href,
 					});
 				} catch (error) {
 					show_error_message("Couldn't load one of the collage's stickers; skipping it.", error);

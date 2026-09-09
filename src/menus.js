@@ -18,8 +18,9 @@ import { showMessageBox } from "./msgbox.js";
 import { simulateRandomGesturesPeriodically, simulatingGestures, stopSimulatingGestures } from "./simulate-random-gestures.js";
 import { speech_recognition_active, speech_recognition_available } from "./speech-recognition.js";
 import { get_theme, set_theme } from "./theme.js";
-import { flatten_stickers, flip_selected_sticker, get_selected_sticker, get_stickers } from "./stickers.js";
-import { flatten_text_layers, get_selected_text_layer, get_text_layers, show_text_layer_link_dialog } from "./text-layers.js";
+import { has_linkable_element, show_element_link_dialog } from "./element-link.js";
+import { flatten_stickers, flip_selected_sticker, get_selected_sticker, get_stickers, make_sticker_from_selection, rotate_selected_sticker, show_rotate_sticker_dialog } from "./stickers.js";
+import { flatten_text_layers, get_text_layers } from "./text-layers.js";
 
 /** File > Save as Web Page: the regular Save As flow, preselecting the collage web page format. */
 function save_collage_as_web_page() {
@@ -413,6 +414,13 @@ const menus = {
 			action: () => { select_all(); },
 			description: localize("Selects everything."),
 		},
+		{
+			label: localize("Add Link to &Element..."),
+			speech_recognition: ["add link", "add a link", "add link to element", "make it a link", "make this a link", "link this", "set link", "edit link", "remove link"],
+			enabled: () => has_linkable_element(),
+			action: () => { show_element_link_dialog(); },
+			description: localize("Makes the selected sticker or text a link, or removes its link."),
+		},
 		MENU_DIVIDER,
 		{
 			label: `${localize("C&opy To")}...`,
@@ -728,18 +736,39 @@ const menus = {
 			description: localize("Flips the selected sticker vertically."),
 		},
 		{
+			label: localize("&Rotate Sticker Right"),
+			speech_recognition: ["rotate sticker", "rotate sticker right", "rotate sticker clockwise", "turn sticker right", "turn the sticker"],
+			enabled: () => !!get_selected_sticker(),
+			action: () => { rotate_selected_sticker(90); },
+			description: localize("Rotates the selected sticker 90 degrees clockwise (Ctrl+.)."),
+		},
+		{
+			label: localize("Rotate Sticker &Left"),
+			speech_recognition: ["rotate sticker left", "rotate sticker counterclockwise", "rotate sticker counter clockwise", "turn sticker left"],
+			enabled: () => !!get_selected_sticker(),
+			action: () => { rotate_selected_sticker(-90); },
+			description: localize("Rotates the selected sticker 90 degrees counterclockwise (Ctrl+,)."),
+		},
+		{
+			label: localize("Rotate Sticker &By Angle..."),
+			speech_recognition: ["rotate sticker by angle", "rotate sticker by an angle", "rotate the sticker by degrees", "set sticker angle", "sticker angle"],
+			enabled: () => !!get_selected_sticker(),
+			action: () => { show_rotate_sticker_dialog(); },
+			description: localize("Rotates the selected sticker by any angle."),
+		},
+		{
+			label: localize("&Make Sticker from Selection"),
+			speech_recognition: ["make sticker", "make sticker from selection", "turn selection into sticker", "selection to sticker", "convert selection to sticker", "make this a sticker"],
+			enabled: () => !!selection,
+			action: () => { make_sticker_from_selection(); },
+			description: localize("Turns the selection into a sticker layer, so it can be rotated, linked, and kept as a real image on the page."),
+		},
+		{
 			label: localize("Flatten Stic&kers"),
 			speech_recognition: ["flatten stickers", "flatten the stickers", "merge stickers", "merge stickers into the image", "rasterize stickers"],
 			enabled: () => get_stickers().length > 0,
 			action: () => { flatten_stickers(); },
 			description: localize("Draws the stickers (animated GIFs) into the picture as pixels and removes them."),
-		},
-		{
-			label: localize("Text Layer &Link..."),
-			speech_recognition: ["text link", "set text link", "make the text a link", "link the text", "add a link to the text", "remove text link"],
-			enabled: () => !!get_selected_text_layer(),
-			action: () => { show_text_layer_link_dialog(); },
-			description: localize("Makes the selected text layer a link, or removes its link."),
 		},
 		{
 			label: localize("Flatten Text La&yers"),

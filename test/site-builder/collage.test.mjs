@@ -13,7 +13,13 @@ await paste_file(page, await make_gif(page, { width: 20, height: 20, frames: ["#
 await page.waitForFunction(() => document.querySelectorAll(".sticker").length === 2, null, { timeout: 5000 });
 for (let i = 0; i < 3; i++) { await page.keyboard.press("Shift+ArrowRight"); }
 await click_menu_item(page, "Flip Sticker Horizontal");
-const snapshot = () => page.evaluate(() => current_history_node.stickers.map((s) => `${s.x},${s.y} ${s.width}x${s.height} fx=${s.flip_x}`));
+await click_menu_item(page, "Rotate Sticker Right");
+await click_menu_item(page, "Add Link to Element...");
+await page.waitForSelector(".dialog-window input[type=text]", { timeout: 5000 });
+await page.fill(".dialog-window input[type=text]", "https://example.com/");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(200);
+const snapshot = () => page.evaluate(() => current_history_node.stickers.map((s) => `${s.x},${s.y} ${s.width}x${s.height} fx=${s.flip_x} rot=${s.rotation} href=${s.href}`));
 const ink = () => page.evaluate(() => main_ctx.getImageData(0, 0, main_canvas.width, main_canvas.height).data.filter((v, i) => i % 4 === 0 && v !== 255).length);
 const before = { stickers: await snapshot(), ink: await ink() };
 
@@ -25,7 +31,8 @@ assert.equal(saved_page.format, "text/html");
 assert.match(saved_page.text, /class="collage"/);
 assert.match(saved_page.text, /class="bitmap" src="data:image\/png/);
 assert.equal((saved_page.text.match(/class="sticker"/g) || []).length, 2);
-assert.match(saved_page.text, /transform:scale\(-1, 1\)/);
+assert.match(saved_page.text, /transform:rotate\(90deg\) scale\(-1, 1\)/);
+assert.match(saved_page.text, /<a class="sticker" href="https:\/\/example\.com\/"[^>]*><img src="data:image\/gif/);
 
 // Reopen it
 await page.evaluate(() => { saved = true; });
