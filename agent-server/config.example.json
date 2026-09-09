@@ -1,0 +1,38 @@
+{
+	"port": 4097,
+
+	"site_dir": "../../jspaint-site",
+	"site_url": "https://jspaint-site.jklika2.workers.dev",
+	"site_title": "JS Paint Site",
+
+	"opencode": {
+		"command": "opencode",
+		"model": "",
+		"agent": "",
+		"auto_approve": true,
+		"timeout_minutes": 15,
+		"extra_args": []
+	},
+
+	"deploy": {
+		"enabled": true,
+		"command": "npx wrangler",
+		"preview_alias": "preview",
+		"min_interval_ms": 3000,
+		"timeout_minutes": 5
+	},
+
+	"live": {
+		"url": "https://jspaint-live.jklika2.workers.dev",
+		"room": "live",
+		"secret": ""
+	},
+
+	"site_template": {
+		"sync_on_start": true
+	},
+
+	"git": {
+		"remote": "origin"
+	}
+}

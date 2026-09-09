@@ -1,0 +1,22 @@
+{
+	// Managed by the jspaint fork: agent-server/site-template/live/wrangler.jsonc — edit it there.
+	// The realtime room for live preview. Deploy with `npm run deploy-live` (wrangler deploy -c live/wrangler.jsonc).
+	// Separate from the site Worker because Workers with Durable Objects don't get preview URLs.
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "jspaint-live",
+	"main": "room.js",
+	"compatibility_date": "2026-09-08",
+	"workers_dev": true,
+	"observability": {
+		"enabled": true
+	},
+	"durable_objects": {
+		"bindings": [
+			{ "name": "ROOM", "class_name": "Room" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["Room"] }
+	]
+	// Secret (not in config): `LIVE_SECRET` — set with `npm run set-live-secret` in agent-server/.
+}

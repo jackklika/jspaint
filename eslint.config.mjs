@@ -277,6 +277,17 @@ export default [
 	},
 	{
 		"files": [
+			"agent-server/**/*.js",
+		],
+		"languageOptions": {
+			"sourceType": "module",
+			"globals": {
+				...globals.node,
+			},
+		},
+	},
+	{
+		"files": [
 			"cypress/**/*.js",
 		],
 		"languageOptions": {

@@ -1,0 +1,13 @@
+{
+	"name": "jspaint-site",
+	"private": true,
+	"description": "One-page site edited by drawing in JS Paint. Managed by the jspaint fork (agent-server/site-template).",
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"preview": "wrangler versions upload --preview-alias preview",
+		"deploy-live": "wrangler deploy -c live/wrangler.jsonc"
+	},
+	"devDependencies": {
+		"wrangler": "^4.130.0"
+	}
+}

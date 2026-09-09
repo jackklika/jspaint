@@ -1,0 +1,15 @@
+{
+	"name": "jspaint-agent-server",
+	"private": true,
+	"version": "0.1.0",
+	"description": "Local companion server for JS Paint's Agent window: saves drawings as iterations, runs opencode to turn them into HTML, and publishes the site repo. No dependencies.",
+	"type": "module",
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"start": "node server.js",
+		"sync-site": "node sync-site.js",
+		"set-live-secret": "node sync-site.js --set-live-secret"
+	}
+}

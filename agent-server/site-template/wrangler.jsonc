@@ -1,0 +1,19 @@
+{
+	// Managed by the jspaint fork: agent-server/site-template/wrangler.jsonc — edit it there, not in the site repo.
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "jspaint-site",
+	"compatibility_date": "2026-09-08",
+	"observability": {
+		"enabled": true
+	},
+	// Production: `wrangler deploy` (run by the GitHub workflow on push to main).
+	// Preview:    `wrangler versions upload --preview-alias preview` (run by agent-server on every iteration)
+	//             → https://preview-jspaint-site.<subdomain>.workers.dev
+	"workers_dev": true,
+	"preview_urls": true,
+	// Only public/ is served. Repo docs, the workflow, node_modules and .git must never be deployed.
+	// This Worker stays assets-only on purpose: the realtime room lives in live/ so previews keep working.
+	"assets": {
+		"directory": "./public"
+	}
+}

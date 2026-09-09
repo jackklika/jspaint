@@ -54,6 +54,9 @@ I want to bring good old Paint into the modern era.
     It isn't seamless; actions by other users interrupt what you're doing, and visa versa.
     Sessions are not private, and you may lose your work at any time.
     If you want better collaboration support, follow the development of [Mopaint](https://github.com/1j01/mopaint).
+* **Extras > Agent Window** (this fork) to drive a website-editing LLM agent with your drawing.
+  Draw or annotate a screenshot of the page, then <kbd>Ctrl+Alt+I</kbd> saves the *iteration*: in **Display** mode the page simply shows the drawing; in **HTML** mode an agent ([opencode](https://opencode.ai)) reads the text and shapes you drew and turns them into real HTML (text, links, buttons), then the page is rendered back into the canvas (right in your browser) for the next round. Each iteration goes live on a Cloudflare preview URL within seconds; <kbd>Ctrl+Alt+P</kbd> publishes to production (git push → GitHub workflow → `wrangler deploy`). A *Live preview* checkbox pushes every stroke to anyone viewing the page within a few hundred milliseconds (no reload), using the Multi-User session machinery plus a small Cloudflare Durable Object room.
+  Needs the local companion server in [`agent-server/`](agent-server/README.md).
 * **Extras > Themes** to change the look of the app.
   * Dark and light variants
   * Vector tool icons handcrafted to match the pixel art versions, for both Modern and Classic themes
