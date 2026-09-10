@@ -298,6 +298,7 @@ export default [
 				"system_file_handle": "readonly",
 				"selected_tool": "readonly",
 				"root_history_node": "readonly",
+				"$canvas_area": "readonly",
 				"undos": "readonly",
 				"saved": "writable",
 			},

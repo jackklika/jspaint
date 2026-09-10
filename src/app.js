@@ -24,6 +24,7 @@ import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_s
 import { delete_selected_text_layer, deselect_text_layer, get_selected_text_layer, init_text_layers, nudge_selected_text_layer } from "./text-layers.js";
 import { delete_selected_block, deselect_block, edit_selected_block, end_block_editing, get_selected_block, init_blocks, is_editing_block, nudge_selected_block } from "./blocks.js";
 import { init_live_session } from "./live-session.js";
+import { init_page_scroll } from "./page-scroll.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
@@ -505,6 +506,7 @@ window.canvas_handles = canvas_handles;
 init_blocks();
 init_stickers();
 init_text_layers();
+init_page_scroll();
 
 const $top = $(E("div")).addClass("component-area top").prependTo($V);
 window.$top = $top;

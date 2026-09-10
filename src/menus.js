@@ -19,6 +19,7 @@ import { open_live_page, show_my_site_dialog, show_sign_in_dialog } from "./my-s
 import { is_live_sync_enabled, set_live_sync_enabled } from "./live-session.js";
 import { BLOCK_KINDS, add_block, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, reorder_block, show_block_html_dialog, show_block_properties_dialog } from "./blocks.js";
 import { show_page_properties_dialog } from "./page-properties.js";
+import { make_page_longer, make_page_shorter } from "./page-scroll.js";
 import { get_tool_by_id } from "./functions.js";
 import { manage_storage } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
@@ -880,6 +881,19 @@ const menus = {
 			speech_recognition: ["page properties", "page settings", "page background", "background color of the page", "wallpaper", "set wallpaper", "page color"],
 			action: () => { show_page_properties_dialog(); },
 			description: localize("Sets the page's background color, text color, and tiled wallpaper."),
+		},
+		{
+			label: localize("Make Page Lon&ger"),
+			speech_recognition: ["make the page longer", "make page longer", "longer page", "extend the page", "add space at the bottom", "more room"],
+			action: () => { make_page_longer(); },
+			description: localize("Adds 300 px to the bottom of the page (also the button under the picture)."),
+		},
+		{
+			label: localize("Make Page Sh&orter"),
+			speech_recognition: ["make the page shorter", "make page shorter", "shorter page", "trim the page"],
+			enabled: () => main_canvas.height > 100,
+			action: () => { make_page_shorter(); },
+			description: localize("Removes 300 px from the bottom of the page."),
 		},
 		{
 			label: localize("&Insert"),
