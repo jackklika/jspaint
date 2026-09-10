@@ -13,8 +13,9 @@
 
 const default_magnification = 1;
 
+// First run is party-ready: the big round brush (see reset_selected_colors for the dark blue).
 /** @type {Tool} */
-const default_tool = window.get_tool_by_id(window.TOOL_PENCIL);
+const default_tool = window.get_tool_by_id(window.TOOL_BRUSH);
 
 // A new document is a page: PAGE_WIDTH wide (site-constants.js exports it to window for this non-module file).
 const default_canvas_width = /** @type {any} */ (window).PAGE_WIDTH || 800;
@@ -62,7 +63,7 @@ let enable_fs_access_api = false;
 
 /** @type {BrushShape} */
 const default_brush_shape = "circle";
-const default_brush_size = 4;
+const default_brush_size = 7; // the largest round brush in the chooser
 const default_eraser_size = 8;
 const default_airbrush_size = 9;
 const default_pencil_size = 1;

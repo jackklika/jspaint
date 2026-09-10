@@ -12,7 +12,7 @@ import { refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
 import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
-import { DEFAULT_EDITOR_URL, DEFAULT_SITES_URL } from "./site-constants.js";
+import { DEFAULT_SITES_URL, default_editor_url } from "./site-constants.js";
 import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
 
 /** @type {string | null} learned from /api/whoami */
@@ -126,12 +126,12 @@ function show_sign_in_dialog() {
 		};
 		const $site = field(localize("Site name:"), settings.site, { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
 		const $secret = field(localize("Edit secret:"), settings.secret, { type: "password", autocomplete: "new-password", name: "edit-secret" });
-		const $editor = field(localize("Editor URL:"), settings.editor_url, { placeholder: DEFAULT_EDITOR_URL, name: "editor-url" });
+		const $editor = field(localize("Editor URL:"), settings.editor_url, { placeholder: default_editor_url(), name: "editor-url" });
 		const $status = $(E("div")).addClass("my-site-status").appendTo($w.$main);
 		const $ok = $w.$Button(localize("Sign In"), async () => {
 			const site = String($site.val()).trim().toLowerCase();
 			const secret = String($secret.val());
-			const editor_url = (String($editor.val()).trim() || DEFAULT_EDITOR_URL).replace(/\/+$/, "");
+			const editor_url = (String($editor.val()).trim() || default_editor_url()).replace(/\/+$/, "");
 			if (!site) {
 				$status.text("Enter a site name — it becomes your address: …/~name/");
 				$site.focus();

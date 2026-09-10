@@ -10,7 +10,7 @@ import { $DialogWindow } from "./$ToolWindow.js";
 import { HTML_FORMAT_ID, serialize_collage_html } from "./collage-format.js";
 import { show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
-import { DEFAULT_EDITOR_URL } from "./site-constants.js";
+import { default_editor_url } from "./site-constants.js";
 
 const SETTINGS_KEY = "jspaint site publish settings";
 
@@ -24,7 +24,7 @@ function load_settings() {
 		stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
 	} catch (_error) { /* ignore */ }
 	return {
-		editor_url: stored.editor_url || DEFAULT_EDITOR_URL,
+		editor_url: stored.editor_url || default_editor_url(),
 		site: stored.site || "",
 		page: stored.page || "index.html",
 		secret: stored.secret || "",
@@ -190,7 +190,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 
 	const $save = $w.$Button(localize("Save"), async () => {
 		const current = {
-			editor_url: String($editor_url.val()).trim() || DEFAULT_EDITOR_URL,
+			editor_url: String($editor_url.val()).trim() || default_editor_url(),
 			site: String($site.val()).trim().toLowerCase(),
 			page: String($page.val()).trim() || "index.html",
 			secret: String($secret.val()),

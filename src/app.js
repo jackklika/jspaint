@@ -31,6 +31,10 @@ import { init_share } from "./share.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
+// Before anything renders a brush: the toolbox draws the Brush tool's options at startup (it's the default tool),
+// and render_brush needs the WebGL op canvas — an empty brush would otherwise be cached and paint nothing.
+init_webgl_stuff();
+
 // #region Exports
 
 // Q: Why are the exports at the top of the file?
@@ -1953,4 +1957,3 @@ window.api_for_cypress_tests = {
 };
 // #endregion
 
-init_webgl_stuff();

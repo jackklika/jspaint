@@ -373,6 +373,7 @@ interface Window {
 	open_from_file(file: File, source_file_handle: UserFileHandle): void;
 	// tools.js
 	TOOL_PENCIL: "TOOL_PENCIL";
+	TOOL_BRUSH: "TOOL_BRUSH";
 	// app.js
 	canvas_bounding_client_rect: DOMRect;
 	_open_images_serially: boolean; // for testing

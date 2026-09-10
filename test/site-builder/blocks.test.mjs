@@ -8,6 +8,9 @@ const blocks = () => page.evaluate(() => (current_history_node.blocks || []).map
 const selected_tool = () => page.evaluate(() => selected_tool.id);
 
 // The toolbox: paint tools, a divider, then the page tools with their own icons
+// First run is party-ready: the big round brush in dark blue
+assert.deepEqual(await page.evaluate(() => [selected_tool.id, brush_shape, brush_size, selected_colors.foreground]), ["TOOL_BRUSH", "circle", 7, "#000080"]);
+
 const tool_titles = await page.evaluate(() => [...document.querySelectorAll(".tools > *")].map((el) => el.classList.contains("tool-divider") ? "---" : el.getAttribute("title")));
 assert.deepEqual(tool_titles.slice(15, 20), ["Rounded Rectangle", "---", "Pointer", "Text Box", "Divider"]);
 assert.ok(tool_titles.includes("GIF Picker") && tool_titles.includes("Guestbook") && tool_titles.includes("HTML"), tool_titles.join(","));

@@ -76,6 +76,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Party mode (Jack: "If I share a link, anyone should be able to use it"): a fresh browser opening a share link failed because it talked to the hard-coded hosted editor URL (which was the not-yet-live domain). The editor build now marks its copy (`<meta name="jspaint-editor">`) and `default_editor_url()` uses the page's own origin there. First run is the big round brush (7) in dark blue (`#000080`); `init_webgl_stuff()` moved to the top of app.js so the brush chooser can render at startup. New test `editor-origin.test.mjs`.
+
 - 2026-09-10 — Domain: `coolpaint.world` (Paint) and `sites.coolpaint.world/~name/` (pages) as Worker Custom Domains; `*.workers.dev` redirects. Jack: "Don't worry about old links."
 
 - 2026-09-10 — **PostHog analytics on published pages** (`worker/shared/analytics.js`): when `POSTHOG_API_KEY` is set on the sites Worker (empty = off, `wrangler.jsonc` vars), every HTML response — pages, 404s, form-action errors — gets a nonce'd bootstrap injected at serve time, *after* sanitization, so it survives every save and never round-trips into the editor or R2. Answers who visits (autocapture pageviews, anonymous distinct_id), for how long (sessions), and what breaks (`capture_exceptions: true` for JS errors plus a `resource_error` listener for broken image/media links). The CSP gains `script-src 'nonce-…' <host>; connect-src <host>` on instrumented responses only — the DESIGN.md §9 nonce'd-script exception, now actually used. `POSTHOG_HOST` overrides the default US cloud. Test: `analytics.test.mjs` (pure Node).

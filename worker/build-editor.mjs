@@ -30,5 +30,11 @@ for (const directory of directories) {
 		},
 	});
 }
+// Mark this copy as the one the editor Worker serves: the app then talks to its own origin, whatever hostname
+// it was reached on (a share link opened in a fresh browser joins the room where the link points).
+const index_path = path.join(dist, "index.html");
+const index_html = fs.readFileSync(index_path, "utf8");
+if (!index_html.includes('<meta charset="utf-8">')) { throw new Error("index.html: no charset meta to anchor the editor marker on"); }
+fs.writeFileSync(index_path, index_html.replace('<meta charset="utf-8">', '<meta charset="utf-8">\n\t<meta name="jspaint-editor" content="self">'));
 fs.writeFileSync(path.join(dist, ".assetsignore"), "*.map\n");
 console.log(`editor/dist: ${count} files`);

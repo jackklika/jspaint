@@ -641,7 +641,7 @@ function toggle_thumbnail() {
 
 function reset_selected_colors() {
 	selected_colors = {
-		foreground: "#000000",
+		foreground: "#000080", // dark blue: the party-ready default (with the big round brush in app-state.js)
 		background: "#ffffff",
 		ternary: "",
 	};
