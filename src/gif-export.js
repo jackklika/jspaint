@@ -162,6 +162,25 @@ function composite_frame(ctx, t, decoded) {
 }
 
 /**
+ * One still of the whole page — bitmap, page elements, stickers (first frame), text — as a canvas (share previews).
+ * @returns {Promise<HTMLCanvasElement>}
+ */
+async function render_collage_frame() {
+	await ensure_blocks_rendered();
+	/** @type {Map<string, DecodedGif>} */
+	const decoded = new Map();
+	for (const sticker of get_stickers()) {
+		if (decoded.has(sticker.source_id)) { continue; }
+		try {
+			decoded.set(sticker.source_id, await decode_sticker_source(sticker.source_id));
+		} catch (_error) { /* a sticker that won't decode is left out of the still */ }
+	}
+	const frame = make_canvas(main_canvas.width, main_canvas.height);
+	composite_frame(frame.ctx, 0, decoded);
+	return frame;
+}
+
+/**
  * Renders the collage to an animated GIF blob.
  * @param {(progress: number) => void} [on_progress]
  * @param {{ aborted?: boolean }} [abort_signal]
@@ -269,4 +288,4 @@ function export_collage_gif() {
 	});
 }
 
-export { build_timeline, decode_gif, export_collage_gif, render_collage_gif };
+export { build_timeline, decode_gif, export_collage_gif, render_collage_frame, render_collage_gif };

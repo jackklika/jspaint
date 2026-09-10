@@ -13,19 +13,36 @@ import { update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { qr_modules, render_qr_canvas } from "./qr.js";
 import { get_quick_buttons_container } from "./quick-buttons.js";
+import { preview_path, render_share_preview } from "./share-preview.js";
 import { current_site, get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
 
 const JOIN_KEY = "jspaint join"; // sessionStorage: the share link this tab opened with (survives the app's own reloads)
-const JOIN_HASH = /^#join:([a-z0-9-]+)\/([^/]+)\/(\d+\.[A-Za-z0-9_-]+)$/;
+// <site>/<page>/<key>; the page may itself contain slashes (encoded in links, decoded by URLSearchParams).
+const JOIN_VALUE = /^([a-z0-9-]+)\/(.+)\/(\d+\.[A-Za-z0-9_-]+)$/;
+const PREVIEW_MIN_INTERVAL_MS = 45000;
 
-// A share link is a hash; take it before sessions.js rewrites the hash to its own #local:… session id.
+/** @param {string | null} value - "<site>/<page>/<key>" */
+function parse_join(value) {
+	const match = value && JOIN_VALUE.exec(value);
+	if (!match) { return null; }
+	try {
+		return { site: match[1], page: decodeURIComponent(match[2]), key: match[3] };
+	} catch (_error) {
+		return null;
+	}
+}
+
+// A share link is /?join=<site>/<page>/<key> (in the query so the editor Worker sees it and can answer with a link
+// preview); older links used #join:…. Take either before sessions.js rewrites the URL to its own #local:… session id.
 (() => {
-	const match = JOIN_HASH.exec(location.hash);
-	if (match) {
+	const from_query = parse_join(new URLSearchParams(location.search).get("join"));
+	const from_hash = location.hash.startsWith("#join:") ? parse_join(location.hash.slice("#join:".length)) : null;
+	const join = from_query || from_hash;
+	if (join) {
 		try {
-			sessionStorage.setItem(JOIN_KEY, JSON.stringify({ site: match[1], page: decodeURIComponent(match[2]), key: match[3] }));
+			sessionStorage.setItem(JOIN_KEY, JSON.stringify(join));
 		} catch (_error) { /* ignore */ }
-		history.replaceState(null, "", location.pathname + location.search);
+		history.replaceState(null, "", location.pathname);
 	}
 })();
 
@@ -43,7 +60,46 @@ function current_site_page() {
  * @param {string} site @param {string} page @param {string} key
  */
 function share_url(site, page, key) {
-	return `${location.origin}${location.pathname}#join:${site}/${encodeURIComponent(page)}/${key}`;
+	return `${location.origin}${location.pathname}?join=${site}/${encodeURIComponent(page)}/${key}`;
+}
+
+/**
+ * Renders the page's preview card and puts it on the site (previews/<page>.png), so the link unfurls with the
+ * picture as it is now. Owner or guest; guests' keys allow this path.
+ * @param {string} site @param {string} page
+ */
+async function upload_share_preview(site, page) {
+	const guest = guest_info();
+	const headers = guest ?
+		{ Authorization: `Invite ${guest.key}`, "X-Invite-Page": page } :
+		{ Authorization: `Bearer ${load_settings().secret}` };
+	const blob = await render_share_preview();
+	const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/${preview_path(page)}`, {
+		method: "PUT",
+		headers: { ...headers, "Content-Type": "image/png" },
+		body: blob,
+	});
+	if (!response.ok) {
+		throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
+	}
+}
+
+// Once a page has been shared from this tab (or was joined from a link), keep its preview card roughly current:
+// after changes settle, at most every PREVIEW_MIN_INTERVAL_MS.
+let keep_preview_fresh = false;
+let preview_timer = 0;
+let last_preview_at = 0;
+function schedule_preview_refresh() {
+	if (!keep_preview_fresh) { return; }
+	const page = current_site_page();
+	const site = current_site();
+	if (!page || !site || (!guest_info() && !is_signed_in())) { return; }
+	clearTimeout(preview_timer);
+	const wait = Math.max(5000, PREVIEW_MIN_INTERVAL_MS - (Date.now() - last_preview_at));
+	preview_timer = window.setTimeout(() => {
+		last_preview_at = Date.now();
+		upload_share_preview(site, page).catch(() => { /* best effort */ });
+	}, wait);
 }
 
 /**
@@ -76,6 +132,7 @@ function join_from_share_link() {
 	file_name = join.page;
 	file_format = HTML_FORMAT_ID;
 	update_title();
+	keep_preview_fresh = true;
 	$G.triggerHandler("site-page-opened", [{ page: join.page, authoritative: false }]);
 }
 
@@ -94,6 +151,7 @@ function show_share_dialog() {
 	}
 	const guest = guest_info();
 	const site = current_site();
+	keep_preview_fresh = true;
 	$(E("p")).addClass("share-blurb").text(localize("Anyone with this link can draw on %1 with you, live, right away — no sign-in. It works for this page only.", page)).appendTo($main);
 	const $link_row = $(E("div")).addClass("share-link-row").appendTo($main);
 	const $link = /** @type {JQuery<HTMLInputElement>} */ ($(E("input")).attr({ type: "text", readonly: "readonly", spellcheck: "false", "aria-label": localize("Share link") }).appendTo($link_row));
@@ -122,9 +180,18 @@ function show_share_dialog() {
 		}
 		$status.text(note);
 	};
+	// The link's preview card (what messaging apps show) is the page as it is now.
+	const update_preview = () => {
+		last_preview_at = Date.now();
+		upload_share_preview(site, page).then(() => {
+			if ($w.closed) { return; }
+			$status.text(`${$status.text()} ${localize("Link preview updated.")}`.trim());
+		}).catch(() => { /* the link still works; the preview falls back to the saved picture */ });
+	};
 	const refresh = async () => {
 		if (guest) {
 			show_link(share_url(guest.site, page, guest.key), localize("You joined with this link. Pass it on to bring someone else in."));
+			update_preview();
 			return;
 		}
 		$status.text(localize("Making a link…"));
@@ -132,6 +199,7 @@ function show_share_dialog() {
 			const days = Number($days?.val()) || 30;
 			const { key, expires } = await make_share_key(page, days);
 			show_link(share_url(site, page, key), localize("Works until %1. Making a new link doesn't cancel old ones.", new Date(expires).toLocaleDateString()));
+			update_preview();
 		} catch (error) {
 			$status.text(`${localize("Couldn't make a link:")} ${error.message}`);
 		}
@@ -170,6 +238,7 @@ function init_share() {
 	}
 	const update = () => { $share?.toggle(!!current_site_page()); };
 	$G.on("history-update site-page-opened site-page-restored", update);
+	$G.on("history-update", schedule_preview_refresh);
 	update();
 	window.addEventListener("load", () => { setTimeout(join_from_share_link, 400); });
 

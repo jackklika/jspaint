@@ -11,7 +11,8 @@
 //   GET    /api/gifcities/gif/:id                   relay a GifCities GIF with CORS (no auth, cached)
 //   GET    /api/sites/:name/rooms/:page?token=…      WebSocket: the page's live room (PageRoom Durable Object, page-room.js)
 //   POST   /api/sites/:name/rooms/:page/invite       make a share key for that page (owner only) → { key, expires }
-//   …?invite=<key> / Authorization: Invite <key>    a guest: may join that page's room and save that page (and gifs/, midi/)
+//   …?invite=<key> / Authorization: Invite <key>    a guest: may join that page's room and save that page (and its previews/ card, gifs/, midi/)
+//   GET    /?join=<site>/<page>/<key>                a share link: Paint with link-preview tags for that page (share_landing)
 //
 // Auth: `Authorization: Bearer <SITE_EDIT_SECRET>` on /api/whoami, listing, and writes. Reads of site files are public.
 // Accounts come later; today one secret edits every site (docs/PLAN.md phase 5).
@@ -120,7 +121,83 @@ function invite_key_of(request) {
  */
 function invite_may_write(page, path) {
 	const base = page.replace(/\.html?$/i, "");
-	return path === page || path === `collages/${base}.png` || /^(gifs|midi)\/[A-Za-z0-9._-]+$/.test(path);
+	return path === page || path === `collages/${base}.png` || path === `previews/${base}.png` || /^(gifs|midi)\/[A-Za-z0-9._-]+$/.test(path);
+}
+
+const SHARE_JOIN = /^([a-z0-9-]+)\/(.+)\/(\d+\.[A-Za-z0-9_-]+)$/;
+const SHARE_DESCRIPTION = "Someone's painting a web page live. Tap to join and draw with them — no sign-in.";
+
+/** @param {string} text */
+function escape_html(text) {
+	return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
+/** @param {string} text - the inside of a <title> */
+function decode_entities(text) {
+	return text.replace(/&(amp|lt|gt|quot|#39|apos);/g, (_m, name) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'" })[name]);
+}
+
+/**
+ * A share link, /?join=<site>/<page>/<key>: Paint itself, with link-preview (Open Graph / Twitter card) tags for that
+ * page — its preview card if one has been uploaded (previews/<page>.png), else its saved bitmap, else the app icon.
+ * Messaging apps fetch this without running scripts, so the tags have to be in the HTML.
+ * @param {Request} request
+ * @param {URL} url
+ * @param {{ ASSETS: Fetcher, SITES: R2Bucket }} env
+ */
+async function share_landing(request, url, env) {
+	const asset = await env.ASSETS.fetch(new Request(new URL("/", url).href, request));
+	const match = SHARE_JOIN.exec(url.searchParams.get("join") || "");
+	if (!match || !valid_site_name(match[1])) { return asset; }
+	let page;
+	try {
+		page = decodeURIComponent(match[2]);
+	} catch (_error) {
+		return asset;
+	}
+	if (!valid_path(page) || !is_html_path(page)) { return asset; }
+	const site = match[1];
+	const base = page.replace(/\.html?$/i, "");
+	const prefix = `sites/${site}/`;
+	const [preview, bitmap, html] = await Promise.all([
+		env.SITES.head(`${prefix}previews/${base}.png`),
+		env.SITES.head(`${prefix}collages/${base}.png`),
+		env.SITES.get(`${prefix}${page}`),
+	]);
+	const image_object = preview || bitmap;
+	const image_path = preview ? `previews/${base}.png` : bitmap ? `collages/${base}.png` : null;
+	const image = image_path ?
+		`${url.origin}/api/sites/${site}/files/${image_path}?v=${(image_object?.httpEtag || "").replace(/\W/g, "").slice(0, 12)}` :
+		`${url.origin}/images/icons/512x512.png`;
+	const size = preview ? [1200, 630] : bitmap ? null : [512, 512];
+	let title = base;
+	if (html) {
+		const found = /<title>([^<]*)<\/title>/i.exec(await html.text());
+		if (found && found[1].trim()) { title = decode_entities(found[1].trim()); }
+	}
+	const tags = [
+		["name", "description", SHARE_DESCRIPTION],
+		["property", "og:type", "website"],
+		["property", "og:site_name", url.host],
+		["property", "og:title", `${title} · ~${site}`],
+		["property", "og:description", SHARE_DESCRIPTION],
+		["property", "og:url", url.href],
+		["property", "og:image", image],
+		...(size ? [["property", "og:image:width", String(size[0])], ["property", "og:image:height", String(size[1])]] : []),
+		["name", "twitter:card", preview || bitmap ? "summary_large_image" : "summary"],
+		["name", "twitter:title", `${title} · ~${site}`],
+		["name", "twitter:description", SHARE_DESCRIPTION],
+		["name", "twitter:image", image],
+	];
+	const markup = tags.map(([attr, key, value]) => `<meta ${attr}="${key}" content="${escape_html(value)}">`).join("\n\t");
+	const rewritten = new HTMLRewriter()
+		.on('meta[property^="og:"], meta[name^="twitter:"], meta[name="description"]', { element(element) { element.remove(); } })
+		.on("head", { element(element) { element.append(`\n\t${markup}\n`, { html: true }); } })
+		.transform(asset);
+	const headers = new Headers(rewritten.headers);
+	headers.set("Cache-Control", "no-cache"); // the preview changes as people draw
+	headers.delete("ETag");
+	return new Response(rewritten.body, { status: rewritten.status, headers });
 }
 
 /**
@@ -251,6 +328,9 @@ export default {
 		if (!url.pathname.startsWith("/api/")) {
 			const canonical = canonical_redirect(url, env.EDITOR_URL);
 			if (canonical) { return canonical; }
+			if (url.pathname === "/" && url.searchParams.has("join")) {
+				return share_landing(request, url, env);
+			}
 			return env.ASSETS.fetch(request);
 		}
 		if (request.method === "OPTIONS") {

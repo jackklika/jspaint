@@ -162,11 +162,27 @@ await bob.waitForFunction(() => [...document.querySelectorAll(".live-cursor-name
 // Alice shares the page: File › Share Page… shows a link and a QR code
 await click_menu_item(alice, "Share Page...");
 await alice.waitForSelector(".share-window input[readonly]", { timeout: 10000 });
-await alice.waitForFunction(() => /#join:/.test(document.querySelector(".share-window input[readonly]")?.value || ""), null, { timeout: 15000 });
+await alice.waitForFunction(() => /\?join=/.test(document.querySelector(".share-window input[readonly]")?.value || ""), null, { timeout: 15000 });
 const share_link = await alice.$eval(".share-window input[readonly]", (el) => el.value);
-assert.match(share_link, new RegExp(`#join:${site}/about\\.html/\\d+\\.[A-Za-z0-9_-]{16}$`), share_link);
+assert.match(share_link, new RegExp(`\\?join=${site}/about\\.html/\\d+\\.[A-Za-z0-9_-]{16}$`), share_link);
 assert.equal(await alice.evaluate(() => document.querySelector(".share-window .share-qr canvas") !== null), true, "a QR code is drawn");
-await alice.evaluate(() => [...document.querySelectorAll(".share-window button")].find((b) => b.textContent === "Close").click());
+// Sharing uploads a preview card of the page as it is now…
+await alice.waitForFunction(() => /Link preview updated/.test(document.querySelector(".share-window .share-status")?.textContent || ""), null, { timeout: 20000 });
+const preview_head = await fetch(`${editor}/api/sites/${site}/files/previews/about.png`, { method: "HEAD" });
+assert.equal(preview_head.status, 200, "previews/about.png is on the site");
+assert.equal(preview_head.headers.get("Content-Type"), "image/png");
+await alice.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent === "Close" && b.closest(".share-window")).click());
+// …and the link itself answers with link-preview tags pointing at it (what messaging apps show)
+const landing = await (await fetch(`${editor}/${share_link.replace(/^https?:\/\/[^/]+\//, "")}`)).text();
+assert.equal((landing.match(/property="og:title"/g) || []).length, 1, "one og:title (the defaults are replaced)");
+assert.match(landing, new RegExp(`<meta property="og:title" content="about · ~${site}">`));
+// (wrangler dev reports the configured custom domain as the request host, so the origin isn't checked here)
+assert.match(landing, new RegExp(`<meta property="og:image" content="https?://[^/]+/api/sites/${site}/files/previews/about\\.png\\?v=\\w+">`));
+assert.match(landing, /<meta name="twitter:card" content="summary_large_image">/);
+assert.match(landing, /<meta property="og:url" content="[^"]*\?join=/);
+assert.match(landing, /<script type="module" src="src\/app\.js">/, "still the whole app");
+const plain = await (await fetch(`${editor}/`)).text();
+assert.match(plain, /<meta property="og:title" content="coolpaint\.world">/, "the bare editor keeps the default card");
 
 // Cid opens the link with no sign-in at all: a guest, straight into the room with the merged document
 const cid_context = await browser.newContext({ viewport: { width: 1280, height: 800 } });

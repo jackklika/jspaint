@@ -11,6 +11,7 @@ import { HTML_FORMAT_ID, serialize_collage_html } from "./collage-format.js";
 import { show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { default_editor_url } from "./site-constants.js";
+import { preview_path, render_share_preview } from "./share-preview.js";
 
 const SETTINGS_KEY = "jspaint site publish settings";
 
@@ -128,6 +129,12 @@ async function publish_collage(settings, log) {
 	});
 	const result = await upload(`${page_base}.html`, html, "text/html");
 	log(`Saved ${page_base}.html — ${uploaded} asset${uploaded === 1 ? "" : "s"} uploaded, ${reused} reused.`);
+	// The link preview card (share links unfurl with it in messaging apps) shows the page as just saved.
+	try {
+		await upload(preview_path(`${page_base}.html`), await render_share_preview(), "image/png");
+	} catch (error) {
+		log(`(No link preview: ${error.message})`);
+	}
 	// The document now lives on the site: Ctrl+S saves it back there (functions.js file_save).
 	system_file_handle = { site_page: `${page_base}.html`, ...(settings.invite ? { guest: { site: settings.site, key: settings.invite.key } } : {}) };
 	file_name = `${page_base}.html`;
