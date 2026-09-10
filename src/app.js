@@ -27,6 +27,7 @@ import { fit_page_width, init_page_scroll } from "./page-scroll.js";
 import { init_pan_joystick } from "./pan-joystick.js";
 import { init_quick_buttons } from "./quick-buttons.js";
 import { init_share } from "./share.js";
+import { init_site_button } from "./site-button.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
@@ -795,6 +796,7 @@ if (window.is_electron_app) {
 
 let $toolbox = $ToolBox(tools);
 window.$toolbox = $toolbox;
+init_site_button(); // the globe at the bottom of the toolbox: My Site
 // let $toolbox2 = $ToolBox(extra_tools, true);//.hide();
 // Note: a second $ToolBox doesn't work because they use the same tool options (which could be remedied)
 // If there's to be extra tools, they should probably get a window, with different UI

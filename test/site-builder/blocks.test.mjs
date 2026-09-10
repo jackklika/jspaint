@@ -11,6 +11,14 @@ const selected_tool = () => page.evaluate(() => selected_tool.id);
 // First run is party-ready: the big round brush in dark blue
 assert.deepEqual(await page.evaluate(() => [selected_tool.id, brush_shape, brush_size, selected_colors.foreground]), ["TOOL_BRUSH", "circle", 7, "#000080"]);
 
+// The globe at the bottom of the toolbox is My Site: not signed in, it asks you to sign in
+assert.equal(await page.evaluate(() => document.querySelector(".tools-component").lastElementChild.className), "site-globe-button");
+assert.equal(await page.evaluate(() => { const b = document.querySelector(".site-globe-button").getBoundingClientRect(); return `${Math.round(b.width)}x${Math.round(b.height)}`; }), "50x50");
+await page.click(".site-globe-button");
+await page.waitForSelector(".my-site-sign-in", { timeout: 5000 });
+await page.evaluate(() => [...document.querySelectorAll(".my-site-sign-in button")].find((b) => b.textContent === "Cancel").click());
+await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 5000 });
+
 const tool_titles = await page.evaluate(() => [...document.querySelectorAll(".tools > *")].map((el) => el.classList.contains("tool-divider") ? "---" : el.getAttribute("title")));
 assert.deepEqual(tool_titles.slice(15, 20), ["Rounded Rectangle", "---", "Pointer", "Text Box", "Divider"]);
 assert.ok(tool_titles.includes("GIF Picker") && tool_titles.includes("Guestbook") && tool_titles.includes("HTML"), tool_titles.join(","));

@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Toolbox globe (Jack: "a 2x2 sized icon … web 1.0 style globe … shows a 'My Site' view which prompts to login, or … site settings and … browse the files"): `src/site-button.js`, appended to `$toolbox` from app.js; CSS-animated continents strip behind a round pixel mask; `site-settings-changed` event from `save_settings`.
+
 - 2026-09-10 — Removed the agent tooling (Code Agent window, Agent Drive, `agent-server/`, `opencode.json`) per Jack: "remove the agent stuff for now". Recoverable from git history (dd71ef41).
 
 - 2026-09-10 — Link previews (Jack: "add meta tags that have the current render so it shows up in previews"): share links are now `/?join=<site>/<page>/<key>` (query, so the Worker sees them; `#join:` still parses). `share_landing` in the editor Worker serves Paint with og:/twitter: tags for that page: `previews/<page>.png` (a 1200×630 card of bitmap + elements + stickers + text, `src/share-preview.js`, rendered by the sharer's Paint when the link is made, on every save, and ~45 s after changes while shared), else the saved bitmap, else the app icon. Guests may write `previews/`. The bare editor has default coolpaint.world tags in index.html.

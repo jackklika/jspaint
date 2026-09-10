@@ -38,6 +38,7 @@ function save_settings(settings) {
 	try {
 		localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, secret: settings.remember_secret ? settings.secret : "" }));
 	} catch (_error) { /* ignore */ }
+	$G.triggerHandler("site-settings-changed"); // e.g. the toolbox globe's tooltip
 }
 
 /** The editor Worker URL, for other modules (the GIF picker uses its proxy). */

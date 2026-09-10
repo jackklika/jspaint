@@ -23,6 +23,16 @@ await page.fill('.my-site-sign-in input[name="editor-url"]', editor);
 await page.click(".my-site-sign-in button[type=submit]");
 await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 15000 });
 
+// Signed in, the toolbox globe shows the site view: address, and Browse Files… opens the folder
+assert.match(await page.getAttribute(".site-globe-button", "title"), new RegExp(`~${site}`));
+await page.click(".site-globe-button");
+await page.waitForSelector(".site-view-window", { timeout: 5000 });
+assert.match(await page.$eval(".site-view-window", (el) => el.textContent), new RegExp(`~${site}`));
+assert.equal(await page.$eval(".site-view-window a[target=_blank]", (el) => el.getAttribute("href")), `${sites}/~${site}/`);
+await page.evaluate(() => [...document.querySelectorAll(".site-view-window button")].find((b) => b.textContent === "Browse Files…").click());
+await page.waitForSelector(".my-site-window", { timeout: 10000 });
+await page.waitForFunction(() => !document.querySelector(".site-view-window"), null, { timeout: 5000 });
+
 // My Site → New Page… → about.html
 await click_menu_item(page, "My Site...");
 await page.waitForSelector(".my-site-window", { timeout: 10000 });
