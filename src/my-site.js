@@ -68,10 +68,14 @@ async function open_site_from_url() {
 		sessionStorage.removeItem(SITE_ENTRY_KEY);
 	} catch (_error) { /* ignore */ }
 	if (!entry || !entry.site) {
-		if (FRESH_VISIT && is_signed_in() && await check_sign_in()) {
+		if (!FRESH_VISIT) { return; }
+		if (is_signed_in() && await check_sign_in()) {
 			// Your site's front page (not the page you last saved: edit.<domain>/about is the address for that)
 			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); }
+			return;
 		}
+		// Nobody in particular: the domain's own front page, as a copy to play with (saving it means signing in)
+		await open_page_copy(ROOT_SITE, "index.html");
 		return;
 	}
 	if (load_settings().site === entry.site && await check_sign_in()) {

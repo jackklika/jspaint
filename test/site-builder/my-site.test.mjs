@@ -144,6 +144,26 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	assert.equal(await elsewhere.inputValue('.my-site-sign-in input[name="site-name"]'), `other-${site}`);
 	await close_elsewhere();
 }
+// Not signed in at all (incognito): a plain visit opens the domain's front page as a copy to play with
+{
+	// Give the root site a front page: this test's about.html and its bitmap, copied over with the master key
+	const copy = async (/** @type {string} */ from, /** @type {string} */ to) => {
+		const body = await (await fetch(`${editor}/api/sites/${site}/files/${from}`)).blob();
+		const response = await fetch(`${editor}/api/sites/root/files/${to}`, { method: "PUT", headers: { ...headers, "Content-Type": body.type }, body });
+		assert.equal(response.status, 200, `copy ${from} → root/${to}`);
+	};
+	const headers = { Authorization: `Bearer ${secret}` };
+	await copy("collages/about.png", "collages/about.png");
+	await copy("about.html", "index.html");
+	const { page: visitor, close: close_visitor } = await open_paint({ init: (editor) => { localStorage.setItem("jspaint site publish settings", JSON.stringify({ editor_url: editor })); }, init_arg: editor });
+	await visitor.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
+	assert.deepEqual(await visitor.evaluate(() => system_file_handle), { site_page: "index.html", copy_of: "root" });
+	assert.equal(await visitor.evaluate(() => !!document.querySelector(".my-site-sign-in")), false);
+	await close_visitor();
+	for (const path of ["index.html", "collages/about.png"]) {
+		await fetch(`${editor}/api/sites/root/files/${path}`, { method: "DELETE", headers });
+	}
+}
 // The root site is the domain itself: its address has no /~root/
 {
 	const { page: root, close: close_root } = await open_paint({ query: "?site=root", init: (editor) => { localStorage.setItem("jspaint site publish settings", JSON.stringify({ editor_url: editor })); }, init_arg: editor });

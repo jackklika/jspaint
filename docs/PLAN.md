@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Jack (incognito): "People should be able to edit the page but not save it to the site" → a plain visit to `edit.coolpaint.world` while not signed in opens the root site's front page as a copy (same as `/~name/page` for strangers); signed in → your own front page.
+
 - 2026-09-10 — Jack: "edit.coolpaint.world/about or /about.html … automatically go to that page" → editor-host page addresses mirror the sites host: `/about`, `/about.html`, `/blog/post` → the root site's page; `/~jack/about` too (`.html` optional). `run_worker_first: true`; Paint's own files/dirs are excluded by name (`APP_FILES`/`APP_DIRECTORIES` in worker/editor/index.js).
 
 - 2026-09-10 — Jack: "when I go to edit.coolpaint.world it isn't automatically showing the site I made" → a plain visit (no `#local:` session, no `?site`/`?join`) while signed in opens the page you last saved (`load_settings().page`, default index.html) if it exists (`FRESH_VISIT` in my-site.js; `page_exists` probes with `?optional`).
