@@ -104,11 +104,31 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	assert.match(await fresh.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
 	await close_fresh();
 }
-// A plain visit while signed in opens the page you last saved — edit.<domain> is where you edit your site
+// A plain visit while signed in opens your site's front page — edit.<domain> is where you edit your site.
+// (No front page yet: nothing happens. Then make one and visit again.)
 {
-	const { page: back, close: close_back } = await open_paint({ init: (arg) => { localStorage.setItem("jspaint site publish settings", JSON.stringify(arg)); }, init_arg: { site, secret: minted.password, editor_url: editor, page: "about.html", remember_secret: true } });
-	await back.waitForFunction(() => file_name === "about.html", null, { timeout: 20000 });
-	assert.deepEqual(await back.evaluate(() => system_file_handle), { site_page: "about.html" });
+	const seed = (/** @type {any} */ arg) => { localStorage.setItem("jspaint site publish settings", JSON.stringify(arg)); };
+	const settings = { site, secret: minted.password, editor_url: editor, page: "about.html", remember_secret: true };
+	const { page: blank, close: close_blank } = await open_paint({ init: seed, init_arg: settings });
+	await blank.waitForTimeout(2500);
+	assert.equal(await blank.evaluate(() => system_file_handle), null, "no index.html: a blank picture, not the page last saved");
+	await close_blank();
+	// Make the front page (New Page suggests index.html now that the site has none)
+	await click_menu_item(page, "My Site...");
+	await page.waitForSelector(".my-site-window", { timeout: 10000 });
+	await page.evaluate(() => [...document.querySelectorAll(".my-site-toolbar button")].find((b) => b.textContent === "New Page…").click());
+	await page.waitForSelector(new_page_input, { timeout: 5000 });
+	assert.equal(await page.inputValue(new_page_input), "index.html");
+	await page.keyboard.press("Enter");
+	await page.waitForFunction(() => file_name === "index.html", null, { timeout: 10000 });
+	await page.keyboard.press("Escape");
+	await page.keyboard.press("Control+s");
+	await page.waitForFunction(() => /Done!|Couldn't|rejected|expired/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
+	assert.match(await page.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
+	await page.evaluate(() => [...document.querySelectorAll("button")].filter((b) => b.textContent === "Close").forEach((b) => b.click()));
+	const { page: back, close: close_back } = await open_paint({ init: seed, init_arg: settings });
+	await back.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
+	assert.deepEqual(await back.evaluate(() => system_file_handle), { site_page: "index.html" });
 	await close_back();
 }
 // Already signed in as that site: ?site= opens the folder, no dialog

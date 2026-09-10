@@ -35,7 +35,7 @@ function public_url(path = "index.html") {
 // app is up. Other query params are kept (jspaint reads a few of its own).
 const SITE_ENTRY_KEY = "jspaint open site"; // sessionStorage
 // A plain visit (no #local:… session to restore, captured before sessions.js assigns one): signed in, Paint opens
-// your site's page rather than a blank picture — edit.<domain> is where you edit your site.
+// your site's front page rather than a blank picture — edit.<domain> is where you edit your site.
 const FRESH_VISIT = !location.hash;
 const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.html?$/;
 (() => {
@@ -69,8 +69,8 @@ async function open_site_from_url() {
 	} catch (_error) { /* ignore */ }
 	if (!entry || !entry.site) {
 		if (FRESH_VISIT && is_signed_in() && await check_sign_in()) {
-			const { site, page } = load_settings();
-			if (await page_exists(site, page || "index.html")) { await open_page_from_site(page || "index.html"); }
+			// Your site's front page (not the page you last saved: edit.<domain>/about is the address for that)
+			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); }
 		}
 		return;
 	}
