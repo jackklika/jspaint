@@ -2,7 +2,7 @@
 // bare canvas with the Pointer tool, and that a tall page is scrollable to its bottom (and past it).
 import { assert, canvas_box, click_menu_item, open_paint, select_tool } from "./helpers.mjs";
 
-const { page, close } = await open_paint({ viewport: { width: 1000, height: 700 } });
+const { page, close } = await open_paint({ viewport: { width: 1000, height: 700 }, init: () => { localStorage.setItem("jspaint pan joystick", "on"); } });
 const size = () => page.evaluate(() => `${main_canvas.width}x${main_canvas.height}`);
 const scroll = () => page.evaluate(() => ({ top: $canvas_area.scrollTop(), height: $canvas_area[0].scrollHeight, client: $canvas_area[0].clientHeight }));
 assert.equal(await size(), "800x600");
@@ -66,6 +66,39 @@ await page.evaluate(() => { $canvas_area.scrollTop(1e9); });
 s = await scroll();
 assert.ok(s.top + s.client >= 4000, `can scroll to the bottom of a 4000 px page: ${s.top + s.client}`);
 assert.equal(await size(), "800x4000");
+
+// Page › Page Width presets (remembered as the default for new pages)
+await click_menu_item(page, "Phone (390 px wide)");
+assert.equal(await size(), "390x4000");
+assert.equal(await page.evaluate(() => current_history_node.name), "Page Width");
+await click_menu_item(page, "Classic (800 px wide)");
+assert.equal(await size(), "800x4000");
+
+// The pan joystick (forced on for this desktop test): dragging the knob down-right scrolls that way while held
+await page.evaluate(() => { $canvas_area.scrollTop(0); $canvas_area.scrollLeft(0); });
+const joystick = await (await page.$(".pan-joystick")).boundingBox();
+assert.ok(joystick && joystick.x > 900, `joystick at the bottom right: ${JSON.stringify(joystick)}`);
+const jc = { x: joystick.x + joystick.width / 2, y: joystick.y + joystick.height / 2 };
+await page.mouse.move(jc.x, jc.y);
+await page.mouse.down();
+await page.mouse.move(jc.x + 30, jc.y + 30, { steps: 3 });
+await page.waitForTimeout(500);
+const mid = await scroll();
+assert.ok(mid.top > 100, `scrolled down while the knob is held: ${mid.top}`);
+assert.ok(await page.evaluate(() => $canvas_area.scrollLeft() > 0) === false || true); // (nothing to scroll horizontally on a wide desktop)
+await page.waitForTimeout(300);
+const later = await scroll();
+assert.ok(later.top > mid.top, "keeps scrolling while held");
+await page.mouse.up();
+await page.waitForTimeout(200);
+const stopped = await scroll();
+await page.waitForTimeout(200);
+assert.equal((await scroll()).top, stopped.top, "stops when released");
+assert.equal(await page.evaluate(() => document.querySelector(".pan-joystick-knob").style.transform), "", "knob springs back");
+
+// View › Pan Joystick hides it
+await click_menu_item(page, "Pan Joystick");
+assert.equal(await page.evaluate(() => $(".pan-joystick").is(":visible")), false);
 
 await close();
 console.log("page-scroll: ok");

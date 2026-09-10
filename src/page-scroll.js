@@ -4,12 +4,37 @@
 // downward; the canvas handles are fiddly, especially on a phone), Page menu items for longer/shorter, and
 // panning by dragging bare canvas with the Pointer tool (one finger on a phone, where the wheel and the
 // scrollbars aren't there — two fingers still pan and zoom as before).
-import { resize_canvas_and_save_dimensions } from "./functions.js";
+import { resize_canvas_and_save_dimensions, resize_canvas_without_saving_dimensions } from "./functions.js";
 import { $G, E, get_help_folder_icon } from "./helpers.js";
 import { TOOL_POINTER } from "./page-tools.js";
+import { PAGE_WIDTH } from "./site-constants.js";
 
 const PAGE_STEP = 300; // px added or removed per click
 const MIN_HEIGHT = 100;
+const MIN_WIDTH = 240;
+const PHONE_WIDTH = 390; // a typical phone's CSS width
+
+/**
+ * The page width that fits this screen: the canvas area's width (a phone shows a phone-wide page), up to the
+ * classic PAGE_WIDTH on bigger screens. Used as the default size of new documents.
+ */
+function fit_page_width() {
+	const area = $canvas_area[0];
+	const padding = parseFloat($canvas_area.css("padding-left")) || 3;
+	const handles_room = 16; // the canvas's resize handles (and their grab ring) sit just outside its right edge
+	const available = Math.floor((area.clientWidth || window.innerWidth) - padding * 2 - handles_room);
+	if (!available || available >= PAGE_WIDTH) { return PAGE_WIDTH; }
+	return Math.max(MIN_WIDTH, Math.floor(available / 2) * 2);
+}
+
+/**
+ * Sets the page width, keeping the height (Page › Page Size). Remembered as the default for new pages.
+ * @param {"phone" | "classic" | "screen" | number} width
+ */
+function set_page_width(width) {
+	const px = width === "phone" ? PHONE_WIDTH : width === "classic" ? PAGE_WIDTH : width === "screen" ? fit_page_width() : width;
+	resize_canvas_and_save_dimensions(px, main_canvas.height, { name: localize("Page Width"), icon: get_help_folder_icon("p_stretch_h.png") });
+}
 
 /** @type {JQuery<HTMLButtonElement> | null} */
 let $extend = null;
@@ -19,7 +44,8 @@ let $extend = null;
  * @param {number} [px]
  */
 function make_page_longer(px = PAGE_STEP) {
-	resize_canvas_and_save_dimensions(main_canvas.width, main_canvas.height + px, { name: localize("Make Page Longer"), icon: get_help_folder_icon("p_stretch_v.png") });
+	// (Doesn't become the default size for new pages — growing this page isn't a preference.)
+	resize_canvas_without_saving_dimensions(main_canvas.width, main_canvas.height + px, { name: localize("Make Page Longer"), icon: get_help_folder_icon("p_stretch_v.png") });
 	requestAnimationFrame(() => {
 		$canvas_area.stop().animate({ scrollTop: $canvas_area[0].scrollHeight }, 200);
 	});
@@ -30,7 +56,7 @@ function make_page_longer(px = PAGE_STEP) {
  * @param {number} [px]
  */
 function make_page_shorter(px = PAGE_STEP) {
-	resize_canvas_and_save_dimensions(main_canvas.width, Math.max(MIN_HEIGHT, main_canvas.height - px), { name: localize("Make Page Shorter"), icon: get_help_folder_icon("p_stretch_v.png") });
+	resize_canvas_without_saving_dimensions(main_canvas.width, Math.max(MIN_HEIGHT, main_canvas.height - px), { name: localize("Make Page Shorter"), icon: get_help_folder_icon("p_stretch_v.png") });
 }
 
 /** Puts the button just under the picture, centered under the part of it you can see (a phone shows a slice). */
@@ -109,4 +135,4 @@ function init_page_scroll() {
 	`).appendTo(document.head);
 }
 
-export { init_page_scroll, make_page_longer, make_page_shorter };
+export { PHONE_WIDTH, fit_page_width, init_page_scroll, make_page_longer, make_page_shorter, set_page_width };

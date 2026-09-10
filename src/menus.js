@@ -19,7 +19,9 @@ import { open_live_page, show_my_site_dialog, show_sign_in_dialog } from "./my-s
 import { is_live_sync_enabled, set_live_sync_enabled } from "./live-session.js";
 import { BLOCK_KINDS, add_block, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, reorder_block, show_block_html_dialog, show_block_properties_dialog } from "./blocks.js";
 import { show_page_properties_dialog } from "./page-properties.js";
-import { make_page_longer, make_page_shorter } from "./page-scroll.js";
+import { PHONE_WIDTH, fit_page_width, make_page_longer, make_page_shorter, set_page_width } from "./page-scroll.js";
+import { is_pan_joystick_shown, toggle_pan_joystick } from "./pan-joystick.js";
+import { PAGE_WIDTH } from "./site-constants.js";
 import { get_tool_by_id } from "./functions.js";
 import { manage_storage } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
@@ -554,6 +556,15 @@ const menus = {
 			description: localize("Shows or hides the GIF picker: search GifCities and add animated stickers."),
 		},
 		{
+			label: localize("Pan &Joystick"),
+			speech_recognition: ["joystick", "pan joystick", "show joystick", "hide joystick", "toggle joystick"],
+			checkbox: {
+				toggle: () => { toggle_pan_joystick(); },
+				check: () => is_pan_joystick_shown(),
+			},
+			description: localize("Shows or hides the joystick for scrolling the page (on by default on touch screens)."),
+		},
+		{
 			label: localize("Live S&ync"),
 			speech_recognition: ["live sync", "toggle live sync", "turn on live sync", "turn off live sync", "collaborate", "multiplayer", "edit together"],
 			checkbox: {
@@ -881,6 +892,33 @@ const menus = {
 			speech_recognition: ["page properties", "page settings", "page background", "background color of the page", "wallpaper", "set wallpaper", "page color"],
 			action: () => { show_page_properties_dialog(); },
 			description: localize("Sets the page's background color, text color, and tiled wallpaper."),
+		},
+		{
+			label: localize("Page &Width"),
+			submenu: [
+				{
+					label: localize("&Phone (%1 px wide)", String(PHONE_WIDTH)),
+					speech_recognition: ["phone width", "phone page", "make the page phone width", "narrow page"],
+					enabled: () => main_canvas.width !== PHONE_WIDTH,
+					action: () => { set_page_width("phone"); },
+					description: localize("Makes the page as wide as a phone screen."),
+				},
+				{
+					label: localize("&Classic (%1 px wide)", String(PAGE_WIDTH)),
+					speech_recognition: ["classic width", "desktop width", "wide page", "make the page 800 wide"],
+					enabled: () => main_canvas.width !== PAGE_WIDTH,
+					action: () => { set_page_width("classic"); },
+					description: localize("Makes the page the classic %1 px wide.", String(PAGE_WIDTH)),
+				},
+				{
+					label: localize("Fit This &Screen"),
+					speech_recognition: ["fit the screen", "fit this screen", "screen width", "make the page fit the screen"],
+					enabled: () => main_canvas.width !== fit_page_width(),
+					action: () => { set_page_width("screen"); },
+					description: localize("Makes the page exactly as wide as this window shows."),
+				},
+			],
+			description: localize("Sets how wide the page is (new pages start as wide as the screen they're made on)."),
 		},
 		{
 			label: localize("Make Page Lon&ger"),

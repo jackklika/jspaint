@@ -1,7 +1,7 @@
 // @ts-check
 // eslint-disable-next-line no-unused-vars
 /* global airbrush_size:writable, brush_shape:writable, brush_size:writable, button:writable, ctrl:writable, eraser_size:writable, fill_color:writable, pick_color_slot:writable, history_node_to_cancel_to:writable, MenuBar:writable, my_canvas_height:writable, my_canvas_width:writable, palette:writable, pencil_size:writable, pointer:writable, pointer_active:writable, pointer_buttons:writable, pointer_over_canvas:writable, pointer_previous:writable, pointer_start:writable, pointer_type:writable, pointers:writable, reverse:writable, shift:writable, stroke_color:writable, stroke_size:writable, update_helper_layer_on_pointermove_active:writable */
-/* global AccessKeys, current_history_node, default_airbrush_size, default_brush_shape, default_brush_size, default_canvas_height, default_canvas_width, default_eraser_size, default_magnification, default_pencil_size, default_stroke_size, enable_fs_access_api, file_name, get_direction, localize, magnification, main_canvas, main_ctx, return_to_tools, selected_colors, selected_tool, selected_tools, selection, systemHooks, textbox, transparency */
+/* global AccessKeys, current_history_node, default_airbrush_size, default_brush_shape, default_brush_size, default_canvas_height, default_eraser_size, default_magnification, default_pencil_size, default_stroke_size, enable_fs_access_api, file_name, get_direction, localize, magnification, main_canvas, main_ctx, return_to_tools, selected_colors, selected_tool, selected_tools, selection, systemHooks, textbox, transparency */
 
 import { $ColorBox } from "./$ColorBox.js";
 import { $ToolBox } from "./$ToolBox.js";
@@ -24,7 +24,8 @@ import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_s
 import { delete_selected_text_layer, deselect_text_layer, get_selected_text_layer, init_text_layers, nudge_selected_text_layer } from "./text-layers.js";
 import { delete_selected_block, deselect_block, edit_selected_block, end_block_editing, get_selected_block, init_blocks, is_editing_block, nudge_selected_block } from "./blocks.js";
 import { init_live_session } from "./live-session.js";
-import { init_page_scroll } from "./page-scroll.js";
+import { fit_page_width, init_page_scroll } from "./page-scroll.js";
+import { init_pan_joystick } from "./pan-joystick.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
@@ -516,6 +517,7 @@ const $left = $(E("div")).addClass("component-area left").prependTo($H);
 window.$left = $left;
 const $right = $(E("div")).addClass("component-area right").appendTo($H);
 window.$right = $right;
+init_pan_joystick(); // lives in the bottom component area
 
 
 // there's also probably a CSS solution alternative to this
@@ -1443,8 +1445,9 @@ set_magnification(default_magnification);
 
 // this is synchronous for now, but @TODO: handle possibility of loading a document before callback
 // when switching to asynchronous storage, e.g. with localforage
+// A new page is as wide as this screen shows (a phone makes phone-wide pages), up to the classic 800.
 localStore.get({
-	width: default_canvas_width,
+	width: fit_page_width(),
 	height: default_canvas_height,
 }, (err, stored_values) => {
 	if (err) { return; }
