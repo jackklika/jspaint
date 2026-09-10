@@ -65,15 +65,15 @@ assert.deepEqual((await live(alice)).others, ["Bob"]);
 assert.deepEqual((await live(bob)).others, ["Alice"]);
 assert.deepEqual(await blocks(bob), await blocks(alice), "Bob has Alice's heading");
 
-// Alice adds a marquee (click-to-place) → Bob sees it
-await select_tool(alice, "Marquee");
+// Alice adds a text box (click-to-place) → Bob sees it
+await select_tool(alice, "Text Box");
 const ac = await canvas_box(alice);
 await alice.mouse.click(ac.x + 100, ac.y + 300);
 await alice.waitForFunction(() => (current_history_node.blocks || []).length === 2, null, { timeout: 5000 });
 await alice.keyboard.press("Escape");
 await bob.waitForFunction(() => (current_history_node.blocks || []).length === 2, null, { timeout: 15000 });
 assert.deepEqual(await blocks(bob), await blocks(alice));
-assert.equal(await bob.evaluate(() => document.querySelector('.block-layer[data-tag="marquee"] .block-el').textContent), "~*~ welcome to my page ~*~");
+assert.equal(await bob.evaluate(() => document.querySelector('.block-layer[data-tag="p"] .block-el').textContent), "Write something here.");
 
 // Bob paints a stroke → Alice's pixels change (and Alice's history nodes carry it)
 await select_tool(bob, "Brush");
@@ -128,9 +128,9 @@ await alice.waitForFunction(overlay_is_clear, null, { timeout: 15000 });
 assert.equal(await pixel(alice, 200, 520), await pixel(bob, 200, 520), "the finished stroke replaced the preview");
 assert.equal(await bob.evaluate(() => current_history_node.name), "Brush", "Bob's own history is the ordinary Brush step");
 
-// Bob moves the marquee with the Pointer tool → Alice sees the new position; Bob undoes → Alice sees it back
+// Bob moves the text box with the Pointer tool → Alice sees the new position; Bob undoes → Alice sees it back
 await select_tool(bob, "Pointer");
-const marquee = await (await bob.$('.block-layer[data-tag="marquee"] .block-content')).boundingBox();
+const marquee = await (await bob.$('.block-layer[data-tag="p"] .block-content')).boundingBox();
 await bob.mouse.move(marquee.x + 40, marquee.y + 10);
 await bob.mouse.down();
 await bob.mouse.move(marquee.x + 140, marquee.y + 60, { steps: 5 });
@@ -194,7 +194,7 @@ await cid.waitForFunction(() => /Done!|Couldn't|rejected|expired/i.test(document
 assert.match(await cid.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
 const published = await (await fetch(`${process.env.SITE_BUILDER_SITES_URL}/~${site}/about.html`)).text();
 assert.match(published, /edited live/, "the guest's save is live on the site");
-assert.match(published, /<marquee/, "with everyone's elements");
+assert.match(published, /<p class="block"/, "with everyone's elements");
 
 // Clean up
 const headers = { Authorization: `Bearer ${secret}` };

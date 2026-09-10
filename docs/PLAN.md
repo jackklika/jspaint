@@ -76,6 +76,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Toolbox trims (Jack): no Heading or Marquee tools; "Text Box" (the paragraph kind) covers both, with a **Marquee toggle in the Font toolbar** (`toggle_editing_block_marquee`, remembers the original tag in `data-was`); the GIF picker's icon now reads "GIF".
+
 - 2026-09-10 — Live strokes (remote painters replayed through a private copy of the tools) and share links with QR codes + guest mode (see 3.12, 3.13). Gotchas: jspaint's paint tools read globals (`pointer`, sizes, colors), so remote replay swaps them synchronously and restores them — never yield inside; `$status_size` is a window property the tools write to (swap it too); `eslint --fix` re-indents a whole array when it's wrapped in a function (disable indent for the block instead); share links live in the URL hash, which sessions.js rewrites — capture it at module load.
 
 - 2026-09-10 — Undo/Redo buttons (`src/quick-buttons.js`) at the bottom right next to the colors, grouped with the pan joystick; they follow `undos`/`redos` via `history-update`. (Extras › Eye Gaze Mode's floating Easy Undo button is separate.)

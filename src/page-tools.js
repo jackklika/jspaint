@@ -20,13 +20,26 @@ const block_tool_id = (kind_id) => /** @type {ToolID} */ (`TOOL_BLOCK_${kind_id}
 
 // 16×16 pixel-style icons (crisp edges, Win98 palette), one per tool, inlined so themes need no sprite changes.
 const svg = (/** @type {string} */ body) => `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">${body}</svg>`;
+/**
+ * Rects for a little bitmap drawn as text rows ("#" = pixel).
+ * @param {string[]} rows @param {number} x @param {number} y @param {string} color
+ */
+const pixel_rects = (rows, x, y, color) => rows.map((row, dy) => [...row].map((c, dx) => c === "#" ? `<rect x="${x + dx}" y="${y + dy}" width="1" height="1" fill="${color}"/>` : "").join("")).join("");
 const ICONS = {
 	pointer: svg('<path d="M3 1v11l3-3 2 5 2-1-2-5h4z" fill="#fff" stroke="#000" stroke-width="1"/>'),
 	heading: svg('<rect x="2" y="2" width="3" height="12" fill="#000"/><rect x="10" y="2" width="3" height="12" fill="#000"/><rect x="5" y="7" width="5" height="2" fill="#000"/><rect x="14" y="10" width="1" height="4" fill="#000080"/><rect x="13" y="11" width="1" height="1" fill="#000080"/>'),
 	paragraph: svg('<rect x="2" y="3" width="12" height="2" fill="#000"/><rect x="2" y="7" width="12" height="2" fill="#000"/><rect x="2" y="11" width="7" height="2" fill="#000"/>'),
 	marquee: svg('<rect x="1" y="4" width="14" height="8" fill="#fff" stroke="#000"/><path d="M8 6v1H7v1h1v1H7v1h1v1H6v-1H5V9h1V8H5V7h1V6zM12 6v1h-1v1h1v1h-1v1h1v1h-2v-1H9V9h1V8H9V7h1V6z" fill="#000080"/>'),
 	divider: svg('<rect x="1" y="6" width="14" height="1" fill="#808080"/><rect x="1" y="7" width="14" height="1" fill="#fff"/><rect x="1" y="9" width="14" height="1" fill="#808080"/><rect x="1" y="10" width="14" height="1" fill="#fff"/>'),
-	gif: svg('<rect x="1" y="2" width="14" height="12" fill="#c0e8ff" stroke="#000"/><path d="M2 12l4-5 3 3 2-2 3 4z" fill="#00a000"/><rect x="10" y="4" width="3" height="3" fill="#ffff00"/><rect x="3" y="4" width="1" height="1" fill="#fff"/><rect x="5" y="3" width="1" height="1" fill="#fff"/>'),
+	gif: svg(`<rect x="0.5" y="2.5" width="15" height="11" fill="#fff" stroke="#000"/>${pixel_rects([
+		".###..###.####..",
+		"#..#...#..#.....",
+		"#......#..#.....",
+		"#.##...#..###...",
+		"#..#...#..#.....",
+		"#..#...#..#.....",
+		".###..###.#.....",
+	], 1, 4, "#000080")}`),
 	image: svg('<rect x="1" y="4" width="14" height="10" fill="#fff" stroke="#000"/><path d="M2 12l3-4 2 2 2-3 4 5z" fill="#808080"/><rect x="7" y="1" width="2" height="6" fill="#000080"/><path d="M5 3h6L8 0z" fill="#000080"/>'),
 	table: svg('<rect x="1" y="2" width="14" height="12" fill="#fff" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#000080"/><rect x="5" y="2" width="1" height="12" fill="#000"/><rect x="10" y="2" width="1" height="12" fill="#000"/><rect x="1" y="9" width="14" height="1" fill="#000"/>'),
 	box: svg('<rect x="1" y="2" width="14" height="12" fill="#ffffcc" stroke="#ff69b4" stroke-width="2"/><rect x="4" y="6" width="8" height="1" fill="#000"/><rect x="4" y="9" width="6" height="1" fill="#000"/>'),
@@ -80,9 +93,9 @@ const page_tools = [
 		pointerdown() { },
 		$options: $(E("div")),
 	},
-	element_tool("heading", "heading", localize("Heading"), localize("Places a heading on the page. Click or drag a box, then type."), ["heading", "add heading", "title", "add a title", "big text"]),
-	element_tool("paragraph", "paragraph", localize("Paragraph"), localize("Places a paragraph of text on the page. Click or drag a box, then type."), ["paragraph", "add paragraph", "add text block", "body text"]),
-	element_tool("marquee", "marquee", localize("Marquee"), localize("Places scrolling text on the page."), ["marquee", "scrolling text", "add marquee", "ticker"]),
+	// (Headings are a paragraph with a bigger font; scrolling text is the Marquee toggle in the Font toolbar. Both
+	// kinds still exist — Page › Insert — for pages that have them.)
+	element_tool("paragraph", "paragraph", localize("Text Box"), localize("Places text on the page. Click or drag a box, then type; the Font toolbar sets font, size, bold, and scrolling (marquee)."), ["paragraph", "add paragraph", "add text block", "body text", "text box", "add text box", "heading", "add heading"]),
 	element_tool("divider", "divider", localize("Divider"), localize("Places a horizontal rule on the page."), ["divider", "horizontal rule", "add divider", "separator", "add line break"]),
 	{
 		id: TOOL_GIF_PICKER,
@@ -90,7 +103,7 @@ const page_tools = [
 		speech_recognition: ["gif picker", "find gifs", "search gifs", "gifcities", "add gif", "add a gif", "animated gif"],
 		help_icon: "",
 		icon_svg: data_url(ICONS.gif),
-		description: localize("Finds animated GIFs (GifCities) to put on the page. Click one, or drag it onto the page."),
+		description: localize("GIFs: finds animated GIFs (GifCities) to put on the page. Click one, or drag it onto the page."),
 		cursor: ["precise", [16, 16], "crosshair"],
 		page_tool: true,
 		action() { toggle_gif_picker(); },

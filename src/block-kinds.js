@@ -59,8 +59,8 @@ const BLOCK_KINDS = [
 	},
 	{
 		id: "paragraph",
-		label: "Paragraph",
-		description: "Places a paragraph of text on the page. Click or drag a box, then type.",
+		label: "Text Box",
+		description: "Places text on the page. Click or drag a box, then type; the Font toolbar sets font, size, bold, and scrolling (marquee).",
 		tag: "p",
 		attrs: {},
 		html: "Write something here.",

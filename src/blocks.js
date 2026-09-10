@@ -784,6 +784,36 @@ function get_editing_block() {
 	return editing_block;
 }
 
+/** Whether the text being edited in place scrolls (is a <marquee>). */
+function is_editing_block_marquee() {
+	return !!editing_block && editing_block.tag === "marquee";
+}
+
+/**
+ * The Font toolbar's Marquee toggle: turns the text block being edited into scrolling text (a <marquee>), or
+ * back into what it was. Editing continues afterwards.
+ */
+function toggle_editing_block_marquee() {
+	const block = editing_block;
+	if (!block) { return false; }
+	const attrs = { ...block.attrs };
+	let tag;
+	if (block.tag === "marquee") {
+		tag = /^(h[1-6]|p|div)$/.test(attrs["data-was"] || "") ? attrs["data-was"] : "p";
+		for (const name of ["data-was", "behavior", "direction", "scrollamount", "scrolldelay", "loop", "truespeed"]) { delete attrs[name]; }
+	} else {
+		tag = "marquee";
+		attrs["data-was"] = block.tag;
+		attrs.behavior = attrs.behavior || "scroll";
+		attrs.scrollamount = attrs.scrollamount || "4";
+		delete attrs["data-kind"];
+	}
+	set_block_source(block, { tag, attrs }, tag === "marquee" ? "Marquee On" : "Marquee Off");
+	block.begin_edit();
+	$G.triggerHandler("block-editing-changed");
+	return true;
+}
+
 // ---- dialogs ----
 
 /** Page > Edit Element HTML…: the element's markup, editable as text. */
@@ -1017,6 +1047,7 @@ export {
 	get_selected_block,
 	init_blocks,
 	is_editing_block,
+	is_editing_block_marquee,
 	nudge_selected_block,
 	order_blocks,
 	remove_block_by_id,
@@ -1030,5 +1061,6 @@ export {
 	show_block_html_dialog,
 	show_block_properties_dialog,
 	snapshot_blocks,
+	toggle_editing_block_marquee,
 	upsert_block_from_snapshot
 };

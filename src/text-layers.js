@@ -531,11 +531,16 @@ function init_text_layers() {
 		.text-layer.selected {
 			outline: 1px dashed #000;
 		}
-		.font-box .web-text-toggle {
+		.font-box .web-text-toggle, .font-box .marquee-toggle {
 			font: bold 11px sans-serif;
 			padding: 0 4px;
 			min-width: 28px;
+			height: 22px;
 		}
+		.font-box .marquee-toggle {
+			letter-spacing: -1px;
+		}
+		.font-box .marquee-toggle[aria-pressed="true"],
 		.font-box .web-text-toggle[aria-pressed="true"] {
 			box-shadow: inset 1px 1px #808080, inset -1px -1px #fff;
 			background: #e0e0e0;

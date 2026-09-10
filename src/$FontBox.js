@@ -3,6 +3,7 @@
 import { $ToolWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
 import { $G, E, supports_vertical_writing_mode } from "./helpers.js";
+import { is_editing_block, is_editing_block_marquee, toggle_editing_block_marquee } from "./blocks.js";
 import { is_web_text_mode, set_web_text_mode } from "./text-layers.js";
 
 const eachFont = async (callback, afterAllCallback) => {
@@ -94,7 +95,21 @@ function $FontBox() {
 	$web_text.on("mousedown", (e) => { e.preventDefault(); }); // keep focus in the text editor
 	$web_text.on("click", () => { set_web_text_mode(!is_web_text_mode()); });
 	$G.on("web-text-mode-changed", () => { $web_text.attr("aria-pressed", String(is_web_text_mode())); });
-	$button_group.append($bold, $italic, $underline, $vertical, $web_text);
+	// Marquee: scrolling text, a style like bold — for a page text block being edited in place (blocks.js).
+	const $marquee = $(E("button")).addClass("toggle marquee-toggle").attr({
+		type: "button",
+		"aria-pressed": String(is_editing_block_marquee()),
+		"aria-label": "Marquee",
+		title: localize("Makes the text scroll across its box, like a <marquee> (for text on the page)."),
+	}).text("«»");
+	$marquee.on("mousedown", (e) => { e.preventDefault(); });
+	$marquee.on("click", () => { toggle_editing_block_marquee(); });
+	const update_marquee = () => {
+		$marquee.prop("disabled", !is_editing_block()).attr("aria-pressed", String(is_editing_block_marquee())).toggleClass("selected", is_editing_block_marquee());
+	};
+	$G.on("block-editing-changed", update_marquee);
+	update_marquee();
+	$button_group.append($bold, $italic, $underline, $vertical, $marquee, $web_text);
 	$fb.append($family, $size, $button_group);
 
 	const update_font = () => {

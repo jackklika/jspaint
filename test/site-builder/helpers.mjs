@@ -135,6 +135,30 @@ export async function type_text_box(page, text, { x = 50, y = 50, width = 250, h
 	await page.mouse.up();
 	await page.waitForSelector(".textbox", { timeout: 5000 });
 	await page.keyboard.type(text);
-	// Commit by clicking bare canvas well away from the box (the Font toolbar window floats over the bottom-right).
-	await page.mouse.click(c.x + Math.min(600, c.width - 30), c.y + Math.min(350, c.height - 30));
+	await commit_by_clicking_bare_canvas(page, { x, y, width, height });
+}
+
+/**
+ * Commits the open text box by clicking a spot on the canvas that's outside the box and not under a tool window
+ * (the Font toolbar floats over the bottom-right, and its size depends on how many toggles it has).
+ * @param {import("playwright").Page} page
+ * @param {{ x: number, y: number, width: number, height: number }} box - the text box, in canvas coordinates
+ */
+export async function commit_by_clicking_bare_canvas(page, box) {
+	const c = await canvas_box(page);
+	const candidates = [[600, 350], [600, 200], [380, 300], [380, 30], [30, 300], [30, 500]];
+	for (const [dx, dy] of candidates) {
+		const px = c.x + Math.min(dx, c.width - 10), py = c.y + Math.min(dy, c.height - 10);
+		const inside_box = px >= c.x + box.x - 10 && px <= c.x + box.x + box.width + 10 && py >= c.y + box.y - 10 && py <= c.y + box.y + box.height + 10;
+		if (inside_box) { continue; }
+		const bare = await page.evaluate(([x, y]) => {
+			const el = document.elementFromPoint(x, y);
+			return !!el && !el.closest(".window, .textbox, .text-layer, .block-layer, .sticker-layer");
+		}, [px, py]);
+		if (bare) {
+			await page.mouse.click(px, py);
+			return;
+		}
+	}
+	throw new Error("no bare canvas spot found to commit the text box");
 }

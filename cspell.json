@@ -74,6 +74,8 @@
 		"IHDR",
 		"blish",
 		"scrollamount",
+		"scrolldelay",
+		"truespeed",
 		"assetsignore",
 		"xlink",
 		"formaction",
