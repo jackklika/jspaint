@@ -9,12 +9,14 @@
 //   GET    /api/x-elements                          the <x-*> registry's editor metadata (no auth)
 //   GET    /api/gifcities/search?q=&offset=&page_size=   GifCities search scraped to JSON (no auth, cached)
 //   GET    /api/gifcities/gif/:id                   relay a GifCities GIF with CORS (no auth, cached)
+//   GET    /api/sites/:name/rooms/:page?token=…      WebSocket: the page's live room (PageRoom Durable Object, page-room.js)
 //
 // Auth: `Authorization: Bearer <SITE_EDIT_SECRET>` on /api/whoami, listing, and writes. Reads of site files are public.
 // Accounts come later; today one secret edits every site (docs/PLAN.md phase 5).
 import { content_type_for, is_html_path, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { x_elements } from "../shared/x-elements/index.js";
+export { PageRoom } from "./page-room.js";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const CORS_HEADERS = {
@@ -40,7 +42,8 @@ function json(data, status = 200) {
 function authorized(request, secret) {
 	if (!secret) { return false; }
 	const header = request.headers.get("Authorization") || "";
-	const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+	// Browsers can't set headers on a WebSocket upgrade, so the live room takes the secret as ?token= (over TLS).
+	const token = header.startsWith("Bearer ") ? header.slice(7).trim() : (request.headers.get("Upgrade") === "websocket" ? new URL(request.url).searchParams.get("token") || "" : "");
 	if (token.length !== secret.length) { return false; }
 	let diff = 0;
 	for (let i = 0; i < token.length; i++) {
@@ -151,7 +154,7 @@ async function gifcities_search(query, offset, page_size) {
 export default {
 	/**
 	 * @param {Request} request
-	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
+	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
@@ -162,6 +165,21 @@ export default {
 			return new Response(null, { status: 204, headers: CORS_HEADERS });
 		}
 		try {
+			const room_match = /^\/api\/sites\/([^/]+)\/rooms\/(.+)$/.exec(url.pathname);
+			if (room_match) {
+				// The live room: one Durable Object per page, WebSocket only, edit secret required.
+				const name = room_match[1];
+				let page;
+				try {
+					page = decodeURIComponent(room_match[2]);
+				} catch (_error) {
+					return json({ error: "Bad page" }, 400);
+				}
+				if (!valid_site_name(name) || !valid_path(page) || !is_html_path(page)) { return json({ error: "Rooms are per page: /api/sites/<name>/rooms/<page>.html" }, 400); }
+				if (request.headers.get("Upgrade") !== "websocket") { return json({ error: "The room is a WebSocket endpoint" }, 426); }
+				if (!authorized(request, env.SITE_EDIT_SECRET)) { return json({ error: "Unauthorized: add ?token=<edit secret>" }, 401); }
+				return env.PAGE_ROOM.getByName(`${name}/${page}`).fetch(request);
+			}
 			if (url.pathname === "/api/gifcities/search") {
 				const page_size = Math.min(100, Math.max(1, Number(url.searchParams.get("page_size")) || 40));
 				const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);

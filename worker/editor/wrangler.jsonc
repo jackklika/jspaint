@@ -1,6 +1,7 @@
 {
 	// jspaint-editor: the Paint app (static assets built into ./dist by build-editor.mjs) plus the API that
-	// writes sites into R2. Separate origin from jspaint-sites on purpose (docs/DESIGN.md §9).
+	// writes sites into R2, and the PageRoom Durable Objects (live editing rooms, one per page).
+	// Separate origin from jspaint-sites on purpose (docs/DESIGN.md §9).
 	"$schema": "../node_modules/wrangler/config-schema.json",
 	"name": "jspaint-editor",
 	"main": "index.js",
@@ -15,6 +16,14 @@
 	},
 	"r2_buckets": [
 		{ "binding": "SITES", "bucket_name": "jspaint-sites" }
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "PAGE_ROOM", "class_name": "PageRoom" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["PageRoom"] }
 	],
 	"vars": {
 		"SITES_URL": "https://jspaint-sites.jklika2.workers.dev"

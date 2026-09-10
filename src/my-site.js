@@ -11,7 +11,7 @@ import { add_block } from "./blocks.js";
 import { refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
 import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
-import { E } from "./helpers.js";
+import { $G, E } from "./helpers.js";
 import { DEFAULT_EDITOR_URL, DEFAULT_SITES_URL } from "./site-constants.js";
 import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
 
@@ -205,7 +205,11 @@ async function open_page_from_site(path) {
 		show_error_message(`${path} wasn't made with Paint (importing other pages comes later).`);
 		return false;
 	}
-	return open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: get_site_files_base(), site_page: path });
+	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: get_site_files_base(), site_page: path });
+	if (opened) {
+		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: false }]); // live-session.js joins the page's room
+	}
+	return opened;
 }
 
 /**
@@ -226,6 +230,7 @@ function new_site_page(path) {
 		add_block("heading", { x: 40, y: 30 }, { html: `<font face="Comic Sans MS" color="#ff1493">${path.replace(/\.html?$/i, "")}</font>` });
 		saved = false;
 		update_title();
+		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: true }]);
 	});
 }
 

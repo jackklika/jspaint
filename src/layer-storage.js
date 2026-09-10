@@ -1,5 +1,6 @@
 // @ts-check
-/* global current_history_node:writable */
+// eslint-disable-next-line no-unused-vars
+/* global current_history_node:writable, file_format:writable, file_name:writable, system_file_handle:writable */
 // Autosave for the layers. JS Paint keeps a local backup of the bitmap (sessions.js: `image#<id>` in
 // localStorage); stickers, text layers, and page elements live in a sidecar record, `layers#<id>`, so a
 // reload brings them back too. The sidecar is in IndexedDB (sticker GIFs as Blobs): a page with a dozen
@@ -7,6 +8,8 @@
 // (Older sidecars in localStorage, with data URLs, are read once and moved over.)
 // The sidecar is a convenience copy only — the document format is the page (collage-format.js).
 import { restore_blocks, snapshot_blocks } from "./blocks.js";
+import { $G } from "./helpers.js";
+import { load_settings } from "./site-publish.js";
 import { localStore } from "./storage.js";
 import { get_sticker_source, register_sticker_source, restore_stickers, snapshot_stickers } from "./stickers.js";
 import { restore_text_layers, snapshot_text_layers } from "./text-layers.js";
@@ -82,7 +85,9 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
 	const text_layers = snapshot_text_layers();
 	const blocks = snapshot_blocks();
 	const key = sidecar_key(session_id);
-	if (stickers.length === 0 && text_layers.length === 0 && blocks.length === 0) {
+	// Which page of which site this document is (so a reload can rejoin its live room and Save goes back there).
+	const site_page = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.site_page === "string" ? { site: load_settings().site, page: system_file_handle.site_page } : null;
+	if (stickers.length === 0 && text_layers.length === 0 && blocks.length === 0 && !site_page) {
 		remove_layers_sidecar(session_id);
 		callback();
 		return;
@@ -94,7 +99,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
 		sticker_records.push({ ...snapshot, blob: source.blob });
 	}
 	try {
-		await with_store("readwrite", (store) => store.put({ version: 3, saved: Date.now(), stickers: sticker_records, text_layers, blocks }, key));
+		await with_store("readwrite", (store) => store.put({ version: 3, saved: Date.now(), stickers: sticker_records, text_layers, blocks, site_page }, key));
 		try {
 			localStorage.removeItem(key); // an old data-URL sidecar, if any, is superseded
 		} catch (_error) { /* ignore */ }
@@ -107,7 +112,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
 			for (const record of sticker_records) {
 				records.push({ ...record, blob: undefined, data_url: await blob_to_data_url(record.blob) });
 			}
-			localStore.set(key, JSON.stringify({ version: 2, stickers: records, text_layers, blocks }), (ls_error) => callback(ls_error));
+			localStore.set(key, JSON.stringify({ version: 2, stickers: records, text_layers, blocks, site_page }), (ls_error) => callback(ls_error));
 		} catch (ls_error) {
 			callback(ls_error);
 		}
@@ -121,7 +126,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
  */
 async function restore_layers_sidecar(session_id) {
 	const key = sidecar_key(session_id);
-	/** @type {{ stickers?: any[], text_layers?: TextLayerSnapshot[], blocks?: BlockSnapshot[] } | null} */
+	/** @type {{ stickers?: any[], text_layers?: TextLayerSnapshot[], blocks?: BlockSnapshot[], site_page?: { site: string, page: string } | null } | null} */
 	let data = null;
 	try {
 		data = await with_store("readonly", (store) => store.get(key));
@@ -159,6 +164,12 @@ async function restore_layers_sidecar(session_id) {
 		current_history_node.blocks = snapshot_blocks();
 		current_history_node.stickers = snapshot_stickers();
 		current_history_node.text_layers = snapshot_text_layers();
+		if (data.site_page && data.site_page.page && data.site_page.site === load_settings().site) {
+			system_file_handle = { site_page: data.site_page.page };
+			file_name = data.site_page.page;
+			file_format = "text/html";
+			$G.triggerHandler("site-page-restored", [{ page: data.site_page.page }]);
+		}
 		if (from_local_storage) {
 			save_layers_sidecar(session_id); // move it to IndexedDB
 		}

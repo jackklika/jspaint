@@ -5,7 +5,7 @@ Two Cloudflare Workers (see `docs/DESIGN.md` §4 and §9):
 | Worker | URL | Role |
 | --- | --- | --- |
 | `jspaint-sites` (`sites/`) | `https://jspaint-sites.jklika2.workers.dev/~name/` | **The sandbox.** Serves user pages from the `jspaint-sites` R2 bucket, sanitizes them again, renders `<x-*>` elements server-side (visitor counter, last-updated, guestbook, music) from a per-site Durable Object, handles `POST /~name/x/guestbook`, sends a strict CSP. Read-only bucket access, no secrets. |
-| `jspaint-editor` (`editor/`) | `https://jspaint-editor.jklika2.workers.dev/` | The Paint app — which is the whole site builder — at `/` (static assets built into `editor/dist`), and the API: site file CRUD behind a shared secret (reads are public), the `<x-*>` registry listing, and the GifCities proxy. |
+| `jspaint-editor` (`editor/`) | `https://jspaint-editor.jklika2.workers.dev/` | The Paint app — which is the whole site builder — at `/` (static assets built into `editor/dist`), the API: site file CRUD behind a shared secret (reads are public), the `<x-*>` registry listing, the GifCities proxy — and the **live rooms**: a `PageRoom` Durable Object per page (`page-room.js`) at `GET /api/sites/:name/rooms/:page?token=<secret>` (WebSocket) holding the shared draft everyone editing that page sees. |
 
 `shared/` holds what both use: name/path validation, the HTMLRewriter sanitizer, and the `<x-*>` registry (`shared/x-elements/`, one file per element).
 

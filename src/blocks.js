@@ -27,6 +27,8 @@ let editing_block = null;
 /** @type {HistoryNode | null} the history node collecting the current in-place edit's keystrokes */
 let edit_history_node = null;
 let next_block_id = 1;
+/** @type {(block_id: string) => string | null} who (if anyone) is editing a block elsewhere — set by live-session.js */
+let remote_editor_of = () => null;
 
 /** Default text styling of a page, mirrored by the exported page's stylesheet (collage-format.js). */
 const BLOCK_BASE_CSS = "margin:0;box-sizing:border-box;overflow:hidden;line-height:normal;display:block;font:16px 'Times New Roman',Times,serif;color:#000";
@@ -241,6 +243,14 @@ class OnCanvasBlock extends OnCanvasObject {
 	 */
 	begin_edit(event) {
 		if (this.editing || !this.kind.editable) { return; }
+		const remote_editor = remote_editor_of(this.id);
+		if (remote_editor) {
+			// Someone else has this text open in the live session: a soft lock, so two people don't type over each other.
+			this.$el.addClass("remote-editing-flash");
+			setTimeout(() => this.$el.removeClass("remote-editing-flash"), 600);
+			$G.triggerHandler("status-message", `${remote_editor} is editing this right now.`);
+			return;
+		}
 		if (editing_block && editing_block !== this) { editing_block.end_edit(); }
 		this.editing = true;
 		editing_block = this;
@@ -701,6 +711,79 @@ function set_selected_block_link(href) {
 	return true;
 }
 
+// ---- remote changes (live-session.js) ----
+
+/**
+ * Creates or updates a block from a snapshot (a remote editor's), in place; a block being edited here keeps
+ * its text (the lock should prevent that case anyway).
+ * @param {BlockSnapshot} snapshot
+ */
+function upsert_block_from_snapshot(snapshot) {
+	let block = blocks.find((other) => other.id === snapshot.id);
+	if (!block) {
+		block = new OnCanvasBlock(snapshot);
+		blocks.push(block);
+		next_block_id = Math.max(next_block_id, parseInt(snapshot.id.slice(1), 10) + 1 || next_block_id);
+	} else {
+		block.x = snapshot.x;
+		block.y = snapshot.y;
+		block.width = Math.max(1, snapshot.width);
+		block.height = Math.max(1, snapshot.height);
+		block.position();
+		const markup_changed = block.tag !== snapshot.tag || JSON.stringify(block.attrs) !== JSON.stringify(snapshot.attrs) || block.html !== snapshot.html;
+		if (markup_changed && !block.editing) {
+			block.tag = snapshot.tag;
+			block.attrs = { ...snapshot.attrs };
+			block.html = snapshot.html;
+			block.kind = block_kind_for(block.tag, block.attrs);
+			block.$el.attr({ "data-kind": block.kind.id, "data-tag": block.tag }).toggleClass("x-element", block.tag.startsWith("x-"));
+			block.render();
+		} else if (markup_changed) {
+			block.refresh_raster();
+		}
+	}
+	$G.triggerHandler("layers-changed");
+	return block;
+}
+
+/** @param {string} id */
+function remove_block_by_id(id) {
+	const block = blocks.find((other) => other.id === id);
+	if (!block) { return false; }
+	blocks = blocks.filter((other) => other !== block);
+	block.destroy();
+	$G.triggerHandler("layers-changed");
+	return true;
+}
+
+/** @param {string[]} ids */
+function order_blocks(ids) {
+	const by_id = new Map(blocks.map((block) => [block.id, block]));
+	const ordered = ids.map((id) => by_id.get(id)).filter(Boolean);
+	for (const block of blocks) {
+		if (!ordered.includes(block)) { ordered.push(block); }
+	}
+	blocks = ordered;
+	apply_block_order();
+}
+
+/**
+ * Lets the live session say who is editing a block elsewhere (its text is then locked here), and mark it.
+ * @param {(block_id: string) => string | null} lookup
+ */
+function set_remote_editor_lookup(lookup) {
+	remote_editor_of = lookup;
+	for (const block of blocks) {
+		const who = lookup(block.id);
+		block.$el.toggleClass("remote-editing", !!who).attr("data-remote-editor", who || null);
+	}
+}
+
+/** The block being edited in place here, if any. */
+function get_editing_block() {
+	return editing_block;
+}
+
 // ---- dialogs ----
 
 /** Page > Edit Element HTML…: the element's markup, editable as text. */
@@ -854,6 +937,25 @@ function init_blocks() {
 			outline: 1px dotted #000080;
 			outline-offset: -1px;
 		}
+		.block-layer.remote-editing {
+			outline: 2px solid #ff69b4;
+		}
+		.block-layer.remote-editing::before {
+			content: attr(data-remote-editor) " is editing";
+			position: absolute;
+			left: 0;
+			top: -14px;
+			font: 9px sans-serif;
+			line-height: 12px;
+			padding: 0 4px;
+			background: #ff69b4;
+			color: #fff;
+			white-space: nowrap;
+			pointer-events: none;
+		}
+		.block-layer.remote-editing-flash {
+			outline: 2px solid #ff0000;
+		}
 		.block-layer.x-element::after {
 			content: attr(data-tag);
 			position: absolute;
@@ -911,17 +1013,22 @@ export {
 	flatten_blocks,
 	get_block_link,
 	get_blocks,
+	get_editing_block,
 	get_selected_block,
 	init_blocks,
 	is_editing_block,
 	nudge_selected_block,
+	order_blocks,
+	remove_block_by_id,
 	render_block_to_canvas,
 	reorder_block,
 	restore_blocks,
 	select_block,
 	set_block_source,
+	set_remote_editor_lookup,
 	set_selected_block_link,
 	show_block_html_dialog,
 	show_block_properties_dialog,
-	snapshot_blocks
+	snapshot_blocks,
+	upsert_block_from_snapshot
 };

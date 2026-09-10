@@ -382,6 +382,54 @@ function set_selected_text_layer_link(href) {
 	return true;
 }
 
+// ---- remote changes (live-session.js) ----
+
+/**
+ * Creates or updates a text layer from a snapshot (a remote editor's), in place.
+ * @param {TextLayerSnapshot} snapshot
+ */
+function upsert_text_layer_from_snapshot(snapshot) {
+	let layer = text_layers.find((other) => other.id === snapshot.id);
+	if (!layer) {
+		layer = new OnCanvasText(snapshot);
+		text_layers.push(layer);
+		next_text_layer_id = Math.max(next_text_layer_id, parseInt(snapshot.id.slice(1), 10) + 1 || next_text_layer_id);
+	} else {
+		layer.x = snapshot.x;
+		layer.y = snapshot.y;
+		layer.width = Math.max(1, snapshot.width);
+		layer.height = Math.max(1, snapshot.height);
+		layer.text = snapshot.text;
+		layer.font = { ...snapshot.font };
+		layer.href = snapshot.href || "";
+		layer.position();
+		layer.render();
+	}
+	$G.triggerHandler("layers-changed");
+	return layer;
+}
+
+/** @param {string} id */
+function remove_text_layer_by_id(id) {
+	const layer = text_layers.find((other) => other.id === id);
+	if (!layer) { return false; }
+	text_layers = text_layers.filter((other) => other !== layer);
+	layer.destroy();
+	$G.triggerHandler("layers-changed");
+	return true;
+}
+
+/** @param {string[]} ids */
+function order_text_layers(ids) {
+	const by_id = new Map(text_layers.map((layer) => [layer.id, layer]));
+	const ordered = ids.map((id) => by_id.get(id)).filter(Boolean);
+	for (const layer of text_layers) {
+		if (!ordered.includes(layer)) { ordered.push(layer); }
+	}
+	text_layers = ordered;
+	apply_text_layer_order();
+}
+
 /**
  * Draws every text layer (rasterized copies), bottom to top.
  * @param {CanvasRenderingContext2D} ctx
@@ -512,11 +560,14 @@ export {
 	init_text_layers,
 	is_web_text_mode,
 	nudge_selected_text_layer,
+	order_text_layers,
+	remove_text_layer_by_id,
 	render_text_layer_to_canvas,
 	reorder_text_layer,
 	restore_text_layers,
 	select_text_layer,
 	set_selected_text_layer_link,
 	set_web_text_mode,
-	snapshot_text_layers
+	snapshot_text_layers,
+	upsert_text_layer_from_snapshot
 };

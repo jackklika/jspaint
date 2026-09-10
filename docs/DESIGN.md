@@ -140,7 +140,7 @@ Planned tags: `x-guestbook`, `x-counter`, `x-music`, `x-updated` (last-modified 
 
 - **Worker `sites`** (the sandbox, §9): `GET /~name/` and `/~name/<path>` → object from R2 `sites/name/…`. Pages are served as-is except that `<x-*>` elements are rendered server-side via the registry (§3.5), backed by a per-site Durable Object (guestbook entries, counter). No JavaScript needed on a published page.
 - **Worker `editor`** (separate origin — see §9): the desktop app (jspaint + editor windows) as static assets, plus the API: save page, upload asset, list site folder, GifCities search proxy, guestbook post, counter, live-editing room.
-- **Storage**: R2 for files (free tier 10 GB; per-site quota), one DO per site for coordination (guestbook, counter, live presence), reusing today's `Room` pattern.
+- **Storage**: R2 for files (free tier 10 GB; per-site quota), one DO per site for `<x-*>` state (guestbook, counter) in the sites Worker, and one **`PageRoom` DO per page** in the editor Worker: the live draft everyone editing that page shares (layers as JSON, bitmap as a PNG patch log), reached over a WebSocket; joiners get a snapshot, changes are versioned and relayed, presence is relayed. Publishing = the client saving the page to R2; the room is the draft, so a page looks the same wherever you sign in.
 - **Publish = save.** No wrangler, no deploy step: the editor PUTs the file into R2 and the page is live. Today's preview-alias machinery is no longer needed for users.
 
 ## 5. The editor is JS Paint
@@ -199,7 +199,7 @@ User pages are user-authored HTML. They are served by a **separate, deliberately
 
 ## 11. What carries over from the agent-drive work
 
-- The `Room` Durable Object (live fan-out) becomes the per-site DO; the RESTSession trick stays useful for live editing.
+- The `Room` Durable Object (live fan-out) grew into `PageRoom` (editor Worker): the same fan-out plus a stored document, versioned ops, and presence — real-time co-editing inside Paint (`src/live-session.js`).
 - The in-browser `<foreignObject>` page renderer is the static part of whole-page GIF export.
 - Preview-alias deploys and the agent-server's git/wrangler flow become a personal dev tool; hosted pages are saved to R2, not deployed. The LLM "draw to edit" flow returns later as *AI assist* operating on the dialect.
 

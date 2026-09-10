@@ -495,6 +495,63 @@ async function make_sticker_from_selection() {
 	return true;
 }
 
+// ---- remote changes (live-session.js): apply another editor's operations without touching history ----
+
+/**
+ * Creates or updates a sticker from a snapshot (a remote editor's), in place. The source must be registered already.
+ * @param {StickerSnapshot} snapshot
+ */
+function upsert_sticker_from_snapshot(snapshot) {
+	if (!sticker_sources.has(snapshot.source_id)) { return null; }
+	let sticker = stickers.find((other) => other.id === snapshot.id);
+	if (sticker && sticker.source_id !== snapshot.source_id) {
+		remove_sticker_by_id(snapshot.id);
+		sticker = undefined;
+	}
+	if (!sticker) {
+		sticker = new OnCanvasSticker(snapshot);
+		stickers.push(sticker);
+		next_sticker_id = Math.max(next_sticker_id, parseInt(snapshot.id.slice(1), 10) + 1 || next_sticker_id);
+	} else {
+		sticker.x = snapshot.x;
+		sticker.y = snapshot.y;
+		sticker.width = Math.max(1, snapshot.width);
+		sticker.height = Math.max(1, snapshot.height);
+		sticker.flip_x = !!snapshot.flip_x;
+		sticker.flip_y = !!snapshot.flip_y;
+		sticker.rotation = snapshot.rotation || 0;
+		sticker.href = snapshot.href || "";
+		sticker.position();
+		sticker.update_transform();
+	}
+	$G.triggerHandler("layers-changed");
+	return sticker;
+}
+
+/** @param {string} id */
+function remove_sticker_by_id(id) {
+	const sticker = stickers.find((other) => other.id === id);
+	if (!sticker) { return false; }
+	stickers = stickers.filter((other) => other !== sticker);
+	sticker.destroy();
+	$G.triggerHandler("layers-changed");
+	return true;
+}
+
+/**
+ * Reorders stickers to match a list of ids (unknown ids are ignored; stickers not listed stay on top).
+ * @param {string[]} ids
+ */
+function order_stickers(ids) {
+	const by_id = new Map(stickers.map((sticker) => [sticker.id, sticker]));
+	const ordered = ids.map((id) => by_id.get(id)).filter(Boolean);
+	for (const sticker of stickers) {
+		if (!ordered.includes(sticker)) { ordered.push(sticker); }
+	}
+	stickers = ordered;
+	apply_sticker_order();
+}
+
 /**
  * Draws every sticker (first frames) onto a context, bottom to top. Used by Flatten and static exports.
  * @param {CanvasRenderingContext2D} ctx
@@ -639,12 +696,15 @@ export {
 	is_animated_gif,
 	make_sticker_from_selection,
 	nudge_selected_sticker,
+	order_stickers,
 	register_sticker_source,
+	remove_sticker_by_id,
 	reorder_sticker,
 	restore_stickers,
 	rotate_selected_sticker,
 	select_sticker,
 	set_selected_sticker_link,
 	show_rotate_sticker_dialog,
-	snapshot_stickers
+	snapshot_stickers,
+	upsert_sticker_from_snapshot
 };

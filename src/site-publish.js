@@ -9,7 +9,7 @@
 import { $DialogWindow } from "./$ToolWindow.js";
 import { HTML_FORMAT_ID, serialize_collage_html } from "./collage-format.js";
 import { show_error_message, update_title } from "./functions.js";
-import { E } from "./helpers.js";
+import { $G, E } from "./helpers.js";
 import { DEFAULT_EDITOR_URL } from "./site-constants.js";
 
 const SETTINGS_KEY = "jspaint site publish settings";
@@ -127,6 +127,7 @@ async function publish_collage(settings, log) {
 	file_format = HTML_FORMAT_ID;
 	saved = true;
 	update_title();
+	$G.triggerHandler("site-page-opened", [{ page: `${page_base}.html`, authoritative: true }]); // live-session.js: the room takes this copy
 	return result.url;
 }
 

@@ -16,6 +16,7 @@ import { export_collage_gif } from "./gif-export.js";
 import { is_gif_picker_open, toggle_gif_picker } from "./gif-picker.js";
 import { is_layers_window_open, toggle_layers_window } from "./layers-window.js";
 import { open_live_page, show_my_site_dialog, show_sign_in_dialog } from "./my-site.js";
+import { is_live_sync_enabled, set_live_sync_enabled } from "./live-session.js";
 import { BLOCK_KINDS, add_block, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, reorder_block, show_block_html_dialog, show_block_properties_dialog } from "./blocks.js";
 import { show_page_properties_dialog } from "./page-properties.js";
 import { get_tool_by_id } from "./functions.js";
@@ -550,6 +551,15 @@ const menus = {
 				check: () => is_gif_picker_open(),
 			},
 			description: localize("Shows or hides the GIF picker: search GifCities and add animated stickers."),
+		},
+		{
+			label: localize("Live S&ync"),
+			speech_recognition: ["live sync", "toggle live sync", "turn on live sync", "turn off live sync", "collaborate", "multiplayer", "edit together"],
+			checkbox: {
+				toggle: () => { set_live_sync_enabled(!is_live_sync_enabled()); },
+				check: () => is_live_sync_enabled(),
+			},
+			description: localize("Keeps a page you're editing in sync with your site's live room, so it's the same everywhere you sign in and others can edit with you."),
 		},
 		{
 			label: localize("Live &Page"),

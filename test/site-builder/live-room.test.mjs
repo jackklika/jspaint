@@ -1,0 +1,145 @@
+// The live room's WebSocket protocol (worker/editor/page-room.js), driven from Node with plain WebSockets:
+// auth, seed + snapshot, ops relayed and merged, bitmap patches replayed to joiners, presence, replace.
+// Needs the editor Worker running locally (in worker/: `npm run dev:editor`, secret in editor/.dev.vars):
+//   SITE_BUILDER_EDITOR_URL=http://localhost:8787 SITE_BUILDER_SECRET=dev-secret-123
+import { assert } from "./helpers.mjs";
+
+const editor = process.env.SITE_BUILDER_EDITOR_URL;
+const secret = process.env.SITE_BUILDER_SECRET;
+if (!editor || !secret) {
+	console.log("live-room: skipped (set SITE_BUILDER_EDITOR_URL, SITE_BUILDER_SECRET)");
+	process.exit(0);
+}
+const site = `room-${Date.now().toString(36)}`;
+const ws_base = editor.replace(/^http/, "ws");
+const room_url = (page = "index.html", token = secret) => `${ws_base}/api/sites/${site}/rooms/${page}?token=${encodeURIComponent(token)}`;
+
+/** A client that queues messages so tests can await the next one of a type. */
+function connect(url) {
+	const ws = new WebSocket(url);
+	const queue = [];
+	const waiters = [];
+	ws.addEventListener("message", (event) => {
+		const message = JSON.parse(String(event.data));
+		const index = waiters.findIndex((w) => w.type === message.type);
+		if (index !== -1) { waiters.splice(index, 1)[0].resolve(message); } else { queue.push(message); }
+	});
+	const closed = new Promise((resolve) => ws.addEventListener("close", (event) => resolve(event)));
+	return {
+		ws,
+		closed,
+		/** resolves true when open, false if the connection was refused */
+		opened: new Promise((resolve) => { ws.addEventListener("open", () => resolve(true)); ws.addEventListener("error", () => resolve(false)); }),
+		send: (message) => ws.send(JSON.stringify(message)),
+		/** @param {string} type */
+		next(type, timeout = 10000) {
+			const index = queue.findIndex((m) => m.type === type);
+			if (index !== -1) { return Promise.resolve(queue.splice(index, 1)[0]); }
+			return new Promise((resolve, reject) => {
+				const waiter = { type, resolve };
+				waiters.push(waiter);
+				setTimeout(() => { waiters.splice(waiters.indexOf(waiter), 1); reject(new Error(`timed out waiting for "${type}" (queued: ${queue.map((m) => m.type).join(",") || "none"})`)); }, timeout);
+			});
+		},
+		has: (type) => queue.some((m) => m.type === type),
+	};
+}
+const tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGP4z8DwHwyBCAgAo3EW2OJixQoAAAAASUVORK5CYII="; // 2×2
+
+// Wrong token → refused before reaching the room
+const anon = connect(room_url("index.html", "wrong"));
+assert.equal(await anon.opened, false, "connection with a wrong secret is refused");
+// Not a page → refused
+assert.equal((await fetch(`${editor}/api/sites/${site}/rooms/notes.txt?token=${secret}`)).status, 400);
+assert.equal((await fetch(`${editor}/api/sites/${site}/rooms/index.html?token=${secret}`)).status, 426, "needs a WebSocket upgrade");
+
+// A joins an empty room and seeds it
+const a = connect(room_url());
+assert.equal(await a.opened, true, "connected with the secret");
+a.send({ type: "hello", client_id: "aaa", name: "Alice", color: "#e6194b" });
+let snapshot = await a.next("snapshot");
+assert.equal(snapshot.version, 0);
+assert.deepEqual(snapshot.clients, []);
+assert.equal(snapshot.you.name, "Alice");
+a.send({ type: "seed", width: 800, height: 600, page_properties: { bgcolor: "#ffffd9" }, layers: { blocks: [{ id: "b1", kind: "heading", tag: "h1", attrs: {}, html: "hi", x: 10, y: 10, width: 200, height: 40 }], stickers: [], text_layers: [] } });
+assert.equal((await a.next("seeded")).version, 1);
+a.send({ type: "bitmap", x: 0, y: 0, width: 2, height: 2, png: tiny_png, reset: true });
+assert.equal((await a.next("ack")).version, 2);
+
+// B joins: gets the seeded document, the patch, and sees Alice; Alice sees Bob join
+const b = connect(room_url());
+await b.opened;
+b.send({ type: "hello", client_id: "bbb", name: "Bob", color: "#3cb44b" });
+snapshot = await b.next("snapshot");
+assert.equal(snapshot.version, 2);
+assert.equal(snapshot.doc.width, 800);
+assert.deepEqual(snapshot.doc.page_properties, { bgcolor: "#ffffd9" });
+assert.equal(snapshot.doc.layers.blocks[0].html, "hi");
+assert.equal(snapshot.patches.length, 1);
+assert.equal(snapshot.patches[0].png, tiny_png);
+assert.equal(snapshot.patches[0].reset, true);
+assert.deepEqual(snapshot.clients.map((c) => c.name), ["Alice"]);
+assert.equal((await a.next("join")).client.name, "Bob");
+
+// Ops relay and merge: A moves the heading and adds a marquee; B sees both; a third joiner gets the merged doc
+a.send({ type: "ops",
+	ops: [
+		{ kind: "blocks", op: "set", item: { id: "b1", kind: "heading", tag: "h1", attrs: {}, html: "hi", x: 50, y: 60, width: 200, height: 40 } },
+		{ kind: "blocks", op: "set", item: { id: "b2", kind: "marquee", tag: "marquee", attrs: { scrollamount: "4" }, html: "~*~", x: 10, y: 100, width: 300, height: 24 } },
+		{ kind: "blocks", op: "order", ids: ["b2", "b1"] },
+	] });
+const relayed = await b.next("ops");
+assert.equal(relayed.client_id, "aaa");
+assert.equal(relayed.ops.length, 3);
+assert.equal(relayed.version, 3);
+assert.equal((await a.next("ack")).version, 3);
+// B removes the marquee; A sees it
+b.send({ type: "ops", ops: [{ kind: "blocks", op: "remove", id: "b2" }] });
+assert.deepEqual((await a.next("ops")).ops, [{ kind: "blocks", op: "remove", id: "b2" }]);
+// B paints a patch; A gets it
+b.send({ type: "bitmap", x: 4, y: 6, width: 2, height: 2, png: tiny_png });
+const patch = await a.next("bitmap");
+assert.equal(patch.x, 4);
+assert.equal(patch.client_id, "bbb");
+// Presence relays without touching the version
+b.send({ type: "presence", cursor: { x: 1, y: 2 }, tool: "Pencil", editing: "b1" });
+const presence = await a.next("presence");
+assert.deepEqual(presence.cursor, { x: 1, y: 2 });
+assert.equal(presence.editing, "b1");
+a.send({ type: "ping" });
+assert.equal((await a.next("pong")).version, 5);
+
+// A third client sees the merged state: heading moved to 50,60, marquee gone, two patches in order
+const c = connect(room_url());
+await c.opened;
+c.send({ type: "hello", client_id: "ccc", name: "Cid", color: "#0082c8" });
+snapshot = await c.next("snapshot");
+assert.equal(snapshot.version, 5);
+assert.deepEqual(snapshot.doc.layers.blocks.map((block) => `${block.id}@${block.x},${block.y}`), ["b1@50,60"]);
+assert.deepEqual(snapshot.patches.map((p) => `${p.x},${p.y}`), ["0,0", "4,6"]);
+assert.deepEqual(snapshot.clients.map((client) => client.name).sort(), ["Alice", "Bob"]);
+
+// Replace: C declares its copy the document; A and B are told to re-fetch; the patch log restarts
+c.send({ type: "replace", width: 640, height: 480, page_properties: {}, layers: { blocks: [], stickers: [], text_layers: [] } });
+assert.equal((await c.next("seeded")).version, 6);
+assert.equal((await a.next("replaced")).client_id, "ccc");
+await b.next("replaced");
+c.send({ type: "bitmap", x: 0, y: 0, width: 2, height: 2, png: tiny_png, reset: true });
+await c.next("ack");
+a.send({ type: "hello", client_id: "aaa", name: "Alice", color: "#e6194b" });
+snapshot = await a.next("snapshot");
+assert.equal(snapshot.doc.width, 640);
+assert.deepEqual(snapshot.doc.layers.blocks, []);
+assert.equal(snapshot.patches.length, 1);
+
+// Leaving is announced; bad messages get errors, not disconnects
+b.ws.close(1000, "bye");
+assert.equal((await a.next("leave")).client_id, "bbb");
+a.send({ type: "ops", ops: [{ kind: "nonsense", op: "set", item: { id: "x" } }] });
+a.send({ type: "wat" });
+assert.equal((await a.next("error")).message, "Unknown message type wat");
+assert.equal(a.ws.readyState, WebSocket.OPEN);
+
+a.ws.close();
+c.ws.close();
+console.log("live-room: ok");

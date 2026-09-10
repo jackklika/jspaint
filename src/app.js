@@ -23,6 +23,7 @@ import { get_theme, set_theme } from "./theme.js";
 import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_selected_sticker, init_stickers, is_animated_gif, nudge_selected_sticker, rotate_selected_sticker } from "./stickers.js";
 import { delete_selected_text_layer, deselect_text_layer, get_selected_text_layer, init_text_layers, nudge_selected_text_layer } from "./text-layers.js";
 import { delete_selected_block, deselect_block, edit_selected_block, end_block_editing, get_selected_block, init_blocks, is_editing_block, nudge_selected_block } from "./blocks.js";
+import { init_live_session } from "./live-session.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
@@ -533,6 +534,7 @@ const $status_position = $(E("div")).addClass("status-coordinates status-field i
 window.$status_position = $status_position;
 const $status_size = $(E("div")).addClass("status-coordinates status-field inset-shallow").appendTo($status_area);
 window.$status_size = $status_size;
+init_live_session(); // the live sync indicator lives in the status bar
 
 // #region News Indicator
 const news_seen_key = "jspaint latest news seen";
