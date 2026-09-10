@@ -68,18 +68,25 @@ let polling = false;
 
 const TOOL_ICONS = { write: "✎", edit: "✎", patch: "✎", read: "👁", bash: "$", glob: "🔍", grep: "🔍", list: "📁", webfetch: "🌐", websearch: "🌐", todowrite: "☑", todoread: "☑", task: "⚙" };
 
+/** Is this page the one the agent server serves (so its edits are what we're running)? */
+function served_from_agent_server() {
+	return location.origin.replace(/\/+$/, "") === get_server_url().replace(/\/+$/, "");
+}
+
 /**
  * @param {ChatEntry} entry
  * @param {boolean} [persist=true]
+ * @returns {JQuery<HTMLElement>} the rendered entry (empty if the window is closed)
  */
 function add_entry(entry, persist = true) {
 	if (persist) {
 		state.transcript.push(entry);
 		save_state();
 	}
-	if (!$transcript) { return; }
-	render_entry(entry).appendTo($transcript);
+	if (!$transcript) { return $(); }
+	const $entry = render_entry(entry).appendTo($transcript);
 	$transcript[0].scrollTop = $transcript[0].scrollHeight;
+	return $entry;
 }
 
 /** @param {ChatEntry} entry */
@@ -117,6 +124,10 @@ async function check_status() {
 			return false;
 		}
 		set_status(`${status.dev.repo_dir.replace(/^.*\//, "")} @ ${status.dev.branch || "?"} · ${state.model || status.dev.model || localize("opencode's default model")}`);
+		if (!served_from_agent_server() && $transcript && !$transcript.find(".code-agent-hosted-note").length) {
+			// The hosted copy can drive the local agent, but its edits land on disk, not in this page.
+			add_entry({ role: "note", text: localize("Note: this is the hosted copy of Paint. The agent edits the repo on your computer (%1); those changes won't show here until deployed. To iterate live, open %2", status.dev.repo_dir, `${get_server_url()}/`) }, false).addClass("code-agent-hosted-note");
+		}
 		if (status.dev.running_job && !state.job) {
 			state.job = status.dev.running_job; // e.g. started before a reload we didn't record
 			save_state();
@@ -199,7 +210,7 @@ async function poll_job(job_id) {
 				} else {
 					add_entry({ role: "note", text: `${files.length ? `${localize("Changed:")} ${files.join(", ")}` : localize("No files changed.")}${money}` });
 				}
-				if (result.app_changed && state.auto_reload && !result.aborted) {
+				if (result.app_changed && state.auto_reload && !result.aborted && served_from_agent_server()) {
 					add_entry({ role: "note", text: localize("Reloading the app with the changes…") });
 					save_state();
 					setTimeout(() => { location.reload(); }, 1200);

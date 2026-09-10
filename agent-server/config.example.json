@@ -36,6 +36,8 @@
 		"remote": "origin"
 	},
 
+	"allowed_origins": ["https://jspaint-editor.jklika2.workers.dev"],
+
 	"dev": {
 		"enabled": true,
 		"repo_dir": "..",

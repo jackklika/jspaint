@@ -69,6 +69,9 @@ const default_config = {
 	git: {
 		remote: "origin",
 	},
+	// Pages that may use the mutating API besides localhost ones: e.g. the hosted copy of Paint
+	// ("https://jspaint-editor.<account>.workers.dev") driving this server on your machine.
+	allowed_origins: [],
 	// The Code Agent window (Extras > Code Agent in JS Paint): prompt opencode to edit THIS repo — the running app —
 	// and reload it. A local dev tool; the server only listens on 127.0.0.1 and only takes these requests from localhost pages.
 	dev: {
@@ -793,7 +796,9 @@ function from_local_page(req) {
 	const origin = req.headers.origin;
 	if (!origin) { return true; }
 	try {
-		return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(new URL(origin).hostname);
+		const url = new URL(origin);
+		if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname)) { return true; }
+		return (config.allowed_origins || []).some((allowed) => String(allowed).replace(/\/+$/, "").toLowerCase() === url.origin.toLowerCase());
 	} catch (_error) {
 		return false;
 	}
@@ -1039,7 +1044,7 @@ const server = http.createServer(async (req, res) => {
 	const room_match = /^\/api\/rooms\/([^/]+)\/data$/.exec(url.pathname);
 	try {
 		if (req.method !== "GET" && url.pathname.startsWith("/api/") && !from_local_page(req)) {
-			send_json(res, 403, { error: "Only pages served from this computer may use this API." });
+			send_json(res, 403, { error: `Only pages served from this computer may use this API. This page is at ${req.headers.origin}; to allow it, add that origin to "allowed_origins" in agent-server/config.json and restart the server.` });
 			return;
 		}
 		if (req.method === "GET" && url.pathname === "/api/status") {
