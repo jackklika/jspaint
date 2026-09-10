@@ -1,7 +1,7 @@
 // @ts-check
 // eslint-disable-next-line no-unused-vars
 /* global file_format:writable, file_name:writable, saved:writable, system_file_handle:writable */
-/* global localize, new_local_session */
+/* global $status_text, localize, new_local_session */
 // My Site, inside Paint: File > Sign In to My Site… (site name + edit secret), File > My Site… (the folder:
 // pages and files with Open / New Page / Upload / Delete / View), and Save back to the site with Ctrl+S once
 // a page came from there. Talks to the editor Worker's API (worker/editor/index.js); pages open through
@@ -51,8 +51,11 @@ const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9.
 })();
 
 /**
- * Opens the site this tab was sent to (see above): signed in as it → the page, or the My Site folder; otherwise the
- * Sign In dialog, prefilled, then the same. Read once — a reload doesn't ask again.
+ * Opens the site this tab was sent to (see above). Signed in as that site: the page (or the My Site folder).
+ * Anyone else: a copy of the page to play with — published pages are public, so anyone may open one in Paint;
+ * Save to My Site puts the copy on *your* site, and putting it back at its own address takes that site's password.
+ * No page there at all: the Sign In dialog, prefilled (maybe it's yours and still empty). Read once — a reload
+ * doesn't ask again.
  */
 async function open_site_from_url() {
 	/** @type {{ site: string, page: string } | null} */
@@ -62,10 +65,52 @@ async function open_site_from_url() {
 		sessionStorage.removeItem(SITE_ENTRY_KEY);
 	} catch (_error) { /* ignore */ }
 	if (!entry || !entry.site) { return; }
-	const ok = (load_settings().site === entry.site && await check_sign_in()) || await show_sign_in_dialog({ site: entry.site });
-	if (!ok || load_settings().site !== entry.site) { return; } // signed in somewhere else instead: leave it be
+	if (load_settings().site === entry.site && await check_sign_in()) {
+		if (entry.page && await open_page_from_site(entry.page)) { return; }
+		show_my_site_dialog();
+		return;
+	}
+	if (await open_page_copy(entry.site, entry.page || "index.html")) { return; }
+	if (!await show_sign_in_dialog({ site: entry.site }) || load_settings().site !== entry.site) { return; }
 	if (entry.page && await open_page_from_site(entry.page)) { return; }
 	show_my_site_dialog();
+}
+
+/**
+ * Opens someone's published page as a copy: read without signing in (site files are public), assets resolve
+ * against that site, no live room. The document remembers whose it was (`copy_of`), and Ctrl+S / Save to My Site
+ * publishes it to the site you're signed in to (asking you to sign in if you aren't).
+ * @param {string} site
+ * @param {string} path
+ * @returns {Promise<boolean>} opened
+ */
+async function open_page_copy(site, path) {
+	const base = `${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/`;
+	let response;
+	try {
+		response = await fetch(`${base}${path}?optional`); // 204 when there's no such page (a 404 would log a console error)
+	} catch (_error) {
+		return false;
+	}
+	if (response.status === 204 || response.status === 404) { return false; }
+	if (!response.ok) {
+		show_error_message(`Couldn't load ${site_public_url(site, path)} (HTTP ${response.status}).`);
+		return false;
+	}
+	const text = await response.text();
+	if (!is_collage_html(text)) {
+		show_error_message(`${path} wasn't made with Paint (importing other pages comes later).`);
+		return false;
+	}
+	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: base, site_page: path });
+	if (opened) {
+		if (site !== load_settings().site) {
+			system_file_handle = { site_page: path, copy_of: site };
+		}
+		$G.triggerHandler("site-settings-changed"); // the globe's tooltip: whose page this is
+		$status_text.text(localize("Opened a copy of %1. Save to My Site puts it on your own site.", site_public_url(site, path)));
+	}
+	return opened;
 }
 
 /**
@@ -371,7 +416,7 @@ async function show_my_site_dialog() {
 		try {
 			const { files } = await list_files();
 			if (files.length === 0) {
-				$(E("li")).addClass("my-site-empty").text(localize("Nothing here yet. New Page… makes your first page; Save to My Site puts this picture up.")).appendTo($list);
+				$(E("li")).addClass("my-site-empty").text(localize("Nothing here yet. New Page… makes your front page (index.html); Save to My Site puts this picture up as it.")).appendTo($list);
 			}
 			for (const file of files.sort((a, b) => a.path.localeCompare(b.path))) {
 				const is_page = /\.html?$/i.test(file.path);
@@ -414,7 +459,10 @@ async function show_my_site_dialog() {
 	const show_new_page_dialog = () => {
 		const $d = $DialogWindow(localize("New Page"));
 		const $label = $(E("label")).text(localize("Page file name: ")).appendTo($d.$main);
-		const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", placeholder: "about.html" }).val("about.html").appendTo($label);
+		// The first page of a site is its front page.
+		const has_index = [...document.querySelectorAll(".my-site-window .my-site-name")].some((el) => el.textContent === "index.html");
+		const suggested = has_index ? "about.html" : "index.html";
+		const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", placeholder: suggested }).val(suggested).appendTo($label);
 		$(E("p")).addClass("my-site-note").text(localize("A fresh page opens in Paint; Save (Ctrl+S) puts it on the site.")).appendTo($d.$main);
 		$d.$Button(localize("OK"), () => {
 			const path = `${String($name.val()).trim().replace(/\.html?$/i, "").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[._-]+/, "")}.html`;

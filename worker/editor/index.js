@@ -5,7 +5,7 @@
 //   POST   /api/sites/:name/password                master key only: gives the site a new random password → { site, password, rotated }
 //   DELETE /api/sites/:name/password                master key only: removes the site's password
 //   GET    /api/sites/:name/files                   list a site's files
-//   GET    /api/sites/:name/files/<path>            read a file (HEAD to check existence)
+//   GET    /api/sites/:name/files/<path>            read a file (HEAD to check existence; ?optional → 204 instead of 404)
 //   PUT    /api/sites/:name/files/<path>            write a file (HTML is sanitized; images/audio are sniffed)
 //   DELETE /api/sites/:name/files/<path>
 //   GET    /api/x-elements                          the <x-*> registry's editor metadata (no auth)
@@ -348,7 +348,8 @@ async function handle_site_files(request, url, env, invite = null) {
 
 	if (request.method === "GET" || request.method === "HEAD") {
 		const object = await env.SITES.get(key);
-		if (!object) { return json({ error: "Not found" }, 404); }
+		// ?optional: a probe that may well miss — answer 204 instead of 404 so the browser console stays quiet.
+		if (!object) { return url.searchParams.has("optional") ? new Response(null, { status: 204, headers: CORS_HEADERS }) : json({ error: "Not found" }, 404); }
 		const headers = new Headers(CORS_HEADERS);
 		headers.set("Content-Type", content_type_for(path));
 		headers.set("Content-Length", String(object.size));

@@ -1,5 +1,5 @@
 // @ts-check
-/* global $toolbox, localize */
+/* global $toolbox, localize, system_file_handle */
 // The globe at the bottom of the toolbox: your site in one click. Not signed in → the Sign In dialog, then a
 // "My Site" view: your address, this page, and buttons to browse the site's files, save, share, or sign out.
 // A guest (share link) sees whose page they're on and how to pass the link along. The globe itself is a web-1.0
@@ -127,7 +127,10 @@ async function show_site_view() {
 	} else {
 		row(localize("Address:"), link(public_url(), public_url()));
 		row(localize("Editor:"), $(E("span")).text(get_site_editor_url()));
-		row(localize("This page:"), page ? link(public_url(page), page) : $(E("span")).text(localize("not saved to the site yet")));
+		const copy_of = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.copy_of === "string" ? system_file_handle.copy_of : "";
+		row(localize("This page:"), copy_of ?
+			$(E("span")).text(localize("%1 — a copy of %2. Save to My Site puts it on your site.", page, site_public_url(copy_of, page || "index.html"))) :
+			page ? link(public_url(page), page) : $(E("span")).text(localize("not saved to the site yet")));
 		$w.$Button(localize("Browse Files…"), () => { $w.close(); show_my_site_dialog(); }, { type: "submit" });
 		$w.$Button(page ? localize("Save Page…") : localize("Save to My Site…"), () => { $w.close(); show_publish_dialog(); });
 		if (page) { $w.$Button(localize("Share…"), () => { $w.close(); show_share_dialog(); }); }

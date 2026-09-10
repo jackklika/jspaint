@@ -40,7 +40,10 @@ await page.waitForFunction(() => !document.querySelector(".site-view-window"), n
 await click_menu_item(page, "My Site...");
 await page.waitForSelector(".my-site-window", { timeout: 10000 });
 await page.evaluate(() => [...document.querySelectorAll(".my-site-toolbar button")].find((b) => b.textContent === "New Page…").click());
-await page.waitForSelector(".dialog-window input[placeholder='about.html']", { timeout: 5000 });
+const new_page_input = ".dialog-window:has(.window-title:text-is('New Page')) input[type=text]";
+await page.waitForSelector(new_page_input, { timeout: 5000 });
+assert.equal(await page.inputValue(new_page_input), "index.html", "an empty site's first page is its front page");
+await page.fill(new_page_input, "about.html");
 await page.keyboard.press("Enter");
 await page.waitForSelector(".block-layer", { timeout: 10000 });
 assert.equal(await page.evaluate(() => file_name), "about.html");
@@ -81,17 +84,24 @@ await page.waitForFunction(() => document.querySelectorAll(".block-layer").lengt
 assert.equal(await page.evaluate(() => file_name), "about.html");
 assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "about.html" });
 
-// edit.<domain>/~site/about.html → Paint with ?site=&page=: a fresh browser gets Sign In prefilled, then the page
+// edit.<domain>/~site/about.html → Paint with ?site=&page=: anyone gets a copy of the published page to play with —
+// no sign-in, no live room; saving it asks who you are, and it lands on the site you sign in to
 {
-	const { page: fresh, close: close_fresh } = await open_paint({ query: `?site=${site}&page=about.html` });
-	await fresh.waitForSelector(".my-site-sign-in", { timeout: 10000 });
-	assert.equal(await fresh.inputValue('.my-site-sign-in input[name="site-name"]'), site, "prefilled");
-	assert.equal(await fresh.evaluate(() => location.search), "", "the query is consumed");
-	await fresh.fill('.my-site-sign-in input[name="password"]', minted.password);
-	await fresh.fill('.my-site-sign-in input[name="editor-url"]', editor);
-	await fresh.click(".my-site-sign-in button[type=submit]");
+	const { page: fresh, close: close_fresh } = await open_paint({ query: `?site=${site}&page=about.html`, init: (editor) => { localStorage.setItem("jspaint site publish settings", JSON.stringify({ editor_url: editor })); }, init_arg: editor });
 	await fresh.waitForFunction(() => file_name === "about.html", null, { timeout: 20000 });
-	assert.deepEqual(await fresh.evaluate(() => system_file_handle), { site_page: "about.html" });
+	assert.equal(await fresh.evaluate(() => location.search), "", "the query is consumed");
+	assert.equal(await fresh.evaluate(() => !!document.querySelector(".my-site-sign-in")), false, "no sign-in to look");
+	assert.deepEqual(await fresh.evaluate(() => system_file_handle), { site_page: "about.html", copy_of: site });
+	assert.equal(await fresh.evaluate(() => document.querySelectorAll(".block-layer").length), 2, "the page's elements came along");
+	assert.equal(await fresh.evaluate(() => window.live_sync_state().room), null, "a copy doesn't join the page's room");
+	await fresh.keyboard.press("Control+s");
+	await fresh.waitForSelector(".my-site-sign-in", { timeout: 10000 });
+	assert.equal(await fresh.inputValue('.my-site-sign-in input[name="site-name"]'), "", "saving needs an account of your own");
+	await fresh.fill('.my-site-sign-in input[name="site-name"]', site); // (the owner, as it happens)
+	await fresh.fill('.my-site-sign-in input[name="password"]', minted.password);
+	await fresh.click(".my-site-sign-in button[type=submit]");
+	await fresh.waitForFunction(() => /Done!|Couldn't|rejected|expired/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
+	assert.match(await fresh.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
 	await close_fresh();
 }
 // Already signed in as that site: ?site= opens the folder, no dialog
@@ -109,7 +119,7 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 }
 // The root site is the domain itself: its address has no /~root/
 {
-	const { page: root, close: close_root } = await open_paint({ query: "?site=root" });
+	const { page: root, close: close_root } = await open_paint({ query: "?site=root", init: (editor) => { localStorage.setItem("jspaint site publish settings", JSON.stringify({ editor_url: editor })); }, init_arg: editor });
 	await root.waitForSelector(".my-site-sign-in", { timeout: 10000 });
 	assert.match(await root.$eval(".my-site-sign-in p", (el) => el.textContent), /front page of the domain/);
 	await root.fill('.my-site-sign-in input[name="password"]', secret); // the master key opens root too

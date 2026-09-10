@@ -188,6 +188,7 @@ User pages are user-authored HTML. They are served by a **separate, deliberately
 - **Uploads**: allow-list by magic bytes (gif/png/jpg/webp/mp3/mid/wav), size caps, per-site quota; served with `Content-Type` fixed from the sniffed type and `X-Content-Type-Options: nosniff`.
 - **Dynamic actions** (`POST /~name/x/guestbook`) go to the sandbox Worker → DO with rate limits per IP; the editor never proxies user-page traffic.
 - **Accounts, minimal** (2026-09-10): each site can have its own random password (80 bits, minted only by the master key `SITE_EDIT_SECRET`), stored as `HMAC-SHA256(SITE_EDIT_SECRET, "site-password:site:password")` in the `Accounts` Durable Object and compared constant-time; it opens that one site (files, invites, rooms). The master key still opens everything. Rotating the master key invalidates every password and invite (re-mint). Open sign-up and Google OAuth come later — an OAuth identity per site can sit next to the hash.
+- **Anyone may open any published page in Paint** (`edit.<domain>/~name/page.html`): it opens as a copy, read from the public files API, with no room and no credentials; publishing it back to that address needs that site's password — the copy goes to whatever site you sign in to.
 - **Share links** grant one page, not the site: the key is an HMAC (site, page, expiry) under the edit secret, verified statelessly; a guest can join that page's room and write that page, its bitmap, and hashed media — never delete, never other pages. The secret itself never leaves the owner.
 
 ## 10. Phased plan
