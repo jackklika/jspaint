@@ -5,9 +5,12 @@
 	"name": "jspaint-sites",
 	"main": "index.js",
 	"compatibility_date": "2026-09-08",
-	"workers_dev": true,
+	"workers_dev": true, // kept as a fallback; the Worker 301s requests from it to SITES_URL
 	"preview_urls": false,
 	"observability": { "enabled": true },
+	"routes": [
+		{ "pattern": "sites.coolpaint.world", "custom_domain": true }
+	],
 	"r2_buckets": [
 		{ "binding": "SITES", "bucket_name": "jspaint-sites" }
 	],
@@ -20,6 +23,12 @@
 		{ "tag": "v1", "new_sqlite_classes": ["SiteState"] }
 	],
 	"vars": {
-		"EDITOR_URL": "https://jspaint-editor.jklika2.workers.dev"
+		"EDITOR_URL": "https://coolpaint.world",
+		"SITES_URL": "https://sites.coolpaint.world",
+		// Set POSTHOG_API_KEY to a PostHog project's client key (phc_… — the public one) to instrument
+		// every served page: visits, session length, and errors (worker/shared/analytics.js).
+		// POSTHOG_HOST only for non-US clouds, e.g. https://eu.i.posthog.com.
+		"POSTHOG_API_KEY": "",
+		"POSTHOG_HOST": ""
 	}
 }

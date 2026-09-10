@@ -11,10 +11,10 @@ export const GIF_EXPORT_MAX_DURATION_MS = 10000;
 export const GIF_EXPORT_MAX_FRAMES = 200;
 
 /** The hosted editor Worker (Paint app + publish API + GifCities proxy). Overridable in File > Save to My Site. */
-export const DEFAULT_EDITOR_URL = "https://jspaint-editor.jklika2.workers.dev";
+export const DEFAULT_EDITOR_URL = "https://coolpaint.world";
 
 /** Where published sites live: `${DEFAULT_SITES_URL}/~name/`. */
-export const DEFAULT_SITES_URL = "https://jspaint-sites.jklika2.workers.dev";
+export const DEFAULT_SITES_URL = "https://sites.coolpaint.world";
 
 // app-state.js (not a module) reads the page width for the default canvas size.
 /** @type {any} */ (window).PAGE_WIDTH = PAGE_WIDTH;

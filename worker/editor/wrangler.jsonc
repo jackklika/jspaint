@@ -6,13 +6,19 @@
 	"name": "jspaint-editor",
 	"main": "index.js",
 	"compatibility_date": "2026-09-08",
-	"workers_dev": true,
+	"workers_dev": true, // kept as a fallback; the Worker 301s page loads from it to EDITOR_URL
 	"preview_urls": false,
 	"observability": { "enabled": true },
+	// Custom Domains (the zone coolpaint.world is on this account): DNS records and certificates are created on deploy.
+	"routes": [
+		{ "pattern": "coolpaint.world", "custom_domain": true },
+		{ "pattern": "www.coolpaint.world", "custom_domain": true }
+	],
 	"assets": {
 		"directory": "./dist",
 		"binding": "ASSETS",
-		"run_worker_first": ["/api/*"]
+		// The Worker sees the API and the page shell (so the shell can 301 to the domain); every other asset is served directly.
+		"run_worker_first": ["/api/*", "/", "/index.html"]
 	},
 	"r2_buckets": [
 		{ "binding": "SITES", "bucket_name": "jspaint-sites" }
@@ -26,7 +32,8 @@
 		{ "tag": "v1", "new_sqlite_classes": ["PageRoom"] }
 	],
 	"vars": {
-		"SITES_URL": "https://jspaint-sites.jklika2.workers.dev"
+		"EDITOR_URL": "https://coolpaint.world",
+		"SITES_URL": "https://sites.coolpaint.world"
 	}
 	// Secret (not in config): SITE_EDIT_SECRET — `wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`.
 	// Locally: editor/.dev.vars with SITE_EDIT_SECRET=...

@@ -4,6 +4,7 @@
 // streams through with a fixed content type. Strict CSP on every response: pages can't run scripts.
 // POST /~name/x/<element> runs an <x-*> element's action (the guestbook form), also in this sandbox.
 import { DurableObject } from "cloudflare:workers";
+import { inject_analytics } from "../shared/analytics.js";
 import { content_type_for, extension_of, is_html_path, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { render_x_elements, x_elements } from "../shared/x-elements/index.js";
@@ -69,49 +70,63 @@ export class SiteState extends DurableObject {
 }
 
 /**
+ * Every HTML response goes through here: served pages, 404s, the landing page, form-action errors.
+ * When POSTHOG_API_KEY is set, the analytics bootstrap is injected (nonce'd; see shared/analytics.js).
  * @param {string} body
  * @param {number} status
+ * @param {{ POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} [env]
+ * @param {{ site?: string, page?: string }} [analytics_ctx] the site/page the response is about
  */
-function html_response(body, status = 200) {
-	return new Response(body, { status, headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8" } });
+function html_response(body, status = 200, env = {}, analytics_ctx = {}) {
+	const headers = { ...PAGE_HEADERS };
+	const injected = inject_analytics(body, env, { ...analytics_ctx, base_csp: PAGE_HEADERS["Content-Security-Policy"] });
+	if (injected) {
+		body = injected.html;
+		headers["Content-Security-Policy"] = injected.csp;
+	}
+	return new Response(body, { status, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } });
 }
 
-/** @param {string} message */
-function not_found(message = "Not Found") {
+/**
+ * @param {string} message
+ * @param {{ POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} [env]
+ * @param {{ site?: string, page?: string }} [analytics_ctx]
+ */
+function not_found(message = "Not Found", env = {}, analytics_ctx = {}) {
 	return html_response(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>404</title></head>
 <body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding-top:80px">
 <h1>404</h1><p>${message}</p><p><marquee>~*~ this page is under construction ~*~</marquee></p>
-</body></html>`, 404);
+</body></html>`, 404, env, analytics_ctx);
 }
 
 /**
  * POST /~name/x/<element>: the element's registry `action` (guestbook signing). Form posts only, same origin.
  * @param {Request} request
  * @param {URL} url
- * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace }} env
+ * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
  */
 async function handle_action(request, url, env) {
 	const match = /^\/~([^/]+)\/x\/([a-z0-9-]+)$/.exec(url.pathname);
 	if (!match || !valid_site_name(match[1])) {
-		return not_found();
+		return not_found("Not Found", env);
 	}
 	const definition = x_elements.get(`x-${match[2]}`);
 	if (!definition || !definition.action) {
-		return not_found();
+		return not_found("Not Found", env, { site: match[1] });
 	}
 	const origin = request.headers.get("Origin");
 	if (origin && origin !== url.origin) {
-		return html_response("<p>Forms only work from the page itself.</p>", 403);
+		return html_response("<p>Forms only work from the page itself.</p>", 403, env, { site: match[1] });
 	}
 	if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") || "")) {
-		return html_response("<p>Bad request.</p>", 400);
+		return html_response("<p>Bad request.</p>", 400, env, { site: match[1] });
 	}
 	let form;
 	try {
 		form = await request.formData();
 	} catch (_error) {
-		return html_response("<p>Bad request.</p>", 400);
+		return html_response("<p>Bad request.</p>", 400, env, { site: match[1] });
 	}
 	const result = await definition.action({
 		form,
@@ -120,16 +135,20 @@ async function handle_action(request, url, env) {
 	if (result.location) {
 		return new Response(null, { status: result.status || 303, headers: { ...PAGE_HEADERS, Location: result.location } });
 	}
-	return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Oops</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>${result.error || "Something went wrong."}</p><p><a href="javascript:history.back()">Go back</a></p></body></html>`.replace('<a href="javascript:history.back()">Go back</a>', `<a href="/~${match[1]}/">Go back</a>`), result.status || 400);
+	return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Oops</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>${result.error || "Something went wrong."}</p><p><a href="javascript:history.back()">Go back</a></p></body></html>`.replace('<a href="javascript:history.back()">Go back</a>', `<a href="/~${match[1]}/">Go back</a>`), result.status || 400, env, { site: match[1] });
 }
 
 export default {
 	/**
 	 * @param {Request} request
-	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string }} env
+	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL?: string, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
+		// The old `*.workers.dev` hostname sends visitors to the domain (pages are addressed by path, so nothing else changes).
+		if (env.SITES_URL && url.hostname.endsWith(".workers.dev") && url.host !== new URL(env.SITES_URL).host) {
+			return Response.redirect(`${new URL(env.SITES_URL).origin}${url.pathname}${url.search}`, 301);
+		}
 		if (request.method === "POST") {
 			return handle_action(request, url, env);
 		}
@@ -142,11 +161,11 @@ export default {
 <body bgcolor="#ffffd9" style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px">
 <h1>~ jspaint sites ~</h1><p>Personal pages live at <code>/~name/</code>.</p>
 ${env.EDITOR_URL ? `<p><a href="${env.EDITOR_URL}">Make one</a></p>` : ""}
-</body></html>`);
+</body></html>`, 200, env);
 		}
 		const match = /^\/~([^/]+)(?:\/(.*))?$/.exec(url.pathname);
 		if (!match) {
-			return not_found();
+			return not_found("Not Found", env);
 		}
 		const name = match[1];
 		let path = match[2] || "";
@@ -156,17 +175,17 @@ ${env.EDITOR_URL ? `<p><a href="${env.EDITOR_URL}">Make one</a></p>` : ""}
 		try {
 			path = decodeURIComponent(path);
 		} catch (_error) {
-			return not_found();
+			return not_found("Not Found", env);
 		}
 		if (!valid_site_name(name) || !valid_path(path)) {
-			return not_found();
+			return not_found("Not Found", env, { site: name, page: path });
 		}
 		if (match[2] === undefined) {
 			return Response.redirect(`${url.origin}/~${name}/`, 301); // canonical trailing slash
 		}
 		const object = await env.SITES.get(`sites/${name}/${path}`);
 		if (!object) {
-			return not_found(`There's no <b>/~${name}/${path}</b> here.`);
+			return not_found(`There's no <b>/~${name}/${path}</b> here.`, env, { site: name, page: path });
 		}
 		if (is_html_path(path)) {
 			const sanitized = await sanitize_html(await object.text());
@@ -177,7 +196,7 @@ ${env.EDITOR_URL ? `<p><a href="${env.EDITOR_URL}">Make one</a></p>` : ""}
 				state: env.SITE_STATE.getByName(name),
 				request,
 			});
-			return html_response(rendered);
+			return html_response(rendered, 200, env, { site: name, page: path });
 		}
 		const headers = new Headers(PAGE_HEADERS);
 		headers.set("Content-Type", content_type_for(path));

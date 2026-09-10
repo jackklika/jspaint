@@ -76,6 +76,10 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Domain: `coolpaint.world` (Paint) and `sites.coolpaint.world/~name/` (pages) as Worker Custom Domains; `*.workers.dev` redirects. Jack: "Don't worry about old links."
+
+- 2026-09-10 — **PostHog analytics on published pages** (`worker/shared/analytics.js`): when `POSTHOG_API_KEY` is set on the sites Worker (empty = off, `wrangler.jsonc` vars), every HTML response — pages, 404s, form-action errors — gets a nonce'd bootstrap injected at serve time, *after* sanitization, so it survives every save and never round-trips into the editor or R2. Answers who visits (autocapture pageviews, anonymous distinct_id), for how long (sessions), and what breaks (`capture_exceptions: true` for JS errors plus a `resource_error` listener for broken image/media links). The CSP gains `script-src 'nonce-…' <host>; connect-src <host>` on instrumented responses only — the DESIGN.md §9 nonce'd-script exception, now actually used. `POSTHOG_HOST` overrides the default US cloud. Test: `analytics.test.mjs` (pure Node).
+
 - 2026-09-10 — Toolbox trims (Jack): no Heading or Marquee tools; "Text Box" (the paragraph kind) covers both, with a **Marquee toggle in the Font toolbar** (`toggle_editing_block_marquee`, remembers the original tag in `data-was`); the GIF picker's icon now reads "GIF".
 
 - 2026-09-10 — Live strokes (remote painters replayed through a private copy of the tools) and share links with QR codes + guest mode (see 3.12, 3.13). Gotchas: jspaint's paint tools read globals (`pointer`, sizes, colors), so remote replay swaps them synchronously and restores them — never yield inside; `$status_size` is a window property the tools write to (swap it too); `eslint --fix` re-indents a whole array when it's wrapped in a function (disable indent for the block instead); share links live in the URL hash, which sessions.js rewrites — capture it at module load.

@@ -4,8 +4,8 @@ Two Cloudflare Workers (see `docs/DESIGN.md` §4 and §9):
 
 | Worker | URL | Role |
 | --- | --- | --- |
-| `jspaint-sites` (`sites/`) | `https://jspaint-sites.jklika2.workers.dev/~name/` | **The sandbox.** Serves user pages from the `jspaint-sites` R2 bucket, sanitizes them again, renders `<x-*>` elements server-side (visitor counter, last-updated, guestbook, music) from a per-site Durable Object, handles `POST /~name/x/guestbook`, sends a strict CSP. Read-only bucket access, no secrets. |
-| `jspaint-editor` (`editor/`) | `https://jspaint-editor.jklika2.workers.dev/` | The Paint app — which is the whole site builder — at `/` (static assets built into `editor/dist`), the API: site file CRUD behind a shared secret (reads are public), the `<x-*>` registry listing, the GifCities proxy — and the **live rooms**: a `PageRoom` Durable Object per page (`page-room.js`) at `GET /api/sites/:name/rooms/:page?token=<secret>` (WebSocket) holding the shared draft everyone editing that page sees. **Share keys**: `POST …/rooms/:page/invite` (owner) mints `{ key, expires }`; a guest joins the room with `?invite=<key>` and saves that page with `Authorization: Invite <key>` + `X-Invite-Page: <page>` (writes limited to the page, its bitmap, `gifs/`, `midi/`). Keys are HMAC-SHA256 of site, page, and expiry day under the edit secret, so they're stateless and don't reveal it. |
+| `jspaint-sites` (`sites/`) | `https://sites.coolpaint.world/~name/` | **The sandbox.** Serves user pages from the `jspaint-sites` R2 bucket, sanitizes them again, renders `<x-*>` elements server-side (visitor counter, last-updated, guestbook, music) from a per-site Durable Object, handles `POST /~name/x/guestbook`, sends a strict CSP. Read-only bucket access, no secrets. |
+| `jspaint-editor` (`editor/`) | `https://coolpaint.world/` | The Paint app — which is the whole site builder — at `/` (static assets built into `editor/dist`), the API: site file CRUD behind a shared secret (reads are public), the `<x-*>` registry listing, the GifCities proxy — and the **live rooms**: a `PageRoom` Durable Object per page (`page-room.js`) at `GET /api/sites/:name/rooms/:page?token=<secret>` (WebSocket) holding the shared draft everyone editing that page sees. **Share keys**: `POST …/rooms/:page/invite` (owner) mints `{ key, expires }`; a guest joins the room with `?invite=<key>` and saves that page with `Authorization: Invite <key>` + `X-Invite-Page: <page>` (writes limited to the page, its bitmap, `gifs/`, `midi/`). Keys are HMAC-SHA256 of site, page, and expiry day under the edit secret, so they're stateless and don't reveal it. |
 
 `shared/` holds what both use: name/path validation, the HTMLRewriter sanitizer, and the `<x-*>` registry (`shared/x-elements/`, one file per element).
 
@@ -20,6 +20,14 @@ wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc
 ```
 
 One-time: `wrangler r2 bucket create jspaint-sites`.
+
+## Domain
+
+`coolpaint.world` is a zone on the account; both Workers use **Custom Domains** in their `wrangler.jsonc` `routes` (`coolpaint.world` + `www.coolpaint.world` → editor, `sites.coolpaint.world` → sites), so `wrangler deploy` creates the DNS records and certificates. The `*.workers.dev` hostnames stay on as fallbacks and 301 page loads to the domain (the editor's `/api/*` answers on both, so browsers that remembered the old editor URL keep working). Canonical URLs come from the `EDITOR_URL` / `SITES_URL` vars and `src/site-constants.js`; the pages must stay on a different origin from the editor (sandbox, docs/DESIGN.md §9).
+
+## Analytics (who visits, for how long, what breaks)
+
+Set `POSTHOG_API_KEY` in `sites/wrangler.jsonc` (or the dashboard) to a PostHog project's **client** key (`phc_…` — the public one by design) and the sites Worker injects a nonce'd bootstrap into every HTML response at serve time, after sanitization: autocapture pageviews (anonymous `distinct_id` — who), sessions (how long), JS errors (`capture_exceptions`), and broken image/media links (`resource_error`). The snippet is never saved into R2, so it survives every edit and never re-imports into Paint; the page file stays script-free. `POSTHOG_HOST` overrides the default US cloud (e.g. `https://eu.i.posthog.com`). Events carry `site` and `page` properties, so one PostHog project covers all `~name` sites. Empty key = fully off, CSP unchanged (`script-src` stays closed).
 
 ## Publishing from Paint
 

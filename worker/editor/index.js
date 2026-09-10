@@ -226,14 +226,31 @@ async function gifcities_search(query, offset, page_size) {
 	return { query, offset, page_size, results, next_offset: results.length >= page_size ? offset + page_size : null };
 }
 
+/**
+ * Page loads on the old `*.workers.dev` hostname (or `www.`) are sent to the domain; the API keeps answering
+ * everywhere so browsers that remembered the old editor URL still save. Local dev hosts are never redirected.
+ * @param {URL} url
+ * @param {string | undefined} canonical_url - e.g. "https://coolpaint.world"
+ * @returns {Response | null}
+ */
+export function canonical_redirect(url, canonical_url) {
+	if (!canonical_url) { return null; }
+	const canonical = new URL(canonical_url);
+	if (url.host === canonical.host) { return null; }
+	if (!url.hostname.endsWith(".workers.dev") && url.hostname !== `www.${canonical.hostname}`) { return null; }
+	return Response.redirect(`${canonical.origin}${url.pathname}${url.search}`, 301);
+}
+
 export default {
 	/**
 	 * @param {Request} request
-	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
+	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
 		if (!url.pathname.startsWith("/api/")) {
+			const canonical = canonical_redirect(url, env.EDITOR_URL);
+			if (canonical) { return canonical; }
 			return env.ASSETS.fetch(request);
 		}
 		if (request.method === "OPTIONS") {
