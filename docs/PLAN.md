@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — **Rule: the top of the toolbox stays vanilla MS Paint** (16 classic tools, untouched). Web Text moved below the groove, after Text Box (also fixes the odd-count empty cell). Test locks the classic order and an even page-tool count.
+
 - 2026-09-10 — Jack's batch: Extras trimmed (Draw Randomly, Multi-User, Occult theme, Head Tracker, Dwell Clicker, Quick Undo Button, Vertical Color Box removed from the menu; the code stays); remote cursors show a corner pointer + the tool's icon + name (`tool_id` in presence); **Marquee** toggle is an icon like B/I/U and also works while typing in the Text tool (finishing makes a `<marquee>` element, `meld_textbox_into_marquee`); **Web Text** is its own tool (`TOOL_WEB_TEXT`, `textbox.web_text`), replacing the Web toggle; GIF picker opens with a starter search and records uses (`POST /api/gifs/used`, `GifStats` DO, `GET /api/gifs/top?site=`); Share quick button removed (it's in the globe's view); Undo/Redo icons 24px thick; joystick shows an arrows cross.
 
 - 2026-09-10 — Toolbox globe (Jack: "a 2x2 sized icon … web 1.0 style globe … shows a 'My Site' view which prompts to login, or … site settings and … browse the files"): `src/site-button.js`, appended to `$toolbox` from app.js; CSS-animated continents strip behind a round pixel mask; `site-settings-changed` event from `save_settings`.

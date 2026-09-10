@@ -20,8 +20,10 @@ await page.evaluate(() => [...document.querySelectorAll(".my-site-sign-in button
 await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 5000 });
 
 const tool_titles = await page.evaluate(() => [...document.querySelectorAll(".tools > *")].map((el) => el.classList.contains("tool-divider") ? "---" : el.getAttribute("title")));
-assert.deepEqual(tool_titles.slice(9, 11), ["Text", "Web Text"], "the classic Text tool and Web Text side by side");
-assert.deepEqual(tool_titles.slice(16, 21), ["Rounded Rectangle", "---", "Pointer", "Text Box", "Divider"]);
+// The top of the toolbox is vanilla MS Paint: the 16 classic tools, in order; everything of ours is below the groove
+assert.deepEqual(tool_titles.slice(0, 16), ["Free-Form Select", "Select", "Eraser/Color Eraser", "Fill With Color", "Pick Color", "Magnifier", "Pencil", "Brush", "Airbrush", "Text", "Line", "Curve", "Rectangle", "Polygon", "Ellipse", "Rounded Rectangle"]);
+assert.deepEqual(tool_titles.slice(16, 21), ["---", "Pointer", "Text Box", "Web Text", "Divider"]);
+assert.equal((tool_titles.length - 17) % 2, 0, "an even number of page tools: no empty cell");
 assert.ok(tool_titles.includes("GIF Picker") && tool_titles.includes("Guestbook") && tool_titles.includes("HTML"), tool_titles.join(","));
 assert.ok(!tool_titles.includes("Heading") && !tool_titles.includes("Marquee"), "no separate Heading/Marquee tools");
 assert.equal(await page.evaluate(() => document.querySelectorAll(".tool-icon.custom-tool-icon").length), 12);

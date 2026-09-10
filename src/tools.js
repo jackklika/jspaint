@@ -829,28 +829,6 @@ const tools = [{
 	},
 	$options: $choose_transparent_mode,
 }, {
-	// Web Text: the same text box, but finishing keeps the words as text on the page (a layer that stays editable
-	// and can be a link — text-layers.js) instead of drawing them into the picture.
-	id: TOOL_WEB_TEXT,
-	name: localize("Web Text"),
-	speech_recognition: [
-		"web text", "live text", "html text", "text layer", "real text", "link text", "editable text",
-	],
-	help_icon: "p_txt.gif",
-	icon_svg: WEB_TEXT_ICON,
-	description: localize("Puts text on the page as text — editable later, and it can be a link — instead of as pixels."),
-	cursor: ["precise", [16, 16], "crosshair"],
-	preload() {
-		setTimeout(FontDetective.preload, 10);
-	},
-	selectBox(rect_x, rect_y, rect_width, rect_height) {
-		if (rect_width > 1 && rect_height > 1) {
-			textbox = new OnCanvasTextBox(rect_x, rect_y, rect_width, rect_height);
-			/** @type {any} */ (textbox).web_text = true;
-		}
-	},
-	$options: $choose_transparent_mode,
-}, {
 	id: TOOL_LINE,
 	name: localize("Line"),
 	speech_recognition: [
@@ -1316,6 +1294,33 @@ const tools = [{
 
 // The page tools (Pointer, and one tool per kind of page element) follow the paint tools in the toolbox.
 tools.push(...page_tools);
+	// Web Text lives below the groove with the other page tools, right after Text Box: the top of the toolbox stays
+	// vanilla MS Paint (docs/DESIGN.md).
+	const web_text_tool = /** @type {Tool} */ ({
+			// The same text box as Text, but finishing keeps the words as text on the page (a layer that stays editable and
+		// can be a link — text-layers.js) instead of drawing them into the picture.
+		id: TOOL_WEB_TEXT,
+		name: localize("Web Text"),
+		speech_recognition: [
+			"web text", "live text", "html text", "text layer", "real text", "link text", "editable text",
+		],
+		help_icon: "p_txt.gif",
+		icon_svg: WEB_TEXT_ICON,
+		description: localize("Puts text on the page as text — editable later, and it can be a link — instead of as pixels."),
+		cursor: ["precise", [16, 16], "crosshair"],
+		preload() {
+			setTimeout(FontDetective.preload, 10);
+		},
+		selectBox(rect_x, rect_y, rect_width, rect_height) {
+			if (rect_width > 1 && rect_height > 1) {
+				textbox = new OnCanvasTextBox(rect_x, rect_y, rect_width, rect_height);
+				/** @type {any} */ (textbox).web_text = true;
+			}
+		},
+		$options: $choose_transparent_mode,
+		page_tool: true,
+	});
+	tools.splice(tools.findIndex((tool) => tool.id === block_tool_id("paragraph")) + 1, 0, web_text_tool);
 
 /* eslint-enable no-restricted-syntax */
 
