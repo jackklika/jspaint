@@ -74,6 +74,7 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Undo/Redo buttons (`src/quick-buttons.js`) at the bottom right next to the colors, grouped with the pan joystick; they follow `undos`/`redos` via `history-update`. (Extras › Eye Gaze Mode's floating Easy Undo button is separate.)
 - 2026-09-10 — Phone-first sizing: new pages are as wide as the screen they're made on (`fit_page_width`, up to the classic 800), Page › Page Width presets (Phone 390 / Classic 800 / Fit This Screen), and a pan joystick (`src/pan-joystick.js`) at the bottom right of the color bar on touch screens (View › Pan Joystick forces it). Make Page Longer/Shorter no longer change the default size for new pages.
 - 2026-09-10 — Mobile pass on `live-sync`: OS-GUI's window activation stole focus from tapped inputs on iOS Safari (fixed in `lib/os-gui/$Window.js`, patch regenerated); `src/page-scroll.js` adds the "Make page 300 px longer" button under the picture (centered under the visible slice), Page › Make Page Longer/Shorter, and Pointer-tool drag-to-pan on bare canvas (one finger on a phone). Verified with Playwright's iPhone WebKit emulation.
 

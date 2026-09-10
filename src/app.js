@@ -26,6 +26,7 @@ import { delete_selected_block, deselect_block, edit_selected_block, end_block_e
 import { init_live_session } from "./live-session.js";
 import { fit_page_width, init_page_scroll } from "./page-scroll.js";
 import { init_pan_joystick } from "./pan-joystick.js";
+import { init_quick_buttons } from "./quick-buttons.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
@@ -517,7 +518,8 @@ const $left = $(E("div")).addClass("component-area left").prependTo($H);
 window.$left = $left;
 const $right = $(E("div")).addClass("component-area right").appendTo($H);
 window.$right = $right;
-init_pan_joystick(); // lives in the bottom component area
+init_quick_buttons(); // Undo/Redo at the bottom right, next to the colors
+init_pan_joystick(); // joins them there on touch screens
 
 
 // there's also probably a CSS solution alternative to this

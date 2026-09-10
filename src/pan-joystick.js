@@ -4,6 +4,7 @@
 // direction (further = faster). Shown on touch screens and narrow windows by default; View › Pan Joystick
 // forces it on or off. Desktop users have the wheel and scrollbars; the Pointer tool drags bare canvas too.
 import { $G, E } from "./helpers.js";
+import { get_quick_buttons_container } from "./quick-buttons.js";
 
 const SETTING_KEY = "jspaint pan joystick"; // "auto" | "on" | "off"
 const RADIUS = 14; // knob travel in px
@@ -61,7 +62,9 @@ function tick() {
 
 /** Call once the bottom component area exists (app.js). */
 function init_pan_joystick() {
-	$joystick = $(E("div")).addClass("pan-joystick").attr({ role: "slider", "aria-label": localize("Pan joystick: drag to scroll the page"), title: localize("Drag to scroll the page") }).appendTo($bottom);
+	// Sits with the Undo/Redo buttons at the bottom right (quick-buttons.js), or alone if those aren't there.
+	$joystick = $(E("div")).addClass("pan-joystick").attr({ role: "slider", "aria-label": localize("Pan joystick: drag to scroll the page"), title: localize("Drag to scroll the page") }).appendTo(get_quick_buttons_container() || $bottom);
+	$joystick.toggleClass("pan-joystick-alone", !get_quick_buttons_container());
 	$knob = $(E("div")).addClass("pan-joystick-knob").appendTo($joystick);
 	$joystick.css("touch-action", "none");
 
@@ -108,10 +111,8 @@ function init_pan_joystick() {
 			position: relative;
 		}
 		.pan-joystick {
-			position: absolute;
-			right: 6px;
-			top: 50%;
-			transform: translateY(-50%);
+			position: relative;
+			flex: none;
 			width: 44px;
 			height: 44px;
 			border-radius: 50%;
@@ -123,6 +124,12 @@ function init_pan_joystick() {
 			cursor: grab;
 			user-select: none;
 			-webkit-user-select: none;
+		}
+		.pan-joystick.pan-joystick-alone {
+			position: absolute;
+			right: 6px;
+			top: 50%;
+			transform: translateY(-50%);
 		}
 		.pan-joystick.active {
 			cursor: grabbing;

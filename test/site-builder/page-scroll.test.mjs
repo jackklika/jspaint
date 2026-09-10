@@ -100,5 +100,22 @@ assert.equal(await page.evaluate(() => document.querySelector(".pan-joystick-kno
 await click_menu_item(page, "Pan Joystick");
 assert.equal(await page.evaluate(() => $(".pan-joystick").is(":visible")), false);
 
+// Undo / Redo buttons at the bottom right, next to the colors: follow the undo tree like Ctrl+Z / Ctrl+Y
+const undo_button = await page.$('.quick-button[aria-label="Undo"]');
+const redo_button = await page.$('.quick-button[aria-label="Redo"]');
+const ub = await undo_button.boundingBox();
+const colors = await (await page.$(".colors-component")).boundingBox();
+assert.ok(ub.x > colors.x + colors.width && ub.y > 600, `undo button right of the colors in the bottom bar: ${JSON.stringify(ub)}`);
+assert.equal(await redo_button.isDisabled(), true, "nothing to redo yet");
+assert.equal(await undo_button.isDisabled(), false, "there is history to undo");
+const before_undo = await size();
+await undo_button.click();
+await page.waitForTimeout(150);
+assert.notEqual(await size(), before_undo, "the button undid the last resize");
+assert.equal(await redo_button.isDisabled(), false);
+await redo_button.click();
+await page.waitForTimeout(150);
+assert.equal(await size(), before_undo, "redo put it back");
+
 await close();
 console.log("page-scroll: ok");
