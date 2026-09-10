@@ -117,7 +117,7 @@ const menus = {
 			label: localize("Sign In to My Sit&e..."),
 			speech_recognition: ["sign in", "sign in to my site", "log in", "log in to my site", "sign into my site"],
 			action: () => { show_sign_in_dialog(); },
-			description: localize("Signs in to your site with its name and edit secret."),
+			description: localize("Signs in to your site with its name and password."),
 		},
 		{
 			label: localize("M&y Site..."),

@@ -1939,3 +1939,5 @@ window.api_for_cypress_tests = {
 };
 // #endregion
 
+// Everything above has run: modules that act on the URL the tab was opened with (a share link, edit.<domain>/~name) go now.
+$G.triggerHandler("app-ready");

@@ -6,9 +6,9 @@
 // spinning earth: continents scroll behind a round pixel mask (and hold still for prefers-reduced-motion).
 import { $DialogWindow } from "./$ToolWindow.js";
 import { $G, E } from "./helpers.js";
-import { public_url, show_my_site_dialog, show_sign_in_dialog, sign_out } from "./my-site.js";
+import { open_site_from_url, public_url, show_my_site_dialog, show_sign_in_dialog, sign_out } from "./my-site.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
-import { DEFAULT_SITES_URL } from "./site-constants.js";
+import { site_public_url } from "./site-constants.js";
 import { get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
 
 const GLOBE = 32; // px
@@ -116,7 +116,7 @@ async function show_site_view() {
 	};
 	$(E("div")).addClass("site-view-heading").append($(E("span")).addClass("site-globe site-globe-static"), $(E("span")).text(guest ? `~${guest.site}` : `~${settings.site}`)).appendTo($main);
 	if (guest) {
-		const page_url = `${DEFAULT_SITES_URL}/~${guest.site}/${page === "index.html" ? "" : page || ""}`;
+		const page_url = site_public_url(guest.site, page || "index.html");
 		$(E("p")).addClass("site-view-blurb").text(localize("You're drawing on this page as a guest, through a share link. Ctrl+S saves it to the site.")).appendTo($main);
 		row(localize("Page:"), page ? link(page_url, page) : $(E("span")).text("—"));
 		$w.$Button(localize("Share Page…"), () => { $w.close(); show_share_dialog(); }, { type: "submit" });
@@ -158,6 +158,8 @@ function init_site_button() {
 	};
 	$G.on("site-page-opened site-page-restored site-settings-changed", refresh_title);
 	refresh_title();
+	// Sent here by edit.<domain>/~name? Open that site (after a pending share-link join, which runs at 400 ms).
+	$G.one("app-ready", () => { setTimeout(() => { if (!guest_info()) { open_site_from_url(); } }, 300); }); // after a share-link join
 
 	$("<style>").text(`
 		.site-globe-button {

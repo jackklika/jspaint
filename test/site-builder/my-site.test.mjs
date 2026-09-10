@@ -12,13 +12,16 @@ if (!editor || !sites || !secret) {
 	process.exit(0);
 }
 const site = `site-${Date.now().toString(36)}`;
+// The site gets its own password (minted with the master key); Paint signs in with that, not the master.
+const minted = await (await fetch(`${editor}/api/sites/${site}/password`, { method: "POST", headers: { Authorization: `Bearer ${secret}` } })).json();
+assert.match(minted.password, /^[a-z2-9]{4}(-[a-z2-9]{4}){3}$/);
 const { page, close } = await open_paint();
 
 // Sign in
 await click_menu_item(page, "Sign In to My Site...");
 await page.waitForSelector(".my-site-sign-in", { timeout: 5000 });
 await page.fill('.my-site-sign-in input[name="site-name"]', site);
-await page.fill('.my-site-sign-in input[name="edit-secret"]', secret);
+await page.fill('.my-site-sign-in input[name="password"]', minted.password);
 await page.fill('.my-site-sign-in input[name="editor-url"]', editor);
 await page.click(".my-site-sign-in button[type=submit]");
 await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 15000 });
@@ -77,6 +80,48 @@ await page.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((r
 await page.waitForFunction(() => document.querySelectorAll(".block-layer").length === 2, null, { timeout: 15000 });
 assert.equal(await page.evaluate(() => file_name), "about.html");
 assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "about.html" });
+
+// edit.<domain>/~site/about.html → Paint with ?site=&page=: a fresh browser gets Sign In prefilled, then the page
+{
+	const { page: fresh, close: close_fresh } = await open_paint({ query: `?site=${site}&page=about.html` });
+	await fresh.waitForSelector(".my-site-sign-in", { timeout: 10000 });
+	assert.equal(await fresh.inputValue('.my-site-sign-in input[name="site-name"]'), site, "prefilled");
+	assert.equal(await fresh.evaluate(() => location.search), "", "the query is consumed");
+	await fresh.fill('.my-site-sign-in input[name="password"]', minted.password);
+	await fresh.fill('.my-site-sign-in input[name="editor-url"]', editor);
+	await fresh.click(".my-site-sign-in button[type=submit]");
+	await fresh.waitForFunction(() => file_name === "about.html", null, { timeout: 20000 });
+	assert.deepEqual(await fresh.evaluate(() => system_file_handle), { site_page: "about.html" });
+	await close_fresh();
+}
+// Already signed in as that site: ?site= opens the folder, no dialog
+{
+	const seed = (/** @type {any} */ arg) => { localStorage.setItem("jspaint site publish settings", JSON.stringify(arg)); };
+	const { page: known, close: close_known } = await open_paint({ query: `?site=${site}`, init: seed, init_arg: { site, secret: minted.password, editor_url: editor, page: "index.html", remember_secret: true } });
+	await known.waitForSelector(".my-site-window", { timeout: 15000 });
+	assert.equal(await known.evaluate(() => !!document.querySelector(".my-site-sign-in")), false);
+	await close_known();
+	// Signed in as one site, sent to another: the dialog, prefilled with the other one
+	const { page: elsewhere, close: close_elsewhere } = await open_paint({ query: `?site=other-${site}`, init: seed, init_arg: { site, secret: minted.password, editor_url: editor, page: "index.html", remember_secret: true } });
+	await elsewhere.waitForSelector(".my-site-sign-in", { timeout: 10000 });
+	assert.equal(await elsewhere.inputValue('.my-site-sign-in input[name="site-name"]'), `other-${site}`);
+	await close_elsewhere();
+}
+// The root site is the domain itself: its address has no /~root/
+{
+	const { page: root, close: close_root } = await open_paint({ query: "?site=root" });
+	await root.waitForSelector(".my-site-sign-in", { timeout: 10000 });
+	assert.match(await root.$eval(".my-site-sign-in p", (el) => el.textContent), /front page of the domain/);
+	await root.fill('.my-site-sign-in input[name="password"]', secret); // the master key opens root too
+	await root.fill('.my-site-sign-in input[name="editor-url"]', editor);
+	await root.click(".my-site-sign-in button[type=submit]");
+	await root.waitForSelector(".my-site-window", { timeout: 15000 });
+	await root.evaluate(() => [...document.querySelectorAll(".my-site-window button")].find((b) => b.textContent === "Close")?.click());
+	await root.click(".site-globe-button");
+	await root.waitForSelector(".site-view-window", { timeout: 5000 });
+	assert.equal(await root.$eval(".site-view-window a[target=_blank]", (el) => el.getAttribute("href")), `${sites}/`);
+	await close_root();
+}
 
 // Clean up the test site
 const headers = { Authorization: `Bearer ${secret}` };

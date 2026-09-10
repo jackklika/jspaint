@@ -9,7 +9,8 @@
 		"dev:editor": "npm run build:editor && wrangler dev -c editor/wrangler.jsonc --port 8787 --persist-to .wrangler/state",
 		"deploy:sites": "wrangler deploy -c sites/wrangler.jsonc",
 		"deploy:editor": "npm run build:editor && wrangler deploy -c editor/wrangler.jsonc",
-		"deploy": "npm run deploy:sites && npm run deploy:editor"
+		"deploy": "npm run deploy:sites && npm run deploy:editor",
+		"site-password": "node scripts/site-password.mjs"
 	},
 	"devDependencies": {
 		"wrangler": "^4.130.0"

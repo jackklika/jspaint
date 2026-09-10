@@ -8,7 +8,11 @@
 	"workers_dev": true, // kept as a fallback; the Worker 301s requests from it to SITES_URL
 	"preview_urls": false,
 	"observability": { "enabled": true },
+	// The domain itself: the root site at /, ~name sites at /~name/. Apex first (`wrangler dev` takes routes[0] as the
+	// local host); www and the former sites. subdomain redirect to it (index.js legacy_host_redirect).
 	"routes": [
+		{ "pattern": "coolpaint.world", "custom_domain": true },
+		{ "pattern": "www.coolpaint.world", "custom_domain": true },
 		{ "pattern": "sites.coolpaint.world", "custom_domain": true }
 	],
 	"r2_buckets": [
@@ -23,11 +27,7 @@
 		{ "tag": "v1", "new_sqlite_classes": ["SiteState"] }
 	],
 	"vars": {
-		"EDITOR_URL": "https://coolpaint.world",
-		"SITES_URL": "https://sites.coolpaint.world"
-		// POSTHOG_API_KEY (a PostHog client key, phc_…) lives in a *secret*, not here — set it with
-		// `wrangler secret put POSTHOG_API_KEY -c sites/wrangler.jsonc` or a dashboard Secret.
-		// (Plain dashboard variables are wiped by deploys; secrets survive.) POSTHOG_HOST likewise,
-		// only for non-US clouds (e.g. https://eu.i.posthog.com).
+		"EDITOR_URL": "https://edit.coolpaint.world",
+		"SITES_URL": "https://coolpaint.world"
 	}
 }

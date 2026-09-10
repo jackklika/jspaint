@@ -4,7 +4,7 @@
 /* global localize */
 // File > Save to My Site…: publishes the page (bitmap + elements + stickers + text) on the hosted site
 // builder (worker/editor). Assets are uploaded content-addressed (gifs/<hash>.gif, collages/<page>.png),
-// then the page itself, through the editor Worker's API with the shared edit secret. The page appears at
+// then the page itself, through the editor Worker's API with the site's password (or the master key). The page appears at
 // <sites>/~<name>/. Sign-in and the file browser live in my-site.js; the settings are shared from here.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { HTML_FORMAT_ID, serialize_collage_html } from "./collage-format.js";
@@ -14,6 +14,7 @@ import { default_editor_url } from "./site-constants.js";
 import { preview_path, render_share_preview } from "./share-preview.js";
 
 const SETTINGS_KEY = "jspaint site publish settings";
+const LEGACY_EDITOR_URLS = new Set(["https://coolpaint.world", "https://www.coolpaint.world"]);
 
 /** @typedef {{ editor_url: string, site: string, page: string, secret: string, remember_secret: boolean, invite?: { key: string, page: string } }} PublishSettings */
 
@@ -24,8 +25,10 @@ function load_settings() {
 	try {
 		stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
 	} catch (_error) { /* ignore */ }
+	// The editor used to be the apex; a browser that remembered that URL would now be talking to the pages sandbox.
+	const stored_editor = (stored.editor_url || "").replace(/\/+$/, "");
 	return {
-		editor_url: stored.editor_url || default_editor_url(),
+		editor_url: stored_editor && !LEGACY_EDITOR_URLS.has(stored_editor) ? stored_editor : default_editor_url(),
 		site: stored.site || "",
 		page: stored.page || "index.html",
 		secret: stored.secret || "",
@@ -83,7 +86,7 @@ const extension_for_type = (type) => ({ "image/gif": "gif", "image/png": "png", 
  */
 async function publish_collage(settings, log) {
 	const base = settings.editor_url.replace(/\/+$/, "");
-	// A guest (share link) saves with their key, scoped to their page; the owner with the edit secret.
+	// A guest (share link) saves with their key, scoped to their page; the owner with the site's password (or the master key).
 	const headers = settings.invite ? { Authorization: `Invite ${settings.invite.key}`, "X-Invite-Page": settings.invite.page } : { Authorization: `Bearer ${settings.secret}` };
 	const api = `${base}/api/sites/${encodeURIComponent(settings.site)}/files`;
 	const page_base = settings.page.replace(/\.html?$/i, "") || "index";
@@ -102,7 +105,7 @@ async function publish_collage(settings, log) {
 	// hashed assets are already there (one request, and no 404 noise in the console).
 	const listing = await fetch(api, { headers });
 	if (listing.status === 401 || listing.status === 403) {
-		throw new Error(settings.invite ? "This share link has expired or doesn't cover this page." : "The edit secret was rejected.");
+		throw new Error(settings.invite ? "This share link has expired or doesn't cover this page." : "The password was rejected.");
 	}
 	if (!listing.ok) {
 		throw new Error(`Couldn't reach the editor at ${base} (HTTP ${listing.status}).`);
@@ -178,10 +181,10 @@ function show_publish_dialog({ auto = false, page } = {}) {
 	};
 	const $site = field(localize("Site name (~name): "), "site", { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
 	const $page = field(localize("Page file: "), "page", { placeholder: "index.html", name: "page-file" });
-	const $secret = field(localize("Edit secret: "), "secret", { type: "password", autocomplete: "new-password", name: "edit-secret" });
+	const $secret = field(localize("Password: "), "secret", { type: "password", autocomplete: "current-password", name: "password" });
 	const $remember_row = $(E("div")).addClass("site-publish-row").appendTo($main);
 	const $remember = $(E("input")).attr({ type: "checkbox", id: "site-publish-remember" }).prop("checked", settings.remember_secret).appendTo($remember_row);
-	$(E("label")).attr({ for: "site-publish-remember" }).text(` ${localize("Remember the secret on this computer")}`).appendTo($remember_row);
+	$(E("label")).attr({ for: "site-publish-remember" }).text(` ${localize("Remember the password on this computer")}`).appendTo($remember_row);
 	const $editor_url = field(localize("Editor URL: "), "editor_url");
 	if (guest) {
 		// Guests save with their share link's key, to the page it covers: nothing to fill in.
@@ -225,7 +228,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			return;
 		}
 		if (!current.secret && !guest) {
-			log("The edit secret is needed to save.");
+			log("The password is needed to save.");
 			$secret.focus();
 			return;
 		}

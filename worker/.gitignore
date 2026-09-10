@@ -3,3 +3,4 @@ editor/dist/
 .wrangler/
 .dev.vars*
 editor/.secret.txt
+editor/.passwords/

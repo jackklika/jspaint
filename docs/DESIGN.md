@@ -15,7 +15,7 @@ Reference vibe: <https://renaandjack.com/wedding> — centered flow, `<marquee>`
 | Primary artifact | Both first-class: HTML page + animated GIF render |
 | Page model | **The page is the Paint document** (revised 2026-09-09): one 800px-wide canvas is the page's background; every element (headings, marquees, GIFs, text, guestbook…) floats over it at a position and size, like Paint's text boxes and selections. No flow layout. |
 | Page width | Fixed **800px centered**, one constant (`PAGE_WIDTH`), user-choosable later; new documents are 800×600 |
-| Users / hosting | Hosted for non-technical users eventually; **Cloudflare** all the way; **`coolpaint.world`** (editor) and **`sites.coolpaint.world/~name/`** (pages) since 2026-09-10, `*.workers.dev` kept as redirecting fallbacks |
+| Users / hosting | Hosted for non-technical users eventually; **Cloudflare** all the way; **`coolpaint.world/`** is the `root` site and **`coolpaint.world/~name/`** the others (the sandbox Worker); **`edit.coolpaint.world`** is Paint, and `edit.coolpaint.world/~name` opens that site in it (since 2026-09-10; old hostnames redirect) |
 | Accounts | Later. Now: single shared secret for Jack |
 | App shell | **Just JS Paint** (revised 2026-09-09; the fake-desktop shell was built and then removed). Page elements are toolbox tools; site management is in the File menu; page settings in a Page menu. |
 | Blocks v1 | Headings/paragraphs/links, marquee, GIF dividers & stickers, images, tables/colored boxes, background music, tiled wallpaper, guestbook, visitor counter, last-updated, raw HTML (image maps: later) |
@@ -181,12 +181,13 @@ Reuse jspaint's primitives rather than replacing them:
 
 User pages are user-authored HTML. They are served by a **separate, deliberately weak Worker** on its own origin:
 
-- **Own origin** (`sites.coolpaint.world`), never the editor's (`coolpaint.world`). A page cannot read the editor's cookies or edit secret, full stop.
+- **Own origin** (`coolpaint.world`, including the `root` site at `/`), never the editor's (`edit.coolpaint.world`). A page cannot read the editor's cookies or edit secret, full stop.
 - **Minimal bindings**: read-only access to the `sites` R2 bucket and the per-site Durable Object used by `<x-*>` renderers. No editor API, no secrets, no write access to R2. If the sandbox is compromised, there is nothing to take but public pages.
-- **Content-Security-Policy on every page**: `default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'none'` (raise `script-src` only for our own optional live-edit snippet, nonce'd — the one use so far is the PostHog analytics bootstrap, `worker/shared/analytics.js`, injected at serve time when `POSTHOG_API_KEY` is set, so pages stored in R2 stay script-free). `X-Frame-Options`/`frame-ancestors` so pages can't be framed by the editor for clickjacking, and vice versa.
+- **Content-Security-Policy on every page**: `default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'none'` (raise `script-src` only for our own optional live-edit snippet, nonce'd — **never for analytics**: published pages carry no scripts and no trackers, on purpose; product analytics lives on the editor origin only, `worker/shared/analytics.js`). `X-Frame-Options`/`frame-ancestors` so pages can't be framed by the editor for clickjacking, and vice versa.
 - **Sanitize on save** in the editor Worker: raw HTML blocks lose `<script>`, `on*=` handlers, `javascript:`/`data:text/html` URLs, `<iframe>`/`<object>`/`<embed>`; `<x-*>` attributes are validated against the registry; guestbook entries are plain text. Sanitize again at serve time (defense in depth; the serve-time pass is cheap).
 - **Uploads**: allow-list by magic bytes (gif/png/jpg/webp/mp3/mid/wav), size caps, per-site quota; served with `Content-Type` fixed from the sniffed type and `X-Content-Type-Options: nosniff`.
 - **Dynamic actions** (`POST /~name/x/guestbook`) go to the sandbox Worker → DO with rate limits per IP; the editor never proxies user-page traffic.
+- **Accounts, minimal** (2026-09-10): each site can have its own random password (80 bits, minted only by the master key `SITE_EDIT_SECRET`), stored as `HMAC-SHA256(SITE_EDIT_SECRET, "site-password:site:password")` in the `Accounts` Durable Object and compared constant-time; it opens that one site (files, invites, rooms). The master key still opens everything. Rotating the master key invalidates every password and invite (re-mint). Open sign-up and Google OAuth come later — an OAuth identity per site can sit next to the hash.
 - **Share links** grant one page, not the site: the key is an HMAC (site, page, expiry) under the edit secret, verified statelessly; a guest can join that page's room and write that page, its bitmap, and hashed media — never delete, never other pages. The secret itself never leaves the owner.
 
 ## 10. Phased plan

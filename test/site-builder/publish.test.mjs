@@ -23,7 +23,7 @@ await page.waitForSelector(".site-publish-window", { timeout: 5000 });
 const fill = (label, value) => page.fill(`.site-publish-window label:has-text("${label}") input`, value);
 await fill("Site name", site);
 await fill("Page file", "index.html");
-await fill("Edit secret", secret);
+await fill("Password", secret);
 await fill("Editor URL", editor);
 await page.click(".site-publish-window button[type=submit]");
 await page.waitForFunction(() => /Done!|Couldn't|rejected|failed/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });

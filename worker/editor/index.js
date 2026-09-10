@@ -1,7 +1,9 @@
 // @ts-check
 // jspaint-editor: serves the Paint app (static assets) and the API Paint uses to publish to a site.
 //
-//   GET    /api/whoami                              checks the edit secret; returns URLs
+//   GET    /api/whoami[?site=name]                  checks the bearer (master key, or that site's password); returns role + URLs
+//   POST   /api/sites/:name/password                master key only: gives the site a new random password → { site, password, rotated }
+//   DELETE /api/sites/:name/password                master key only: removes the site's password
 //   GET    /api/sites/:name/files                   list a site's files
 //   GET    /api/sites/:name/files/<path>            read a file (HEAD to check existence)
 //   PUT    /api/sites/:name/files/<path>            write a file (HTML is sanitized; images/audio are sniffed)
@@ -14,12 +16,17 @@
 //   …?invite=<key> / Authorization: Invite <key>    a guest: may join that page's room and save that page (and its previews/ card, gifs/, midi/)
 //   POST   /api/gifs/used {gif, site?}                 remember a GifCities GIF was used (GifStats DO); GET /api/gifs/top?site=&limit= lists the most used
 //   GET    /?join=<site>/<page>/<key>                a share link: Paint with link-preview tags for that page (share_landing)
+//   GET    /~name[/page.html]                        → 302 /?site=name[&page=…]: Paint opens that site (site_entry_redirect)
 //
-// Auth: `Authorization: Bearer <SITE_EDIT_SECRET>` on /api/whoami, listing, and writes. Reads of site files are public.
-// Accounts come later; today one secret edits every site (docs/PLAN.md phase 5).
-import { content_type_for, is_html_path, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
+// Auth: `Authorization: Bearer <token>` on whoami, listing, writes, invites, and rooms (?token= on the WebSocket).
+// The token is either the master key (SITE_EDIT_SECRET: every site, plus minting passwords) or one site's password
+// (random, minted by the master, stored only as a keyed hash in the Accounts Durable Object — accounts.js). role_of()
+// says which. Reads of site files are public. Open sign-up / Google OAuth come later (docs/PLAN.md phase 5).
+import { inject_analytics } from "../shared/analytics.js";
+import { content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { x_elements } from "../shared/x-elements/index.js";
+export { Accounts } from "./accounts.js";
 export { GifStats } from "./gif-stats.js";
 export { PageRoom } from "./page-room.js";
 
@@ -40,21 +47,108 @@ function json(data, status = 200) {
 }
 
 /**
- * Constant-time comparison of the bearer token with the secret.
- * @param {Request} request
- * @param {string | undefined} secret
+ * Constant-time string comparison (length first — a mismatch there leaks nothing useful).
+ * @param {string} a @param {string} b
  */
-function authorized(request, secret) {
-	if (!secret) { return false; }
-	const header = request.headers.get("Authorization") || "";
-	// Browsers can't set headers on a WebSocket upgrade, so the live room takes the secret as ?token= (over TLS).
-	const token = header.startsWith("Bearer ") ? header.slice(7).trim() : (request.headers.get("Upgrade") === "websocket" ? new URL(request.url).searchParams.get("token") || "" : "");
-	if (token.length !== secret.length) { return false; }
+function same_string(a, b) {
+	if (a.length !== b.length) { return false; }
 	let diff = 0;
-	for (let i = 0; i < token.length; i++) {
-		diff |= token.charCodeAt(i) ^ secret.charCodeAt(i);
+	for (let i = 0; i < a.length; i++) {
+		diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
 	}
 	return diff === 0;
+}
+
+/** The bearer a request carries: the Authorization header, or ?token= on a WebSocket upgrade (browsers can't set headers there; TLS covers it). @param {Request} request */
+function bearer_of(request) {
+	const header = request.headers.get("Authorization") || "";
+	if (header.startsWith("Bearer ")) { return header.slice(7).trim(); }
+	return request.headers.get("Upgrade") === "websocket" ? new URL(request.url).searchParams.get("token") || "" : "";
+}
+
+// --- site passwords ---
+// Minted by the master key: 16 symbols from a 32-symbol alphabet (no l/o/0/1 lookalikes), shown as xxxx-xxxx-xxxx-xxxx —
+// 80 random bits, so a fast keyed hash is plenty: HMAC-SHA256(SITE_EDIT_SECRET, "site-password:<site>:<password>").
+// Typed passwords are compared after lowercasing and dropping everything but letters and digits (dashes, spaces,
+// phone autocapitalization). The master key itself is never normalized.
+
+const PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"; // cspell:disable-line
+/** @type {Map<string, CryptoKey>} the master key imported for HMAC, by secret */
+const hmac_keys = new Map();
+/** @type {Map<string, { hash: string | null, until: number }>} site → stored password hash (or none), briefly cached */
+const site_hashes = new Map();
+const SITE_HASH_TTL_MS = 60000;
+const SITE_HASH_CACHE_MAX = 500;
+
+/** @param {string} secret */
+async function hmac_key(secret) {
+	let key = hmac_keys.get(secret);
+	if (!key) {
+		key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+		hmac_keys.set(secret, key);
+	}
+	return key;
+}
+
+/** @param {string} secret @param {string} message @returns {Promise<ArrayBuffer>} */
+async function hmac(secret, message) {
+	return crypto.subtle.sign("HMAC", await hmac_key(secret), new TextEncoder().encode(message));
+}
+
+/** @param {string} text */
+function normalize_password(text) {
+	return text.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function generate_password() {
+	const bytes = crypto.getRandomValues(new Uint8Array(16));
+	const symbols = [...bytes].map((byte) => PASSWORD_ALPHABET[byte & 31]).join("");
+	return symbols.replace(/(.{4})(?=.)/g, "$1-");
+}
+
+/** @param {string} secret @param {string} site @param {string} password */
+async function password_hash(secret, site, password) {
+	const mac = new Uint8Array(await hmac(secret, `site-password:${site}:${normalize_password(password)}`));
+	return [...mac].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The site's stored password hash (null if it has none), via a short cache so a publish's many uploads don't each
+ * cross to the Accounts DO. `fresh` skips the cache (a just-minted password, or a stale entry).
+ * @param {{ ACCOUNTS: DurableObjectNamespace }} env
+ * @param {string} site
+ * @param {{ fresh?: boolean }} [options]
+ * @returns {Promise<string | null>}
+ */
+async function site_hash(env, site, { fresh = false } = {}) {
+	const cached = site_hashes.get(site);
+	if (cached && !fresh && cached.until > Date.now()) { return cached.hash; }
+	const hash = await /** @type {any} */ (env.ACCOUNTS.getByName("global")).get_hash(site);
+	if (site_hashes.size >= SITE_HASH_CACHE_MAX) { site_hashes.delete(site_hashes.keys().next().value); }
+	site_hashes.set(site, { hash, until: Date.now() + SITE_HASH_TTL_MS });
+	return hash;
+}
+
+/**
+ * Who the request's bearer is: "master" (the edit secret: every site), "site" (this site's own password), or null.
+ * Async: every caller must `await` it — a Promise would be truthy.
+ * @param {Request} request
+ * @param {{ ACCOUNTS: DurableObjectNamespace, SITE_EDIT_SECRET?: string }} env
+ * @param {string} [site] - the site the request is about (no site: only the master can pass)
+ * @returns {Promise<"master" | "site" | null>}
+ */
+async function role_of(request, env, site = "") {
+	const secret = env.SITE_EDIT_SECRET;
+	if (!secret) { return null; }
+	const token = bearer_of(request);
+	if (!token) { return null; }
+	if (same_string(token, secret)) { return "master"; }
+	if (!site || !valid_site_name(site)) { return null; }
+	const given = await password_hash(secret, site, token);
+	let stored = await site_hash(env, site);
+	if (stored && same_string(given, stored)) { return "site"; }
+	stored = await site_hash(env, site, { fresh: true });
+	return stored && same_string(given, stored) ? "site" : null;
 }
 
 // --- share keys: a guest's pass to one page ---
@@ -74,8 +168,7 @@ function base64url(bytes) {
  * @param {number} expiry_day - days since the epoch
  */
 async function invite_signature(secret, site, page, expiry_day) {
-	const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-	const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${site}|${page}|${expiry_day}`));
+	const mac = await hmac(secret, `${site}|${page}|${expiry_day}`);
 	return base64url(mac.slice(0, 12));
 }
 
@@ -102,11 +195,7 @@ async function invite_valid(key, secret, site, page) {
 	if (!match) { return false; }
 	const expiry_day = Number(match[1]);
 	if (expiry_day * 86400000 < Date.now()) { return false; }
-	const expected = await invite_signature(secret, site, page, expiry_day);
-	if (expected.length !== match[2].length) { return false; }
-	let diff = 0;
-	for (let i = 0; i < expected.length; i++) { diff |= expected.charCodeAt(i) ^ match[2].charCodeAt(i); }
-	return diff === 0;
+	return same_string(await invite_signature(secret, site, page, expiry_day), match[2]);
 }
 
 /** The invite key a request carries (Authorization: Invite <key>, or ?invite= on a WebSocket upgrade). @param {Request} request */
@@ -140,12 +229,27 @@ function decode_entities(text) {
 }
 
 /**
+ * An HTML asset response with the PostHog bootstrap injected when POSTHOG_API_KEY is set (editor-only;
+ * published pages on the sites Worker never carry trackers — docs/DESIGN.md §9).
+ * @param {Response} asset
+ * @param {{ POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
+ * @param {{ site?: string, page?: string }} [ctx] what the page is about, as event properties
+ */
+async function with_analytics(asset, env, ctx = {}) {
+	const injected = inject_analytics(await asset.text(), env, ctx);
+	if (!injected) { return asset; }
+	const headers = new Headers(asset.headers);
+	headers.set("Cache-Control", "no-cache"); // the bootstrap is injected per-request; also keeps deploys fresh
+	return new Response(injected.html, { status: asset.status, headers });
+}
+
+/**
  * A share link, /?join=<site>/<page>/<key>: Paint itself, with link-preview (Open Graph / Twitter card) tags for that
  * page — its preview card if one has been uploaded (previews/<page>.png), else its saved bitmap, else the app icon.
  * Messaging apps fetch this without running scripts, so the tags have to be in the HTML.
  * @param {Request} request
  * @param {URL} url
- * @param {{ ASSETS: Fetcher, SITES: R2Bucket }} env
+ * @param {{ ASSETS: Fetcher, SITES: R2Bucket, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
  */
 async function share_landing(request, url, env) {
 	const asset = await env.ASSETS.fetch(new Request(new URL("/", url).href, request));
@@ -192,14 +296,16 @@ async function share_landing(request, url, env) {
 		["name", "twitter:image", image],
 	];
 	const markup = tags.map(([attr, key, value]) => `<meta ${attr}="${key}" content="${escape_html(value)}">`).join("\n\t");
-	const rewritten = new HTMLRewriter()
+	const rewritten = await new HTMLRewriter()
 		.on('meta[property^="og:"], meta[name^="twitter:"], meta[name="description"]', { element(element) { element.remove(); } })
 		.on("head", { element(element) { element.append(`\n\t${markup}\n`, { html: true }); } })
-		.transform(asset);
-	const headers = new Headers(rewritten.headers);
+		.transform(asset)
+		.text();
+	const headers = new Headers(asset.headers);
 	headers.set("Cache-Control", "no-cache"); // the preview changes as people draw
 	headers.delete("ETag");
-	return new Response(rewritten.body, { status: rewritten.status, headers });
+	const injected = inject_analytics(rewritten, env, { site, page });
+	return new Response(injected ? injected.html : rewritten, { status: asset.status, headers });
 }
 
 /**
@@ -214,7 +320,7 @@ async function handle_site_files(request, url, env, invite = null) {
 	const name = match[1];
 	if (!valid_site_name(name)) { return json({ error: "Site names are 1–32 lowercase letters, digits, or hyphens" }, 400); }
 	const prefix = `sites/${name}/`;
-	const public_url = (/** @type {string} */ path) => `${env.SITES_URL}/~${name}/${path === "index.html" ? "" : path}`;
+	const public_url = (/** @type {string} */ path) => `${env.SITES_URL}${site_base(name)}/${path === "index.html" ? "" : path}`;
 
 	if (match[2] === undefined) {
 		if (request.method !== "GET") { return json({ error: "Method not allowed" }, 405); }
@@ -320,18 +426,53 @@ export function canonical_redirect(url, canonical_url) {
 	return Response.redirect(`${canonical.origin}${url.pathname}${url.search}`, 301);
 }
 
+const SITE_ENTRY = /^\/~([^/]+)(?:\/(.*))?$/;
+/**
+ * edit.<domain>/~name[/page.html] → Paint with ?site=&page= (src/my-site.js opens that site: Sign In first if needed).
+ * A path that isn't a page (a GIF, a typo) just opens the site.
+ * @param {URL} url
+ * @returns {Response | null}
+ */
+export function site_entry_redirect(url) {
+	const match = SITE_ENTRY.exec(url.pathname);
+	if (!match) { return null; }
+	const site = match[1];
+	if (!valid_site_name(site)) { return new Response("Not found", { status: 404 }); }
+	let page = match[2] || "";
+	if (page.endsWith("/")) { page += "index.html"; }
+	try {
+		page = decodeURIComponent(page);
+	} catch (_error) {
+		page = "";
+	}
+	if (page && !(valid_path(page) && is_html_path(page))) { page = ""; }
+	const params = new URLSearchParams({ site });
+	if (page) { params.set("page", page); }
+	return new Response(null, { status: 302, headers: { Location: `/?${params}`, "Cache-Control": "no-store" } });
+}
+
 export default {
 	/**
 	 * @param {Request} request
-	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, GIF_STATS: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
+	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, GIF_STATS: DurableObjectNamespace, ACCOUNTS: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL: string, SITE_EDIT_SECRET?: string, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
 		if (!url.pathname.startsWith("/api/")) {
 			const canonical = canonical_redirect(url, env.EDITOR_URL);
 			if (canonical) { return canonical; }
+			const entry = site_entry_redirect(url);
+			if (entry) { return entry; }
 			if (url.pathname === "/" && url.searchParams.has("join")) {
 				return share_landing(request, url, env);
+			}
+			// The app shell gets the PostHog bootstrap (editor-only analytics; docs/DESIGN.md §9).
+			if (request.method === "GET" && env.POSTHOG_API_KEY && (url.pathname === "/" || url.pathname === "/index.html")) {
+				const asset = await env.ASSETS.fetch(request);
+				if ((asset.headers.get("Content-Type") || "").includes("text/html")) {
+					return with_analytics(asset, env);
+				}
+				return asset;
 			}
 			return env.ASSETS.fetch(request);
 		}
@@ -341,7 +482,7 @@ export default {
 		try {
 			const room_match = /^\/api\/sites\/([^/]+)\/rooms\/(.+?)(\/invite)?$/.exec(url.pathname);
 			if (room_match) {
-				// The live room: one Durable Object per page, WebSocket only; the edit secret or a share key gets you in.
+				// The live room: one Durable Object per page, WebSocket only; the master key, the site's password, or a share key gets you in.
 				const name = room_match[1];
 				let page;
 				try {
@@ -353,13 +494,13 @@ export default {
 				if (room_match[3]) {
 					// POST …/rooms/<page>/invite: the owner makes a share key for this page.
 					if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
-					if (!authorized(request, env.SITE_EDIT_SECRET)) { return json({ error: "Unauthorized: send Authorization: Bearer <edit secret>" }, 401); }
+					if (!await role_of(request, env, name)) { return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401); }
 					const body = await request.json().catch(() => ({}));
 					return json({ site: name, page, ...(await make_invite(env.SITE_EDIT_SECRET, name, page, Number(body.days) || 30)) });
 				}
 				if (request.headers.get("Upgrade") !== "websocket") { return json({ error: "The room is a WebSocket endpoint" }, 426); }
-				const owner = authorized(request, env.SITE_EDIT_SECRET);
-				if (!owner && !await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, page)) { return json({ error: "Unauthorized: add ?token=<edit secret> or ?invite=<share key>" }, 401); }
+				const owner = await role_of(request, env, name);
+				if (!owner && !await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, page)) { return json({ error: "Unauthorized: add ?token=<password> or ?invite=<share key>" }, 401); }
 				return env.PAGE_ROOM.getByName(`${name}/${page}`).fetch(request);
 			}
 			if (url.pathname === "/api/gifcities/search") {
@@ -397,20 +538,49 @@ export default {
 			if ((request.method === "GET" || request.method === "HEAD") && /^\/api\/sites\/[^/]+\/files\/./.test(url.pathname)) {
 				return handle_site_files(request, url, env);
 			}
-			if (!authorized(request, env.SITE_EDIT_SECRET)) {
+			if (url.pathname === "/api/whoami") {
+				// Paint's sign-in check: the master (any site) or the site's password (needs ?site=).
+				const site = url.searchParams.get("site") || "";
+				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
+				const role = await role_of(request, env, site);
+				if (!role) { return json({ error: "Unauthorized: the password was rejected" }, 401); }
+				return json({ ok: true, role, site: site || null, sites_url: env.SITES_URL, editor_url: url.origin });
+			}
+			const password_match = /^\/api\/sites\/([^/]+)\/password$/.exec(url.pathname);
+			if (password_match) {
+				// The master key gives a site a fresh random password (or takes it away). The password is returned exactly once.
+				const name = password_match[1];
+				if (!valid_site_name(name)) { return json({ error: "Bad site name" }, 400); }
+				const role = await role_of(request, env, name);
+				if (!role) { return json({ error: "Unauthorized: send Authorization: Bearer <master key>" }, 401); }
+				if (role !== "master") { return json({ error: "Only the master key can set a site's password" }, 403); }
+				const accounts = /** @type {any} */ (env.ACCOUNTS.getByName("global"));
+				if (request.method === "POST") {
+					const password = generate_password();
+					const { rotated } = await accounts.set_hash(name, await password_hash(/** @type {string} */ (env.SITE_EDIT_SECRET), name, password));
+					site_hashes.delete(name);
+					return json({ site: name, password, rotated });
+				}
+				if (request.method === "DELETE") {
+					const removed = await accounts.remove(name);
+					site_hashes.delete(name);
+					return json({ ok: true, site: name, removed });
+				}
+				return json({ error: "Method not allowed" }, 405);
+			}
+			const files_match = /^\/api\/sites\/([^/]+)\/files(?:\/|$)/.exec(url.pathname);
+			if (files_match) {
+				const name = files_match[1];
+				if (!valid_site_name(name)) { return json({ error: "Site names are 1–32 lowercase letters, digits, or hyphens" }, 400); }
+				if (await role_of(request, env, name)) {
+					return handle_site_files(request, url, env);
+				}
 				// A guest with a share key may list the site and save their page (handle_site_files scopes the writes).
-				const files_match = /^\/api\/sites\/([^/]+)\/files(?:\/|$)/.exec(url.pathname);
 				const guest_page = request.headers.get("X-Invite-Page") || "";
-				if (files_match && valid_site_name(files_match[1]) && valid_path(guest_page) && is_html_path(guest_page) && await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, files_match[1], guest_page)) {
+				if (valid_path(guest_page) && is_html_path(guest_page) && await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, guest_page)) {
 					return handle_site_files(request, url, env, { page: guest_page });
 				}
-				return json({ error: "Unauthorized: send Authorization: Bearer <edit secret>" }, 401);
-			}
-			if (url.pathname === "/api/whoami") {
-				return json({ ok: true, sites_url: env.SITES_URL, editor_url: url.origin });
-			}
-			if (url.pathname.startsWith("/api/sites/")) {
-				return handle_site_files(request, url, env);
+				return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401);
 			}
 			return json({ error: "Not found" }, 404);
 		} catch (error) {

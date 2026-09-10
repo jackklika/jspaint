@@ -177,7 +177,7 @@ function join_page_room(page, authoritative) {
 		clear_remote_clients();
 		if (!room) { return; }
 		if (event.code === 1008 || event.code === 4401) {
-			set_status("error", room.guest ? localize("This share link has expired.") : localize("The room refused the edit secret."));
+			set_status("error", room.guest ? localize("This share link has expired.") : localize("The room refused the password."));
 			return;
 		}
 		// Reconnect with backoff; the room sends a fresh snapshot on hello.

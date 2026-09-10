@@ -1,11 +1,11 @@
 // @ts-check
-// jspaint-sites: serves user sites at /~name/<path> from the `sites/<name>/<path>` keys of the R2 bucket.
-// Pages (.html) are sanitized again and have their <x-*> elements rendered server-side; everything else
-// streams through with a fixed content type. Strict CSP on every response: pages can't run scripts.
-// POST /~name/x/<element> runs an <x-*> element's action (the guestbook form), also in this sandbox.
+// jspaint-sites: serves user sites from the `sites/<name>/<path>` keys of the R2 bucket — /~name/<path> for a site,
+// and the "root" site at the domain root itself (coolpaint.world/<path> → sites/root/<path>). Pages (.html) are
+// sanitized again and have their <x-*> elements rendered server-side; everything else streams through with a
+// fixed content type. Strict CSP on every response: pages can't run scripts.
+// POST /~name/x/<element> (or /x/<element> for root) runs an <x-*> element's action (the guestbook form), also here.
 import { DurableObject } from "cloudflare:workers";
-import { inject_analytics } from "../shared/analytics.js";
-import { content_type_for, extension_of, is_html_path, valid_path, valid_site_name } from "../shared/names.js";
+import { ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { render_x_elements, x_elements } from "../shared/x-elements/index.js";
 
@@ -71,83 +71,104 @@ export class SiteState extends DurableObject {
 
 /**
  * Every HTML response goes through here: served pages, 404s, the landing page, form-action errors.
- * When POSTHOG_API_KEY is set, the analytics bootstrap is injected (nonce'd; see shared/analytics.js).
+ * No analytics ever: published pages carry no scripts and no trackers (docs/DESIGN.md §9 — the
+ * editor origin, coolpaint.world, is where product analytics lives).
  * @param {string} body
  * @param {number} status
- * @param {{ POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} [env]
- * @param {{ site?: string, page?: string }} [analytics_ctx] the site/page the response is about
  */
-function html_response(body, status = 200, env = {}, analytics_ctx = {}) {
-	const headers = { ...PAGE_HEADERS };
-	const injected = inject_analytics(body, env, { ...analytics_ctx, base_csp: PAGE_HEADERS["Content-Security-Policy"] });
-	if (injected) {
-		body = injected.html;
-		headers["Content-Security-Policy"] = injected.csp;
-	}
-	return new Response(body, { status, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } });
+function html_response(body, status = 200) {
+	return new Response(body, { status, headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8" } });
 }
 
-/**
- * @param {string} message
- * @param {{ POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} [env]
- * @param {{ site?: string, page?: string }} [analytics_ctx]
- */
-function not_found(message = "Not Found", env = {}, analytics_ctx = {}) {
+/** @param {string} message */
+function not_found(message = "Not Found") {
 	return html_response(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>404</title></head>
 <body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding-top:80px">
 <h1>404</h1><p>${message}</p><p><marquee>~*~ this page is under construction ~*~</marquee></p>
-</body></html>`, 404, env, analytics_ctx);
+</body></html>`, 404);
 }
 
 /**
- * POST /~name/x/<element>: the element's registry `action` (guestbook signing). Form posts only, same origin.
+ * POST /~name/x/<element> (or /x/<element> for the root site): the element's registry `action` (guestbook signing). Form posts only, same origin.
  * @param {Request} request
  * @param {URL} url
- * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
+ * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace }} env
  */
 async function handle_action(request, url, env) {
-	const match = /^\/~([^/]+)\/x\/([a-z0-9-]+)$/.exec(url.pathname);
-	if (!match || !valid_site_name(match[1])) {
-		return not_found("Not Found", env);
+	const match = /^(?:\/~([^/]+))?\/x\/([a-z0-9-]+)$/.exec(url.pathname);
+	const site = match ? (match[1] ?? ROOT_SITE) : "";
+	if (!match || !valid_site_name(site)) {
+		return not_found();
 	}
 	const definition = x_elements.get(`x-${match[2]}`);
 	if (!definition || !definition.action) {
-		return not_found("Not Found", env, { site: match[1] });
+		return not_found();
 	}
 	const origin = request.headers.get("Origin");
 	if (origin && origin !== url.origin) {
-		return html_response("<p>Forms only work from the page itself.</p>", 403, env, { site: match[1] });
+		return html_response("<p>Forms only work from the page itself.</p>", 403);
 	}
 	if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") || "")) {
-		return html_response("<p>Bad request.</p>", 400, env, { site: match[1] });
+		return html_response("<p>Bad request.</p>", 400);
 	}
 	let form;
 	try {
 		form = await request.formData();
 	} catch (_error) {
-		return html_response("<p>Bad request.</p>", 400, env, { site: match[1] });
+		return html_response("<p>Bad request.</p>", 400);
 	}
 	const result = await definition.action({
 		form,
-		context: { site: match[1], page: "", page_uploaded: null, state: env.SITE_STATE.getByName(match[1]), request },
+		context: { site, page: "", page_uploaded: null, state: env.SITE_STATE.getByName(site), request },
 	});
 	if (result.location) {
 		return new Response(null, { status: result.status || 303, headers: { ...PAGE_HEADERS, Location: result.location } });
 	}
-	return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Oops</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>${result.error || "Something went wrong."}</p><p><a href="javascript:history.back()">Go back</a></p></body></html>`.replace('<a href="javascript:history.back()">Go back</a>', `<a href="/~${match[1]}/">Go back</a>`), result.status || 400, env, { site: match[1] });
+	return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Oops</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>${result.error || "Something went wrong."}</p><p><a href="javascript:history.back()">Go back</a></p></body></html>`.replace('<a href="javascript:history.back()">Go back</a>', `<a href="${site_home(site)}">Go back</a>`), result.status || 400);
+}
+
+/** A same-origin redirect. Relative Location on purpose: Response.redirect() rejects relative URLs, and under `wrangler dev` the request's origin is the configured custom domain. @param {string} location @param {number} [status] */
+function path_redirect(location, status = 301) {
+	return new Response(null, { status, headers: { ...PAGE_HEADERS, Location: location } });
+}
+
+/**
+ * Old hostnames (the *.workers.dev fallback, www., and the former sites. subdomain) send visitors to the domain;
+ * pages are addressed by path, so nothing else changes. Allow-listed so a misconfigured var can't loop.
+ * @param {URL} url
+ * @param {string | undefined} sites_url
+ */
+function legacy_host_redirect(url, sites_url) {
+	if (!sites_url) { return null; }
+	const canonical = new URL(sites_url);
+	if (url.host === canonical.host) { return null; }
+	const legacy = url.hostname.endsWith(".workers.dev") || url.hostname === `www.${canonical.hostname}` || url.hostname === `sites.${canonical.hostname}`;
+	return legacy ? Response.redirect(`${canonical.origin}${url.pathname}${url.search}`, 301) : null;
+}
+
+/** What the domain shows before the root site has a page. @param {string | undefined} editor_url */
+function landing_page(editor_url) {
+	return html_response(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>coolpaint.world</title></head>
+<body bgcolor="#ffffd9" style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px">
+<h1>~ coolpaint.world ~</h1><p>Web pages painted in Paint. Personal pages live at <code>/~name/</code>.</p>
+${editor_url ? `<p><a href="${editor_url}">Make one</a></p>` : ""}
+</body></html>`);
 }
 
 export default {
 	/**
 	 * @param {Request} request
-	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL?: string, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
+	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL?: string }} env
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
-		// The old `*.workers.dev` hostname sends visitors to the domain (pages are addressed by path, so nothing else changes).
-		if (env.SITES_URL && url.hostname.endsWith(".workers.dev") && url.host !== new URL(env.SITES_URL).host) {
-			return Response.redirect(`${new URL(env.SITES_URL).origin}${url.pathname}${url.search}`, 301);
+		const legacy = legacy_host_redirect(url, env.SITES_URL);
+		if (legacy) { return legacy; }
+		// Share links used to live on this hostname (/?join=…): they belong to the editor now.
+		if (url.pathname === "/" && url.searchParams.has("join") && env.EDITOR_URL) {
+			return Response.redirect(`${new URL(env.EDITOR_URL).origin}/${url.search}`, 302);
 		}
 		if (request.method === "POST") {
 			return handle_action(request, url, env);
@@ -155,48 +176,46 @@ export default {
 		if (request.method !== "GET" && request.method !== "HEAD") {
 			return new Response("Method Not Allowed", { status: 405, headers: PAGE_HEADERS });
 		}
-		if (url.pathname === "/") {
-			return html_response(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>jspaint sites</title></head>
-<body bgcolor="#ffffd9" style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px">
-<h1>~ jspaint sites ~</h1><p>Personal pages live at <code>/~name/</code>.</p>
-${env.EDITOR_URL ? `<p><a href="${env.EDITOR_URL}">Make one</a></p>` : ""}
-</body></html>`, 200, env);
+		// Which site, which file: /~name/<path> is a site; anything else is the root site at the domain itself.
+		let site, rest;
+		const tilde = /^\/~([^/]+)(?:\/(.*))?$/.exec(url.pathname);
+		if (tilde) {
+			site = tilde[1];
+			rest = tilde[2];
+			if (!valid_site_name(site)) { return not_found(); }
+			if (site === ROOT_SITE) { return path_redirect(`/${rest ?? ""}${url.search}`); } // the root site lives at /
+			if (rest === undefined) { return path_redirect(`/~${site}/`); } // canonical trailing slash
+		} else {
+			site = ROOT_SITE;
+			rest = url.pathname.slice(1);
 		}
-		const match = /^\/~([^/]+)(?:\/(.*))?$/.exec(url.pathname);
-		if (!match) {
-			return not_found("Not Found", env);
-		}
-		const name = match[1];
-		let path = match[2] || "";
+		let path = rest;
 		if (path === "" || path.endsWith("/")) {
 			path += "index.html";
 		}
 		try {
 			path = decodeURIComponent(path);
 		} catch (_error) {
-			return not_found("Not Found", env);
+			return not_found();
 		}
-		if (!valid_site_name(name) || !valid_path(path)) {
-			return not_found("Not Found", env, { site: name, page: path });
+		if (!valid_path(path)) {
+			return not_found();
 		}
-		if (match[2] === undefined) {
-			return Response.redirect(`${url.origin}/~${name}/`, 301); // canonical trailing slash
-		}
-		const object = await env.SITES.get(`sites/${name}/${path}`);
+		const object = await env.SITES.get(`sites/${site}/${path}`);
 		if (!object) {
-			return not_found(`There's no <b>/~${name}/${path}</b> here.`, env, { site: name, page: path });
+			if (site === ROOT_SITE && path === "index.html") { return landing_page(env.EDITOR_URL); }
+			return not_found(`There's no <b>${site_base(site)}/${path}</b> here.`);
 		}
 		if (is_html_path(path)) {
 			const sanitized = await sanitize_html(await object.text());
 			const rendered = await render_x_elements(sanitized, {
-				site: name,
+				site,
 				page: path,
 				page_uploaded: object.uploaded,
-				state: env.SITE_STATE.getByName(name),
+				state: env.SITE_STATE.getByName(site),
 				request,
 			});
-			return html_response(rendered, 200, env, { site: name, page: path });
+			return html_response(rendered);
 		}
 		const headers = new Headers(PAGE_HEADERS);
 		headers.set("Content-Type", content_type_for(path));

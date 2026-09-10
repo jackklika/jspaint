@@ -227,7 +227,9 @@ function show_share_dialog() {
 /** Call once the app is up (app.js): joins from a share link if there is one, and keeps shared pages' previews fresh. */
 function init_share() {
 	$G.on("history-update", schedule_preview_refresh);
-	window.addEventListener("load", () => { setTimeout(join_from_share_link, 400); });
+	// After app.js has finished initializing everything (live-session.js included), not on `load` — a resource that never
+	// finishes loading would hold that up forever.
+	$G.one("app-ready", () => { setTimeout(join_from_share_link, 100); });
 
 	$("<style>").text(`
 		.share-blurb {

@@ -74,4 +74,17 @@ function sniff_type(head) {
 	return null;
 }
 
-export { ALLOWED_EXTENSIONS, content_type_for, extension_of, is_html_path, sniff_type, valid_path, valid_site_name };
+/** The site served at the domain root (coolpaint.world/): its files are sites/root/…, and it has no /~root/ prefix. */
+const ROOT_SITE = "root";
+
+/** URL path prefix of a site's pages on the sites origin: "" for the root site, "/~name" otherwise. @param {string} site */
+function site_base(site) {
+	return site === ROOT_SITE ? "" : `/~${site}`;
+}
+
+/** A site's home path: "/" for the root site, "/~name/" otherwise. @param {string} site */
+function site_home(site) {
+	return `${site_base(site)}/`;
+}
+
+export { ALLOWED_EXTENSIONS, ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, sniff_type, valid_path, valid_site_name };

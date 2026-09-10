@@ -12,16 +12,60 @@ import { refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
 import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
-import { DEFAULT_SITES_URL, default_editor_url } from "./site-constants.js";
+import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, site_public_url } from "./site-constants.js";
 import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
 
 /** @type {string | null} learned from /api/whoami */
 let sites_url = null;
+/** @type {"master" | "site" | null} what the saved password is, learned from /api/whoami */
+let role = null;
+
+/** "master" (the edit secret: every site), "site" (this site's own password), or null when not checked yet. */
+function current_role() {
+	return role;
+}
 
 /** The public URL of a page (or file) of the signed-in site. */
 function public_url(path = "index.html") {
-	const { site } = load_settings();
-	return `${(sites_url || DEFAULT_SITES_URL).replace(/\/+$/, "")}/~${site}/${path === "index.html" ? "" : path}`;
+	return site_public_url(load_settings().site, path, sites_url || DEFAULT_SITES_URL);
+}
+
+// edit.<domain>/~name[/page] redirects to /?site=name[&page=…]: remember it (before sessions.js rewrites the URL to
+// its own #local:… id — same mechanism as the share link in share.js), and open_site_from_url() acts on it once the
+// app is up. Other query params are kept (jspaint reads a few of its own).
+const SITE_ENTRY_KEY = "jspaint open site"; // sessionStorage
+const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.html?$/;
+(() => {
+	const params = new URLSearchParams(location.search);
+	if (!params.has("site")) { return; }
+	const site = (params.get("site") || "").toLowerCase();
+	const page = params.get("page") || "";
+	params.delete("site");
+	params.delete("page");
+	const rest = params.toString();
+	history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
+	if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(site)) { return; }
+	try {
+		sessionStorage.setItem(SITE_ENTRY_KEY, JSON.stringify({ site, page: PAGE_PATH.test(page) ? page : "" }));
+	} catch (_error) { /* ignore */ }
+})();
+
+/**
+ * Opens the site this tab was sent to (see above): signed in as it → the page, or the My Site folder; otherwise the
+ * Sign In dialog, prefilled, then the same. Read once — a reload doesn't ask again.
+ */
+async function open_site_from_url() {
+	/** @type {{ site: string, page: string } | null} */
+	let entry = null;
+	try {
+		entry = JSON.parse(sessionStorage.getItem(SITE_ENTRY_KEY) || "null");
+		sessionStorage.removeItem(SITE_ENTRY_KEY);
+	} catch (_error) { /* ignore */ }
+	if (!entry || !entry.site) { return; }
+	const ok = (load_settings().site === entry.site && await check_sign_in()) || await show_sign_in_dialog({ site: entry.site });
+	if (!ok || load_settings().site !== entry.site) { return; } // signed in somewhere else instead: leave it be
+	if (entry.page && await open_page_from_site(entry.page)) { return; }
+	show_my_site_dialog();
 }
 
 /**
@@ -38,7 +82,7 @@ async function api(path, init = {}) {
 		try {
 			message = (await response.json()).error || message;
 		} catch (_error) { /* not JSON */ }
-		const error = new Error(response.status === 401 ? "The edit secret was rejected." : message);
+		const error = new Error(response.status === 401 ? "The password was rejected." : message);
 		/** @type {any} */ (error).status = response.status;
 		throw error;
 	}
@@ -99,8 +143,9 @@ async function upload_asset(file) {
 async function check_sign_in() {
 	if (!is_signed_in()) { return false; }
 	try {
-		const info = await (await api("/api/whoami")).json();
+		const info = await (await api(`/api/whoami?site=${encodeURIComponent(load_settings().site)}`)).json();
 		sites_url = info.sites_url || sites_url;
+		role = info.role || null;
 		refresh_x_element_kinds();
 		return true;
 	} catch (_error) {
@@ -110,22 +155,25 @@ async function check_sign_in() {
 
 /**
  * File > Sign In to My Site…
+ * @param {{ site?: string }} [options] - `site` prefills the name (an edit.<domain>/~name link)
  * @returns {Promise<boolean>} signed in
  */
-function show_sign_in_dialog() {
+function show_sign_in_dialog({ site: prefill = "" } = {}) {
 	return new Promise((resolve) => {
 		const settings = load_settings();
 		let done = false;
 		const $w = $DialogWindow(localize("Sign In to My Site"));
 		$w.addClass("my-site-sign-in squish");
-		$(E("p")).text(localize("Your site lives at …/~name/. Enter the name and the edit secret.")).appendTo($w.$main);
+		$(E("p")).text(prefill === ROOT_SITE ?
+			localize("\"root\" is the front page of the domain itself. Enter its password.") :
+			localize("Your site lives at …/~name/. Enter the name and its password.")).appendTo($w.$main);
 		/** @param {string} label @param {string} value @param {object} attrs */
 		const field = (label, value, attrs) => {
 			const $row = $(E("label")).addClass("my-site-row").text(`${label} `).appendTo($w.$main);
 			return $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", ...attrs }).val(value).appendTo($row);
 		};
-		const $site = field(localize("Site name:"), settings.site, { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
-		const $secret = field(localize("Edit secret:"), settings.secret, { type: "password", autocomplete: "new-password", name: "edit-secret" });
+		const $site = field(localize("Site name:"), prefill || settings.site, { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
+		const $secret = field(localize("Password:"), settings.secret, { type: "password", autocomplete: "current-password", name: "password" });
 		const $editor = field(localize("Editor URL:"), settings.editor_url, { placeholder: default_editor_url(), name: "editor-url" });
 		const $status = $(E("div")).addClass("my-site-status").appendTo($w.$main);
 		const $ok = $w.$Button(localize("Sign In"), async () => {
@@ -148,7 +196,7 @@ function show_sign_in_dialog() {
 				return;
 			}
 			if (!secret) {
-				$status.text("The edit secret is needed to save to the site.");
+				$status.text("The password is needed to save to the site.");
 				$secret.focus();
 				return;
 			}
@@ -161,7 +209,7 @@ function show_sign_in_dialog() {
 				resolve(true);
 			} else {
 				$ok.prop("disabled", false);
-				$status.text(`Couldn't sign in at ${editor_url}: the secret was rejected or the editor is unreachable.`);
+				$status.text(`Couldn't sign in at ${editor_url}: the password was rejected or the editor is unreachable.`);
 			}
 		}, { type: "submit" });
 		$w.$Button(localize("Cancel"), () => { $w.close(); });
@@ -457,4 +505,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { check_sign_in, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_sign_in_dialog, sign_out, upload_asset };
+export { check_sign_in, current_role, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_sign_in_dialog, sign_out, upload_asset };

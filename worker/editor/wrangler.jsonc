@@ -10,7 +10,11 @@
 	"preview_urls": false,
 	"observability": { "enabled": true },
 	// Custom Domains (the zone coolpaint.world is on this account): DNS records and certificates are created on deploy.
+	// The editor is edit.coolpaint.world (first: `wrangler dev` takes routes[0] as the local host). The apex + www are
+	// listed here only during the flip (deploy step 1) so they aren't detached before the sites Worker takes them; step 3
+	// removes them — a hostname must never stay in both configs (a non-TTY deploy would silently steal it back).
 	"routes": [
+		{ "pattern": "edit.coolpaint.world", "custom_domain": true },
 		{ "pattern": "coolpaint.world", "custom_domain": true },
 		{ "pattern": "www.coolpaint.world", "custom_domain": true }
 	],
@@ -18,7 +22,7 @@
 		"directory": "./dist",
 		"binding": "ASSETS",
 		// The Worker sees the API and the page shell (so the shell can 301 to the domain); every other asset is served directly.
-		"run_worker_first": ["/api/*", "/", "/index.html"]
+		"run_worker_first": ["/api/*", "/", "/index.html", "/~*"]
 	},
 	"r2_buckets": [
 		{ "binding": "SITES", "bucket_name": "jspaint-sites" }
@@ -26,17 +30,23 @@
 	"durable_objects": {
 		"bindings": [
 			{ "name": "PAGE_ROOM", "class_name": "PageRoom" },
-			{ "name": "GIF_STATS", "class_name": "GifStats" }
+			{ "name": "GIF_STATS", "class_name": "GifStats" },
+			{ "name": "ACCOUNTS", "class_name": "Accounts" }
 		]
 	},
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["PageRoom"] },
-		{ "tag": "v2", "new_sqlite_classes": ["GifStats"] }
+		{ "tag": "v2", "new_sqlite_classes": ["GifStats"] },
+		{ "tag": "v3", "new_sqlite_classes": ["Accounts"] }
 	],
 	"vars": {
-		"EDITOR_URL": "https://coolpaint.world",
-		"SITES_URL": "https://sites.coolpaint.world"
+		"EDITOR_URL": "https://edit.coolpaint.world",
+		"SITES_URL": "https://coolpaint.world"
 	}
-	// Secret (not in config): SITE_EDIT_SECRET — `wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`.
+	// Secret (not in config): SITE_EDIT_SECRET (the master key) — `wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`.
+	// Site passwords are minted with it: `npm run site-password <site>` (writes editor/.passwords/<site>.txt, gitignored).
+	// Optional secret: POSTHOG_API_KEY (a PostHog client key, phc_…) — injects editor-app analytics
+	// (worker/shared/analytics.js; published pages on the sites Worker never carry trackers).
+	// POSTHOG_HOST likewise, for non-US clouds (e.g. https://eu.i.posthog.com).
 	// Locally: editor/.dev.vars with SITE_EDIT_SECRET=...
 }
