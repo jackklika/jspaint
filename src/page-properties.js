@@ -7,13 +7,21 @@
 // not part of undo history, but they do mark the document unsaved.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { update_title } from "./functions.js";
-import { E } from "./helpers.js";
+import { $G, E } from "./helpers.js";
 import { get_site_files_base } from "./site-publish.js";
 
-/** @typedef {{ bgcolor: string, text_color: string, background: string }} PageProperties */
+/**
+ * @typedef {object} PageProperties
+ * @property {string} bgcolor
+ * @property {string} text_color
+ * @property {string} background - tiled wallpaper
+ * @property {number} column_left - where sections stack (blocks.js reflow_sections); 0 = default
+ * @property {number} column_top
+ * @property {number} column_width
+ */
 
 /** @type {PageProperties} */
-const page_properties = { bgcolor: "", text_color: "", background: "" };
+const page_properties = { bgcolor: "", text_color: "", background: "", column_left: 0, column_top: 0, column_width: 0 };
 
 /** @returns {PageProperties} */
 function get_page_properties() {
@@ -31,10 +39,11 @@ function set_page_properties(props, mark_unsaved = true) {
 		update_title();
 	}
 	apply_page_properties_preview();
+	$G.triggerHandler("page-properties-changed"); // blocks.js lays the sections out again
 }
 
 function reset_page_properties() {
-	set_page_properties({ bgcolor: "", text_color: "", background: "" }, false);
+	set_page_properties({ bgcolor: "", text_color: "", background: "", column_left: 0, column_top: 0, column_width: 0 }, false);
 }
 
 /** The area around the canvas previews the page's background, when one is set. */
@@ -65,11 +74,25 @@ function show_page_properties_dialog() {
 	const $text = field(localize("Text color:"), page_properties.text_color, "#000000");
 	const $background = field(localize("Wallpaper (tiled image):"), page_properties.background, "gifs/stars.gif on your site, or a URL");
 	$(E("p")).addClass("page-properties-note").text(localize("The page itself is the picture; these show around it on the published page.")).appendTo($w.$main);
+	const $column_row = $(E("div")).addClass("page-properties-row").appendTo($w.$main);
+	$(E("span")).text(`${localize("Sections column:")} `).appendTo($column_row);
+	/** @param {string} label @param {number} value */
+	const number_field = (label, value) => {
+		const $label = $(E("label")).text(`${label} `).appendTo($column_row);
+		return $(E("input")).attr({ type: "number", min: "0", step: "1", placeholder: "auto" }).css({ width: 64 }).val(value || "").appendTo($label);
+	};
+	const $column_left = number_field(localize("left"), page_properties.column_left);
+	const $column_top = number_field(localize("top"), page_properties.column_top);
+	const $column_width = number_field(localize("width"), page_properties.column_width);
+	$(E("p")).addClass("page-properties-note").text(localize("Sections (the writing) stack in this column, one under the other; empty means the default for the page width.")).appendTo($w.$main);
 	$w.$Button(localize("OK"), () => {
 		set_page_properties({
 			bgcolor: String($bgcolor.val()).trim(),
 			text_color: String($text.val()).trim(),
 			background: String($background.val()).trim(),
+			column_left: Math.max(0, parseInt(String($column_left.val()), 10) || 0),
+			column_top: Math.max(0, parseInt(String($column_top.val()), 10) || 0),
+			column_width: Math.max(0, parseInt(String($column_width.val()), 10) || 0),
 		});
 		$w.close();
 	}, { type: "submit" });

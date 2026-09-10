@@ -21,6 +21,9 @@ declare const FontDetective: any;
 declare const AnyPalette: any;
 declare const ImageTracer: any;
 declare const TrackyMouse: any;
+// The PostHog bootstrap injected into the app shell by the editor Worker (worker/shared/analytics.js);
+// undefined on dev servers / plain jspaint, where track_app_event() is a no-op.
+declare const posthog: { capture: (name: string, props?: Record<string, any>) => void } | undefined;
 
 // Globals from scripts that are not converted to ESM yet,
 // and thus can't be imported. (I've been marking scripts as @ts-check as I convert them.)
@@ -900,6 +903,8 @@ interface BlockSnapshot {
 	y: number;
 	width: number;
 	height: number;
+	/** flows in the page's column (a section) instead of sitting at x, y */
+	flow?: boolean;
 }
 
 interface ActionMetadata {

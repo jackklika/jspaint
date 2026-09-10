@@ -121,7 +121,7 @@ async function handle_action(request, url, env) {
 	}
 	const result = await definition.action({
 		form,
-		context: { site, page: "", page_uploaded: null, state: env.SITE_STATE.getByName(site), request },
+		context: { site, page: "", page_uploaded: null, state: env.SITE_STATE.getByName(site), request, files: site_files(env.SITES, site) },
 	});
 	if (result.location) {
 		return new Response(null, { status: result.status || 303, headers: { ...PAGE_HEADERS, Location: result.location } });
@@ -156,6 +156,40 @@ function landing_page(editor_url) {
 <h1>~ coolpaint.world ~</h1><p>Web pages painted in Paint. Personal pages live at <code>/~name/</code>.</p>
 ${editor_url ? `<p><a href="${editor_url}">Make one</a></p>` : ""}
 </body></html>`);
+}
+
+/**
+ * What <x-*> renderers may read of a site: its pages in a folder (direct children, .html only) and a page's title.
+ * @param {R2Bucket} bucket
+ * @param {string} site
+ */
+function site_files(bucket, site) {
+	const prefix = `sites/${site}/`;
+	return {
+		/** @param {string} folder */
+		async list_pages(folder) {
+			const base = `${prefix}${folder}/`;
+			/** @type {{ path: string, uploaded: number }[]} */
+			const pages = [];
+			let cursor;
+			do {
+				const listing = await bucket.list({ prefix: base, cursor });
+				for (const object of listing.objects) {
+					const rest = object.key.slice(base.length);
+					if (!rest.includes("/") && /\.html?$/i.test(rest)) { pages.push({ path: object.key.slice(prefix.length), uploaded: object.uploaded.getTime() }); }
+				}
+				cursor = listing.truncated ? listing.cursor : undefined;
+			} while (cursor);
+			return pages;
+		},
+		/** @param {string} path */
+		async page_title(path) {
+			const object = await bucket.get(`${prefix}${path}`);
+			if (!object) { return null; }
+			const match = /<title>([^<]*)<\/title>/i.exec(await object.text());
+			return match ? match[1].trim() : null;
+		},
+	};
 }
 
 export default {
@@ -215,6 +249,7 @@ export default {
 				page_uploaded: object.uploaded,
 				state: env.SITE_STATE.getByName(site),
 				request,
+				files: site_files(env.SITES, site),
 			});
 			return html_response(rendered);
 		}

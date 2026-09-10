@@ -1,5 +1,5 @@
 // @ts-check
-/* global show_font_box:writable */
+/* global main_canvas, show_font_box:writable */
 /* global $canvas_area, current_history_node, main_ctx, magnification, selected_colors, text_tool_font, textbox */
 // Blocks: page elements (headings, paragraphs, marquees, dividers, tables, <x-*> elements, raw HTML) that live
 // on the canvas like stickers and text layers do — positioned, resizable, undoable — and that stay real HTML.
@@ -17,6 +17,7 @@ import { get_tool_by_id, make_or_update_undoable, select_tool, undoable } from "
 import { $G, E, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, make_canvas, make_css_cursor, to_canvas_coords } from "./helpers.js";
 import { deselect_sticker } from "./stickers.js";
 import { deselect_text_layer } from "./text-layers.js";
+import { get_page_properties } from "./page-properties.js";
 
 /** @type {OnCanvasBlock[]} bottom to top */
 let blocks = [];
@@ -44,12 +45,14 @@ function kind_icon(kind_id) {
  * @param {BlockSnapshot} snapshot
  * @param {object} [options]
  * @param {boolean} [options.positioned=true] - include the class and position style
+ * @param {boolean} [options.column=false] - a section inside the page's column: class only, no position
  */
-function block_markup(snapshot, { positioned = true } = {}) {
+function block_markup(snapshot, { positioned = true, column = false } = {}) {
 	const attrs = Object.entries(snapshot.attrs)
 		.filter(([name]) => !/^(class|style|contenteditable)$/i.test(name) && !/^on/i.test(name))
 		.map(([name, value]) => value === "" ? ` ${name}` : ` ${name}="${escape_html(value)}"`).join("");
-	const position = positioned ? ` class="block" style="left:${snapshot.x}px;top:${snapshot.y}px;width:${snapshot.width}px;height:${snapshot.height}px"` : "";
+	// A section in the page's column has no position of its own: it stacks (collage-format.js).
+	const position = column ? ` class="block section"` : positioned ? ` class="block" style="left:${snapshot.x}px;top:${snapshot.y}px;width:${snapshot.width}px;height:${snapshot.height}px"` : "";
 	const void_tag = /^(hr|br|img|input)$/.test(snapshot.tag);
 	return void_tag ? `<${snapshot.tag}${attrs}${position}>` : `<${snapshot.tag}${attrs}${position}>${snapshot.html}</${snapshot.tag}>`;
 }
@@ -116,13 +119,15 @@ class OnCanvasBlock extends OnCanvasObject {
 		this.attrs = { ...snapshot.attrs };
 		this.html = snapshot.html;
 		this.kind = block_kind_for(this.tag, this.attrs);
+		/** @type {boolean} a section: laid out by reflow_sections in the page's column (x, y, width, height are derived) */
+		this.flow = !!snapshot.flow;
 		/** @type {HTMLCanvasElement} rasterized copy, for Flatten and exports */
 		this.canvas = make_canvas(Math.max(1, this.width), Math.max(1, this.height));
 		/** @type {Promise<void>} */
 		this.raster_promise = Promise.resolve();
 		this.editing = false;
 
-		this.$el.addClass("block-layer").attr({ "data-kind": this.kind.id, "data-tag": this.tag }).toggleClass("x-element", this.tag.startsWith("x-"));
+		this.$el.addClass("block-layer").attr({ "data-kind": this.kind.id, "data-tag": this.tag }).toggleClass("x-element", this.tag.startsWith("x-")).toggleClass("flow", this.flow);
 		// Blocks stack under stickers and text layers, whatever order they were added in.
 		const $above = $canvas_area.children(".sticker, .text-layer").first();
 		if ($above.length) { this.$el.insertBefore($above); }
@@ -163,6 +168,10 @@ class OnCanvasBlock extends OnCanvasObject {
 				soft: true,
 			}, () => {
 				const m = to_canvas_coords(e);
+				if (this.flow) {
+					move_section_toward(this, m.y); // a section can only change its place in the column
+					return;
+				}
 				this.x = m.x - mox;
 				this.y = m.y - moy;
 				this.position();
@@ -198,7 +207,7 @@ class OnCanvasBlock extends OnCanvasObject {
 		// The content is laid out at document size and scaled, so text renders identically at any zoom.
 		this.$content.css({ transform: `scale(${magnification})`, transformOrigin: "left top", width: this.width, height: this.height });
 		this.el.style.width = `${this.width}px`;
-		this.el.style.height = `${this.height}px`;
+		this.el.style.height = this.flow ? "auto" : `${this.height}px`;
 	}
 	/** Rebuilds the page element from the model (tag, attributes, inner HTML) and refreshes the raster. */
 	render() {
@@ -210,12 +219,13 @@ class OnCanvasBlock extends OnCanvasObject {
 		el.className = "block-el";
 		el.innerHTML = sanitize_html_fragment(this.html);
 		el.style.width = `${this.width}px`;
-		el.style.height = `${this.height}px`;
+		el.style.height = this.flow ? "auto" : `${this.height}px`;
 		this.el.replaceWith(el);
 		this.el = el;
 		this.$content.append(el);
 		this.$el.attr("title", this.tag.startsWith("x-") ? `<${this.tag}> — rendered by your site when published` : null);
 		this.refresh_raster();
+		if (this.flow && blocks.includes(this)) { reflow_sections(); }
 	}
 	/** Re-rasterizes for Flatten and exports (async; `raster_promise` resolves when it's current). */
 	refresh_raster() {
@@ -231,7 +241,7 @@ class OnCanvasBlock extends OnCanvasObject {
 	set_selected(selected) {
 		this.$el.toggleClass("selected", selected);
 		if (selected) {
-			this.handles.show();
+			if (!this.flow) { this.handles.show(); } // a section's size comes from the column and its text
 		} else {
 			this.handles.hide();
 			if (this.editing) { this.end_edit(); }
@@ -292,6 +302,7 @@ class OnCanvasBlock extends OnCanvasObject {
 			this.html = html;
 		});
 		edit_history_node = current_history_node;
+		if (this.flow) { reflow_sections(); } // the text grew or shrank
 	}
 	end_edit() {
 		if (!this.editing) { return; }
@@ -312,7 +323,7 @@ class OnCanvasBlock extends OnCanvasObject {
 	}
 	/** @returns {BlockSnapshot} */
 	snapshot() {
-		return { id: this.id, kind: this.kind.id, tag: this.tag, attrs: { ...this.attrs }, html: this.html, x: this.x, y: this.y, width: this.width, height: this.height };
+		return { id: this.id, kind: this.kind.id, tag: this.tag, attrs: { ...this.attrs }, html: this.html, x: this.x, y: this.y, width: this.width, height: this.height, ...(this.flow ? { flow: true } : {}) };
 	}
 	/** @param {CanvasRenderingContext2D} ctx */
 	draw(ctx) {
@@ -456,8 +467,10 @@ function add_block(kind_id, rect, overrides = {}) {
 			y: rect.y,
 			width: Math.max(8, rect.width || kind.width),
 			height: Math.max(8, rect.height || kind.height),
+			...(kind.flow ? { flow: true } : {}),
 		});
 		blocks.push(block);
+		if (block.flow) { reflow_sections(); } // it takes its place at the end of the column
 		select_block(block);
 	});
 	select_tool(get_tool_by_id("TOOL_POINTER"));
@@ -485,6 +498,7 @@ function restore_blocks(snapshots) {
 	for (const snapshot of snapshots || []) {
 		next_block_id = Math.max(next_block_id, parseInt(snapshot.id.slice(1), 10) + 1 || next_block_id);
 	}
+	reflow_sections();
 	select_block(blocks.find((block) => block.id === selected_id) || null);
 	$G.triggerHandler("layers-changed");
 }
@@ -564,6 +578,11 @@ function delete_selected_block() {
 function nudge_selected_block(dx, dy) {
 	const block = selected_block;
 	if (!block) { return false; }
+	if (block.flow) {
+		// A section has no free position: up/down move it in the column
+		if (dy) { reorder_section(block, dy > 0 ? 1 : -1); }
+		return true;
+	}
 	make_or_update_undoable({
 		match: (history_node) => history_node.name === "Move Element",
 		name: "Move Element",
@@ -584,6 +603,7 @@ function apply_block_order() {
 	for (const block of blocks) {
 		if ($above.length) { block.$el.insertBefore($above); } else { block.$el.appendTo($canvas_area); }
 	}
+	reflow_sections();
 	$G.triggerHandler("layers-changed");
 }
 
@@ -601,6 +621,83 @@ function reorder_block(block, direction) {
 		apply_block_order();
 	});
 	return true;
+}
+
+// ---- sections: the page's column ----
+// A section (kind "section", or any block with `flow`) doesn't sit at an x, y of its own: sections stack in the
+// page's column (Page Properties: left, top, width), each as tall as its text, in the order they appear among the
+// blocks. Published as <div class="column"><div class="block section">…</div>…</div> (collage-format.js), so on the
+// live page they're in normal flow — longer text on a reader's fonts pushes the next section down, never over it.
+const SECTION_GAP = 16;
+
+/** The column sections stack in: Page Properties, or defaults from the page width. */
+function get_column_geometry() {
+	const props = get_page_properties();
+	return {
+		left: props.column_left || 40,
+		top: props.column_top || 40,
+		width: props.column_width || Math.max(120, main_canvas.width - 80),
+	};
+}
+
+/** Lays the sections out: column position and width, measured heights, one under the other. */
+function reflow_sections() {
+	const sections = blocks.filter((block) => block.flow);
+	if (!sections.length) { return; }
+	const column = get_column_geometry();
+	let y = column.top;
+	for (const block of sections) {
+		block.x = column.left;
+		block.width = column.width;
+		block.el.style.width = `${column.width}px`;
+		block.el.style.height = "auto";
+		block.height = Math.max(24, block.el.offsetHeight || 0);
+		block.y = y;
+		block.position();
+		y += block.height + SECTION_GAP;
+	}
+}
+
+/**
+ * Puts a section at another place in the column (0 = first).
+ * @param {OnCanvasBlock} block
+ * @param {number} target - index among the sections
+ */
+function place_section(block, target) {
+	const others = blocks.filter((other) => other.flow && other !== block);
+	const anchor = others[Math.max(0, Math.min(others.length, target))];
+	blocks = blocks.filter((other) => other !== block);
+	blocks.splice(anchor ? blocks.indexOf(anchor) : blocks.length, 0, block);
+	apply_block_order();
+}
+
+/**
+ * Moves a section up or down the column (↑/↓ with a section selected).
+ * @param {OnCanvasBlock} block
+ * @param {1 | -1} direction
+ */
+function reorder_section(block, direction) {
+	const sections = blocks.filter((other) => other.flow);
+	const index = sections.indexOf(block);
+	const target = index + direction;
+	if (index === -1 || target < 0 || target >= sections.length) { return false; }
+	undoable({ name: direction > 0 ? "Move Section Down" : "Move Section Up", icon: kind_icon(block.kind.id) }, () => {
+		place_section(block, target);
+	});
+	return true;
+}
+
+/**
+ * Dragging a section: it goes where the pointer is among the other sections (one coalesced history step).
+ * @param {OnCanvasBlock} block
+ * @param {number} pointer_y - canvas coordinates
+ */
+function move_section_toward(block, pointer_y) {
+	const sections = blocks.filter((other) => other.flow);
+	const index = sections.indexOf(block);
+	const target = sections.filter((other) => other !== block && other.y + other.height / 2 < pointer_y).length;
+	if (index === -1 || target === index) { return; }
+	place_section(block, target);
 }
 
 /**
@@ -729,6 +826,8 @@ function upsert_block_from_snapshot(snapshot) {
 		block.y = snapshot.y;
 		block.width = Math.max(1, snapshot.width);
 		block.height = Math.max(1, snapshot.height);
+		block.flow = !!snapshot.flow;
+		block.$el.toggleClass("flow", block.flow);
 		block.position();
 		const markup_changed = block.tag !== snapshot.tag || JSON.stringify(block.attrs) !== JSON.stringify(snapshot.attrs) || block.html !== snapshot.html;
 		if (markup_changed && !block.editing) {
@@ -742,6 +841,7 @@ function upsert_block_from_snapshot(snapshot) {
 			block.refresh_raster();
 		}
 	}
+	reflow_sections();
 	$G.triggerHandler("layers-changed");
 	return block;
 }
@@ -752,6 +852,7 @@ function remove_block_by_id(id) {
 	if (!block) { return false; }
 	blocks = blocks.filter((other) => other !== block);
 	block.destroy();
+	reflow_sections();
 	$G.triggerHandler("layers-changed");
 	return true;
 }
@@ -935,6 +1036,7 @@ function normalize_block_lines(html) {
 }
 
 function init_blocks() {
+	$G.on("page-properties-changed resize", () => { reflow_sections(); });
 	// Enter inside a block makes a <br>, not a <div> (Chrome/Safari default): see normalize_block_lines.
 	try {
 		document.execCommand("defaultParagraphSeparator", false, "br");
@@ -1073,6 +1175,7 @@ export {
 	flatten_blocks,
 	get_block_link,
 	get_blocks,
+	get_column_geometry,
 	get_editing_block,
 	get_selected_block,
 	init_blocks,
@@ -1083,7 +1186,9 @@ export {
 	order_blocks,
 	remove_block_by_id,
 	render_block_to_canvas,
+	reflow_sections,
 	reorder_block,
+	reorder_section,
 	restore_blocks,
 	select_block,
 	set_block_source,

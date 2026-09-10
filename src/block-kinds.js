@@ -25,6 +25,7 @@ import { get_site_editor_url } from "./site-publish.js";
  * @property {boolean} editable - text edits in place (contenteditable)
  * @property {BlockProp[]} props
  * @property {string} [icon] - glyph for the Layers window
+ * @property {boolean} [flow] - a section: stacks in the page's column and grows with its text (blocks.js reflow_sections)
  */
 
 const CLASSIC_FONTS = ["Arial", "Comic Sans MS", "Courier New", "Georgia", "Impact", "Times New Roman", "Trebuchet MS", "Verdana"];
@@ -69,6 +70,20 @@ const BLOCK_KINDS = [
 		editable: true,
 		icon: "¶",
 		props: [{ attr: "align", label: "Alignment", type: "select", options: ["left", "center", "right", "justify"] }],
+	},
+	{
+		id: "section",
+		label: "Section",
+		description: "A section of writing: sections stack in a column, grow with their text, and can be reordered.",
+		tag: "div",
+		attrs: { "data-kind": "section" },
+		html: "<h2>New section</h2>Write here. Headings, lists, and links come from the Font toolbar.",
+		width: 720,
+		height: 60,
+		editable: true,
+		flow: true,
+		icon: "§",
+		props: [],
 	},
 	{
 		id: "marquee",
@@ -173,6 +188,25 @@ const BLOCK_KINDS = [
 		editable: false,
 		icon: "🕒",
 		props: [{ attr: "label", label: "Label", type: "text" }, { attr: "format", label: "Format", type: "select", options: ["short", "long"] }],
+	},
+	{
+		id: "x-folder",
+		label: "Folder View",
+		description: "Lists the pages in a folder of your site (a posts folder, say), newest first, on the published page.",
+		tag: "x-folder",
+		attrs: { path: "posts", show: "title,date", order: "newest" },
+		html: "<b>Posts</b><br><i>(the pages in the folder are listed here on the published page)</i>",
+		width: 360,
+		height: 120,
+		editable: false,
+		icon: "≡",
+		props: [
+			{ attr: "path", label: "Folder", type: "text" },
+			{ attr: "show", label: "Show", type: "select", options: ["title", "title,date"] },
+			{ attr: "order", label: "Order", type: "select", options: ["newest", "oldest", "name"] },
+			{ attr: "limit", label: "At most", type: "number" },
+			{ attr: "title", label: "Heading", type: "text" },
+		],
 	},
 	{
 		id: "raw",

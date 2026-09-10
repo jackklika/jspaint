@@ -28,6 +28,8 @@ const pixel_rects = (rows, x, y, color) => rows.map((row, dy) => [...row].map((c
 const ICONS = {
 	pointer: svg('<path d="M3 1v11l3-3 2 5 2-1-2-5h4z" fill="#fff" stroke="#000" stroke-width="1"/>'),
 	heading: svg('<rect x="2" y="2" width="3" height="12" fill="#000"/><rect x="10" y="2" width="3" height="12" fill="#000"/><rect x="5" y="7" width="5" height="2" fill="#000"/><rect x="14" y="10" width="1" height="4" fill="#000080"/><rect x="13" y="11" width="1" height="1" fill="#000080"/>'),
+	section: svg('<rect x="0" y="1" width="1" height="14" fill="#000080"/><rect x="3" y="2" width="11" height="3" fill="#000"/><rect x="3" y="7" width="11" height="1" fill="#000"/><rect x="3" y="9" width="11" height="1" fill="#000"/><rect x="3" y="11" width="7" height="1" fill="#000"/><rect x="3" y="14" width="11" height="1" fill="#808080"/>'),
+	folder: svg('<path d="M1.5 3.5h5l1 1.5h7v8h-13z" fill="#ffcc00" stroke="#000"/><rect x="1" y="6" width="14" height="1" fill="#000"/><rect x="3" y="8" width="7" height="1" fill="#000080"/><rect x="3" y="10" width="9" height="1" fill="#000080"/>'),
 	paragraph: svg('<rect x="2" y="3" width="12" height="2" fill="#000"/><rect x="2" y="7" width="12" height="2" fill="#000"/><rect x="2" y="11" width="7" height="2" fill="#000"/>'),
 	marquee: svg('<rect x="1" y="4" width="14" height="8" fill="#fff" stroke="#000"/><path d="M8 6v1H7v1h1v1H7v1h1v1H6v-1H5V9h1V8H5V7h1V6zM12 6v1h-1v1h1v1h-1v1h1v1h-2v-1H9V9h1V8H9V7h1V6z" fill="#000080"/>'),
 	divider: svg('<rect x="1" y="6" width="14" height="1" fill="#808080"/><rect x="1" y="7" width="14" height="1" fill="#fff"/><rect x="1" y="9" width="14" height="1" fill="#808080"/><rect x="1" y="10" width="14" height="1" fill="#fff"/>'),
@@ -96,6 +98,7 @@ const page_tools = [
 	// (Headings are a paragraph with a bigger font; scrolling text is the Marquee toggle in the Font toolbar. Both
 	// kinds still exist — Page › Insert — for pages that have them.)
 	element_tool("paragraph", "paragraph", localize("Text Box"), localize("Places text on the page. Click or drag a box, then type; the Font toolbar sets font, size, bold, and scrolling (marquee)."), ["paragraph", "add paragraph", "add text block", "body text", "text box", "add text box", "heading", "add heading"]),
+	element_tool("section", "section", localize("Section"), localize("Adds a section of writing. Sections stack in a column, grow with their text, and move with ↑/↓ or by dragging. Headings, lists, and links come from the Font toolbar."), ["section", "add section", "new section", "add a section", "paragraph section", "blog section", "post section"]),
 	element_tool("divider", "divider", localize("Divider"), localize("Places a horizontal rule on the page."), ["divider", "horizontal rule", "add divider", "separator", "add line break"]),
 	{
 		id: TOOL_GIF_PICKER,
@@ -134,6 +137,7 @@ const page_tools = [
 	element_tool("x-guestbook", "guestbook", localize("Guestbook"), localize("Places a guestbook visitors can sign. Entries are kept by your site."), ["guestbook", "guest book", "add guestbook", "sign my guestbook"]),
 	element_tool("x-counter", "counter", localize("Visitor Counter"), localize("Places a visitor counter that counts up on the published page."), ["counter", "visitor counter", "hit counter", "add counter"]),
 	element_tool("x-music", "music", localize("Music"), localize("Places background music with a play button on the published page."), ["music", "add music", "background music", "add song", "midi"]),
+	element_tool("x-folder", "folder", localize("Folder View"), localize("Lists the pages in a folder of your site (your posts, say) on the published page, newest first."), ["folder", "folder view", "list of pages", "posts list", "add posts list", "blog index", "add folder view"]),
 	element_tool("raw", "html", localize("HTML"), localize("Places a box of raw HTML on the page. Anything goes (except scripts)."), ["html", "raw html", "add html", "custom html", "code"]),
 ];
 

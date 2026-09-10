@@ -32,6 +32,16 @@ assert.equal(await put("root", "index.html", `<html><head><title>${marker}</titl
 assert.equal(await put("root", "about.html", `<html><head><title>about</title></head><body><p>${marker} about</p><x-guestbook>Sign</x-guestbook></body></html>`), `${sites}/about.html`);
 assert.equal(await put("zz-test", "index.html", `<html><head><title>zz</title></head><body>${marker} zz</body></html>`), `${sites}/~zz-test/`);
 
+// A folder view lists the pages of a folder, newest first, with their titles
+await put("root", "posts/first.html", "<html><head><title>First post</title></head><body>one</body></html>");
+await new Promise((resolve) => setTimeout(resolve, 1100)); // distinct save times
+await put("root", "posts/second.html", "<html><head><title>Second post</title></head><body>two</body></html>");
+await put("root", "posts/index.html", '<html><head><title>posts</title></head><body><x-folder path="posts" title="My posts">fallback</x-folder><x-folder path="empty-folder"></x-folder></body></html>');
+{
+	const listing = await (await get("/posts/")).text();
+	assert.match(listing, /<b class="folder-title">My posts<\/b><ul class="folder folder-posts"><li class="folder-item"><a href="\/posts\/second.html">Second post<\/a> <small class="folder-date">\d{4}-\d{2}-\d{2}<\/small><\/li><li class="folder-item"><a href="\/posts\/first.html">First post<\/a>/, "newest first, titles from the pages");
+}
+
 // Served at the domain itself, with the sandbox headers
 let response = await get("/");
 assert.equal(response.status, 200);
@@ -72,7 +82,7 @@ assert.equal(response.status, 302);
 assert.equal(new URL(response.headers.get("Location") || "", sites).search, "?join=root/index.html/1.abc");
 
 // Clean up: the landing page comes back
-for (const [site, path] of [["root", "index.html"], ["root", "about.html"], ["zz-test", "index.html"]]) {
+for (const [site, path] of [["root", "index.html"], ["root", "about.html"], ["root", "posts/first.html"], ["root", "posts/second.html"], ["root", "posts/index.html"], ["zz-test", "index.html"]]) {
 	await fetch(`${editor}/api/sites/${site}/files/${path}`, { method: "DELETE", headers });
 }
 response = await get("/");

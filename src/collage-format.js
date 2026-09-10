@@ -16,7 +16,7 @@
 //     <span class="text" style="…">~ est. 1999 ~</span>
 //   </div>
 //   </center></body>
-import { block_markup, get_blocks, restore_blocks, snapshot_blocks } from "./blocks.js";
+import { block_markup, get_blocks, get_column_geometry, restore_blocks, snapshot_blocks } from "./blocks.js";
 import { block_kind_for, sanitize_html_fragment } from "./block-kinds.js";
 import { open_from_image_info, read_image_file, show_error_message, write_image_file } from "./functions.js";
 import { get_page_properties, set_page_properties } from "./page-properties.js";
@@ -39,6 +39,9 @@ body > center { line-height: 0; }
 .collage > a.text { text-decoration: underline; }
 .collage > .block { display: block; margin: 0; box-sizing: border-box; overflow: hidden; line-height: normal; font: 16px "Times New Roman", Times, serif; color: #000; }
 .collage > hr.block { height: auto !important; }
+.collage.has-column { overflow: visible; }
+.collage > .column { position: absolute; }
+.column > .section { display: block; position: static; margin: 0 0 16px; box-sizing: border-box; line-height: normal; font: 16px "Times New Roman", Times, serif; color: #000; }
 `.trim();
 
 /**
@@ -82,7 +85,16 @@ function canvas_to_png_blob(canvas) {
  */
 async function serialize_collage_html({ canvas = main_canvas, title = file_name, asset_url = (blob) => blob_to_data_url(blob) } = {}) {
 	const bitmap_src = await asset_url(await canvas_to_png_blob(canvas), "bitmap", 0);
-	const block_tags = canvas === main_canvas ? get_blocks().map((block) => `\t\t${block_markup(block.snapshot())}`) : [];
+	const all_blocks = canvas === main_canvas ? get_blocks() : [];
+	// Sections stack in the page's column (normal flow on the live page); everything else sits where it was put.
+	const sections = all_blocks.filter((block) => block.flow);
+	const column = get_column_geometry();
+	const column_tags = sections.length ? [
+		`\t\t<div class="column" style="left:${column.left}px;top:${column.top}px;width:${column.width}px">`,
+		...sections.map((block) => `\t\t\t${block_markup(block.snapshot(), { positioned: false, column: true })}`),
+		"\t\t</div>",
+	] : [];
+	const block_tags = all_blocks.filter((block) => !block.flow).map((block) => `\t\t${block_markup(block.snapshot())}`);
 	const sticker_tags = [];
 	if (canvas === main_canvas) {
 		let index = 0;
@@ -131,9 +143,9 @@ ${COLLAGE_CSS}
 </head>
 <body${body_attrs}>
 <center>
-	<div class="collage" style="width:${canvas.width}px;height:${canvas.height}px">
+	<div class="collage${sections.length ? " has-column" : ""}" style="width:${canvas.width}px;height:${canvas.height}px">
 		<img class="bitmap" src="${bitmap_src}" width="${canvas.width}" height="${canvas.height}" alt="">
-${[...block_tags, ...sticker_tags, ...text_tags].join("\n")}
+${[...column_tags, ...block_tags, ...sticker_tags, ...text_tags].join("\n")}
 	</div>
 </center>
 </body>
@@ -150,7 +162,7 @@ ${[...block_tags, ...sticker_tags, ...text_tags].join("\n")}
  * @property {TextLayerSnapshot[]} text_layers
  * @property {BlockSnapshot[]} blocks
  * @property {string} title
- * @property {{ bgcolor: string, text_color: string, background: string }} page_properties
+ * @property {{ bgcolor: string, text_color: string, background: string, column_left: number, column_top: number, column_width: number }} page_properties
  */
 
 /**
@@ -231,7 +243,9 @@ function parse_collage_html(html) {
 	}
 	/** @type {BlockSnapshot[]} */
 	const blocks = [];
-	for (const [index, el] of [...collage.children].filter((child) => child.classList.contains("block")).entries()) {
+	const column_el = /** @type {HTMLElement | null} */ (collage.querySelector(":scope > .column"));
+	/** @param {Element} el @param {boolean} flow */
+	const block_from = (el, flow) => {
 		const style = /** @type {HTMLElement} */ (el).style;
 		const tag = el.tagName.toLowerCase();
 		/** @type {Record<string, string>} */
@@ -241,8 +255,9 @@ function parse_collage_html(html) {
 				attrs[attr.name.toLowerCase()] = attr.value;
 			}
 		}
-		blocks.push({
-			id: `b${index + 1}`,
+		if (flow && !attrs["data-kind"]) { attrs["data-kind"] = "section"; }
+		return {
+			id: `b${blocks.length + 1}`,
 			kind: block_kind_for(tag, attrs).id,
 			tag,
 			attrs,
@@ -251,7 +266,15 @@ function parse_collage_html(html) {
 			y: px(style.top),
 			width: px(style.width) || 100,
 			height: px(style.height) || 24,
-		});
+			...(flow ? { flow: true } : {}),
+		};
+	};
+	for (const child of collage.children) {
+		if (child === column_el) {
+			for (const section of child.children) { blocks.push(block_from(section, true)); } // in column order
+		} else if (child.classList.contains("block")) {
+			blocks.push(block_from(child, false));
+		}
 	}
 	const style = /** @type {HTMLElement} */ (collage).style;
 	return {
@@ -262,6 +285,9 @@ function parse_collage_html(html) {
 			bgcolor: doc.body.getAttribute("bgcolor") || "",
 			text_color: doc.body.getAttribute("text") || "",
 			background: doc.body.getAttribute("background") || "",
+			column_left: column_el ? px(column_el.style.left) : 0,
+			column_top: column_el ? px(column_el.style.top) : 0,
+			column_width: column_el ? px(column_el.style.width) : 0,
 		},
 		width: px(style.width) || Number(bitmap.getAttribute("width")) || 0,
 		height: px(style.height) || Number(bitmap.getAttribute("height")) || 0,
