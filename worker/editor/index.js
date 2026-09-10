@@ -8,6 +8,7 @@
 //   GET    /api/sites/:name/files/<path>            read a file (HEAD to check existence; ?optional → 204 instead of 404)
 //   PUT    /api/sites/:name/files/<path>            write a file (HTML is sanitized; images/audio are sniffed)
 //   DELETE /api/sites/:name/files/<path>
+//   (site.json: the site's settings — { "folders": { "posts": { "kind": "posts", "title": "…" } } }; site.css: its stylesheet)
 //   GET    /api/x-elements                          the <x-*> registry's editor metadata (no auth)
 //   GET    /api/gifcities/search?q=&offset=&page_size=   GifCities search scraped to JSON (no auth, cached)
 //   GET    /api/gifcities/gif/:id                   relay a GifCities GIF with CORS (no auth, cached)
@@ -370,7 +371,19 @@ async function handle_site_files(request, url, env, invite = null) {
 		/** @type {ArrayBuffer | string} */
 		let body = bytes.buffer;
 		const content_type = content_type_for(path);
-		if (is_html_path(path)) {
+		if (/\.json$/i.test(path)) {
+			// site.json: the site's settings (folders marked as posts, titles…) — one small, well-formed object.
+			if (path !== "site.json") { return json({ error: "The only JSON file a site has is site.json (its settings)" }, 400); }
+			if (bytes.length > 64 * 1024) { return json({ error: "site.json is limited to 64 KB" }, 413); }
+			let settings;
+			try {
+				settings = JSON.parse(new TextDecoder().decode(bytes));
+			} catch (_error) {
+				return json({ error: "site.json must be valid JSON" }, 400);
+			}
+			if (!settings || typeof settings !== "object" || Array.isArray(settings)) { return json({ error: "site.json must be an object" }, 400); }
+			body = JSON.stringify(settings, null, "\t");
+		} else if (is_html_path(path)) {
 			const text = new TextDecoder().decode(bytes);
 			if (!/<html[\s>]/i.test(text) || !/<body[\s>]/i.test(text)) {
 				return json({ error: "Pages must be complete HTML documents (<html> … <body> …)" }, 400);

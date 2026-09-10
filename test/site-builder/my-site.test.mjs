@@ -104,6 +104,33 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	assert.match(await fresh.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
 	await close_fresh();
 }
+// New Post…: a page in the posts folder with a title section and the date, the folder marked as posts in site.json
+{
+	await click_menu_item(page, "My Site...");
+	await page.waitForSelector(".my-site-window", { timeout: 10000 });
+	await page.evaluate(() => [...document.querySelectorAll(".my-site-toolbar button")].find((b) => b.textContent === "New Post…").click());
+	await page.waitForSelector(".new-post-window", { timeout: 5000 });
+	await page.fill('.new-post-window input[name="post-title"]', "Hello, World!");
+	await page.click(".new-post-window button:has-text('OK')");
+	await page.waitForFunction(() => file_name === "posts/hello-world.html" || [...document.querySelectorAll(".window")].some((w) => /Save changes to/.test(w.textContent)), null, { timeout: 10000 });
+	await page.evaluate(() => { const prompt = [...document.querySelectorAll(".window")].find((w) => /Save changes to/.test(w.textContent)); [...(prompt?.querySelectorAll("button") || [])].find((b) => b.textContent.trim() === "No")?.click(); });
+	await page.waitForFunction(() => file_name === "posts/hello-world.html", null, { timeout: 10000 });
+	await page.waitForFunction(() => (current_history_node.blocks || []).filter((b) => b.flow).length === 2, null, { timeout: 5000 });
+	const first = await page.evaluate(() => (current_history_node.blocks || []).filter((b) => b.flow)[0].html);
+	assert.match(first, /<h1>Hello, World!<\/h1><p><small>Posted <x-updated label="">today<\/x-updated><\/small><\/p>/, first);
+	await page.keyboard.press("Escape");
+	await page.keyboard.press("Control+s");
+	await page.waitForFunction(() => /Done!|Couldn't|rejected|expired/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
+	assert.match(await page.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
+	await page.evaluate(() => [...document.querySelectorAll("button")].filter((b) => b.textContent === "Close").forEach((b) => b.click()));
+	const settings = await (await fetch(`${editor}/api/sites/${site}/files/site.json`)).json();
+	assert.equal(settings.folders.posts.kind, "posts", JSON.stringify(settings));
+	const published = await (await fetch(`${sites}/~${site}/posts/hello-world.html`)).text();
+	assert.match(published, /<div class="column"[^>]*>\s*<div data-kind="section" id="hello-world" class="block section"><h1>Hello, World!<\/h1><p><small>Posted <x-updated label(?:="")?><i>\d{4}-\d{2}-\d{2}<\/i><\/x-updated>/, "the date renders on the live page");
+	const feed = await (await fetch(`${sites}/~${site}/posts/feed.xml`)).text();
+	assert.match(feed, /<item><title>hello-world<\/title>|<item><title>Hello, World!<\/title>/, feed.slice(0, 300));
+}
+
 // A plain visit while signed in opens your site's front page — edit.<domain> is where you edit your site.
 // (No front page yet: nothing happens. Then make one and visit again.)
 {

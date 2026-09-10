@@ -121,7 +121,7 @@ async function handle_action(request, url, env) {
 	}
 	const result = await definition.action({
 		form,
-		context: { site, page: "", page_uploaded: null, state: env.SITE_STATE.getByName(site), request, files: site_files(env.SITES, site) },
+		context: { site, page: "", page_uploaded: null, state: env.SITE_STATE.getByName(site), request, files: site_files(env.SITES, site), page_html: "" },
 	});
 	if (result.location) {
 		return new Response(null, { status: result.status || 303, headers: { ...PAGE_HEADERS, Location: result.location } });
@@ -189,7 +189,71 @@ function site_files(bucket, site) {
 			const match = /<title>([^<]*)<\/title>/i.exec(await object.text());
 			return match ? match[1].trim() : null;
 		},
+		/** The first words of a page (its first section, else its text), for feeds. @param {string} path */
+		async page_summary(path) {
+			const object = await bucket.get(`${prefix}${path}`);
+			if (!object) { return ""; }
+			const html = await object.text();
+			const section = /<div[^>]*class="block section"[^>]*>([\s\S]*?)<\/div>/i.exec(html);
+			const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html);
+			const text = (section ? section[1] : body ? body[1] : "").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+			return text.slice(0, 300);
+		},
+		/** site.json — the site's settings (folders marked as posts, titles). @returns {Promise<any>} */
+		async settings() {
+			const object = await bucket.get(`${prefix}site.json`);
+			if (!object) { return {}; }
+			try {
+				const settings = JSON.parse(await object.text());
+				return settings && typeof settings === "object" ? settings : {};
+			} catch (_error) {
+				return {};
+			}
+		},
+		/** Whether the site has a file. @param {string} path */
+		async has(path) {
+			return !!await bucket.head(`${prefix}${path}`);
+		},
 	};
+}
+
+/** @param {string} text */
+function escape_xml(text) {
+	return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&apos;" }[c]));
+}
+
+/**
+ * /~name/<folder>/feed.xml: an RSS feed of a folder site.json marks as posts (newest first).
+ * @param {ReturnType<typeof site_files>} files
+ * @param {string} site
+ * @param {string} folder
+ * @param {URL} url
+ */
+async function rss_feed(files, site, folder, url) {
+	const settings = await files.settings();
+	const config = settings.folders && settings.folders[folder];
+	if (!config || config.kind !== "posts") { return not_found(`There's no feed for <b>${site_base(site)}/${folder}/</b> — it isn't a posts folder.`); }
+	const pages = (await files.list_pages(folder)).filter((page) => !/(^|\/)index\.html?$/i.test(page.path)).sort((a, b) => b.uploaded - a.uploaded).slice(0, 50);
+	const items = [];
+	for (const page of pages) {
+		const link = `${url.origin}${site_base(site)}/${page.path}`;
+		const title = (await files.page_title(page.path)) || page.path.slice(page.path.lastIndexOf("/") + 1).replace(/\.html?$/i, "");
+		items.push(`<item><title>${escape_xml(title)}</title><link>${escape_xml(link)}</link><guid>${escape_xml(link)}</guid><pubDate>${new Date(page.uploaded).toUTCString()}</pubDate><description>${escape_xml(await files.page_summary(page.path))}</description></item>`);
+	}
+	const channel_title = config.title || `~${site} — ${folder}`;
+	const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>${escape_xml(channel_title)}</title><link>${escape_xml(`${url.origin}${site_home(site)}`)}</link><description>${escape_xml(config.description || `Pages in ${folder}/ at ${url.host}`)}</description>${items.join("")}</channel></rss>\n`;
+	return new Response(xml, { headers: { "Content-Type": "application/rss+xml; charset=utf-8", "Cache-Control": "no-cache, no-transform", "X-Content-Type-Options": "nosniff" } });
+}
+
+/**
+ * A site's stylesheet (site.css, edited in Paint's My Site) applies to all its pages: linked into <head> at serve time.
+ * @param {string} html
+ * @param {string} href
+ */
+function with_stylesheet(html, href) {
+	return new HTMLRewriter().on("head", {
+		element(element) { element.append(`<link rel="stylesheet" href="${href.replace(/"/g, "%22")}">`, { html: true }); },
+	}).transform(new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } })).text();
 }
 
 export default {
@@ -233,6 +297,10 @@ export default {
 		} catch (_error) {
 			return not_found();
 		}
+		const feed = /^([^/][^\n]*?)\/feed\.xml$/.exec(path);
+		if (feed && valid_path(`${feed[1]}/index.html`)) {
+			return rss_feed(site_files(env.SITES, site), site, feed[1], url);
+		}
 		if (!valid_path(path)) {
 			return not_found();
 		}
@@ -242,15 +310,18 @@ export default {
 			return not_found(`There's no <b>${site_base(site)}/${path}</b> here.`);
 		}
 		if (is_html_path(path)) {
+			const files = site_files(env.SITES, site);
 			const sanitized = await sanitize_html(await object.text());
-			const rendered = await render_x_elements(sanitized, {
+			let rendered = await render_x_elements(sanitized, {
 				site,
 				page: path,
 				page_uploaded: object.uploaded,
 				state: env.SITE_STATE.getByName(site),
 				request,
-				files: site_files(env.SITES, site),
+				files,
+				page_html: sanitized,
 			});
+			if (await files.has("site.css")) { rendered = await with_stylesheet(rendered, `${site_base(site)}/site.css`); }
 			return html_response(rendered);
 		}
 		const headers = new Headers(PAGE_HEADERS);

@@ -10,7 +10,7 @@ const FOLDER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0
 
 export default {
 	tag: "x-folder",
-	attrs: ["path", "show", "order", "limit", "title"],
+	attrs: ["path", "show", "order", "limit", "title", "rss"],
 	editor: {
 		label: "Folder View",
 		description: "Lists the pages in a folder of your site (a posts folder, say), newest first, on the published page.",
@@ -36,6 +36,10 @@ export default {
 		}
 		const heading = attrs.title ? `<b class="folder-title">${escape_html(attrs.title)}</b>` : "";
 		const list = items.length ? `<ul class="folder folder-${escape_html(folder.replace(/[^A-Za-z0-9_-]/g, "-"))}">${items.join("")}</ul>` : `<p class="folder-empty"><i>Nothing in ${escape_html(folder)}/ yet.</i></p>`;
-		return heading + list;
+		// A posts folder (site.json) has a feed
+		const settings = await context.files.settings();
+		const is_posts = !!(settings.folders && settings.folders[folder] && settings.folders[folder].kind === "posts");
+		const feed = is_posts && attrs.rss !== "no" ? `<p class="folder-feed"><a href="${escape_html(`${site_base(context.site)}/${folder}/feed.xml`)}">RSS feed</a></p>` : "";
+		return heading + list + feed;
 	},
 };

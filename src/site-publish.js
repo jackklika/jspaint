@@ -222,8 +222,8 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			$site.focus();
 			return;
 		}
-		if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.html?$/.test(current.page)) {
-			log("Page files are like index.html or about.html.");
+		if (!/^(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.html?$/.test(current.page)) {
+			log("Page files are like index.html, about.html, or posts/hello.html.");
 			$page.focus();
 			return;
 		}

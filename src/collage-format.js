@@ -138,7 +138,10 @@ async function serialize_collage_html({ canvas = main_canvas, title = file_name,
 			text_tags.push(`\t\t<${tag} class="text"${href} style="${escape_html(style)}">${escape_html(layer.text)}</${tag}>`);
 		}
 	}
-	const page_title = title.replace(/\.(bmp|dib|a?png|gif|jpe?g|jpe|jfif|tiff?|webp|raw|html?)$/i, "") || "Untitled";
+	// The page's title: its first section's heading if it has one (a post's title), else the file name without folders
+	const heading = sections.map((block) => /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(block.html)).find(Boolean);
+	const heading_text = heading ? heading[1].replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) : "";
+	const page_title = heading_text || title.slice(title.lastIndexOf("/") + 1).replace(/\.(bmp|dib|a?png|gif|jpe?g|jpe|jfif|tiff?|webp|raw|html?)$/i, "") || "Untitled";
 	const props = get_page_properties();
 	const body_attrs = [
 		props.bgcolor ? ` bgcolor="${escape_html(props.bgcolor)}"` : "",

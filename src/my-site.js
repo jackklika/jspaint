@@ -8,7 +8,7 @@
 // collage-format.js with the site's files as the base for relative assets.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { add_block } from "./blocks.js";
-import { refresh_x_element_kinds } from "./block-kinds.js";
+import { escape_html, refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
 import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
@@ -336,6 +336,64 @@ async function open_page_from_site(path) {
 	return opened;
 }
 
+// ---- site settings (site.json): folders marked as posts, titles ----
+
+/** @returns {Promise<any>} the site's settings object ({} when there's none) */
+async function site_settings() {
+	const { site } = load_settings();
+	try {
+		const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/site.json?optional`);
+		if (response.status !== 200) { return {}; }
+		const settings = await response.json();
+		return settings && typeof settings === "object" ? settings : {};
+	} catch (_error) {
+		return {};
+	}
+}
+
+/**
+ * Merges into site.json (folders merge per folder).
+ * @param {{ folders?: Record<string, any>, [key: string]: any }} patch
+ */
+async function save_site_settings(patch) {
+	const settings = await site_settings();
+	const merged = { ...settings, ...patch, folders: { ...(settings.folders || {}), ...(patch.folders || {}) } };
+	await write_file("site.json", JSON.stringify(merged, null, "\t"), "application/json");
+	return merged;
+}
+
+/** A short lowercase file name from a title: "My trip to Ohio!" → "my-trip-to-ohio". @param {string} title */
+function slug_for(title) {
+	return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "post";
+}
+
+/**
+ * Starts a new post: a page in the posts folder (marked as such in site.json, so the folder view and the feed pick
+ * it up) with a title section, the date, and a section to write in. Saved to the site on Ctrl+S.
+ * @param {string} folder - like posts
+ * @param {string} title
+ */
+async function new_site_post(folder, title) {
+	const path = `${folder}/${slug_for(title)}.html`;
+	await save_site_settings({ folders: { [folder]: { kind: "posts", ...((await site_settings()).folders?.[folder] || {}) } } }).catch(() => { /* the post still works; the feed needs the mark */ });
+	are_you_sure(() => {
+		$(window).triggerHandler("session-update");
+		new_local_session();
+		reset_file();
+		reset_selected_colors();
+		reset_canvas_and_history();
+		set_magnification(1);
+		file_name = path;
+		file_format = HTML_FORMAT_ID;
+		system_file_handle = { site_page: path };
+		add_block("section", { x: 0, y: 0 }, { html: `<h1>${escape_html(title)}</h1><p><small>Posted <x-updated label="">today</x-updated></small></p>`, edit: false });
+		add_block("section", { x: 0, y: 0 }, { html: "Write your post here." });
+		saved = false;
+		update_title();
+		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: true }]);
+	});
+}
+
 /**
  * Starts a new page for the site: a fresh 800px canvas with a heading, saved to the site on Ctrl+S.
  * @param {string} path - like about.html
@@ -401,6 +459,7 @@ async function show_my_site_dialog() {
 	const $open = button(localize("Open"), () => { if (selected) { open_selected(); } });
 	const $view = button(localize("View"), () => { if (selected) { window.open(public_url(selected.path), "_blank", "noopener"); } });
 	button(localize("New Page…"), () => { show_new_page_dialog(); });
+	button(localize("New Post…"), () => { show_new_post_dialog(); });
 	button(localize("Upload…"), () => { $file_input.trigger("click"); });
 	const $delete = button(localize("Delete"), () => {
 		if (!selected) { return; }
@@ -422,6 +481,8 @@ async function show_my_site_dialog() {
 		$confirm.$Button(localize("Cancel"), () => { $confirm.close(); });
 		$confirm.center();
 	});
+	button(localize("Folder…"), () => { show_folder_dialog(selected && selected.path.includes("/") ? selected.path.slice(0, selected.path.lastIndexOf("/")) : "posts"); });
+	button(localize("Site Style…"), () => { show_site_css_dialog(); });
 	button(localize("Refresh"), () => { refresh(); });
 	button(localize("Sign Out"), () => { sign_out(); $w.close(); });
 
@@ -508,6 +569,86 @@ async function show_my_site_dialog() {
 		/** @type {HTMLInputElement} */ ($name[0]).setSelectionRange(0, 5);
 	};
 
+	const show_new_post_dialog = () => {
+		const $d = $DialogWindow(localize("New Post"));
+		$d.addClass("new-post-window");
+		const $title_label = $(E("label")).addClass("my-site-row").text(`${localize("Title:")} `).appendTo($d.$main);
+		const $title = $(E("input")).attr({ type: "text", spellcheck: "true", placeholder: localize("What's it about?"), name: "post-title" }).appendTo($title_label);
+		const $folder_label = $(E("label")).addClass("my-site-row").text(`${localize("Folder:")} `).appendTo($d.$main);
+		const $folder_name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", name: "post-folder" }).val("posts").appendTo($folder_label);
+		$(E("p")).addClass("my-site-note").text(localize("A post is a page in that folder, which becomes a posts folder: a Folder View element lists them, and there's an RSS feed. Save (Ctrl+S) puts it on the site.")).appendTo($d.$main);
+		$d.$Button(localize("OK"), () => {
+			const title = String($title.val()).trim();
+			const folder = String($folder_name.val()).trim().replace(/^\/+|\/+$/g, "");
+			if (!title) { $title.focus(); return; }
+			if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(folder)) { $folder_name.focus(); return; }
+			$d.close();
+			$w.close();
+			new_site_post(folder, title);
+		}, { type: "submit" });
+		$d.$Button(localize("Cancel"), () => { $d.close(); });
+		$d.$content.css({ width: "min(520px, 92vw)" });
+		$d.center();
+		$title.focus();
+	};
+
+	/** @param {string} folder */
+	const show_folder_dialog = async (folder) => {
+		const settings = await site_settings();
+		const config = (settings.folders && settings.folders[folder]) || {};
+		const $d = $DialogWindow(localize("Folder"));
+		$d.addClass("folder-window");
+		const $name_label = $(E("label")).addClass("my-site-row").text(`${localize("Folder:")} `).appendTo($d.$main);
+		const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", name: "folder-name" }).val(folder).appendTo($name_label);
+		const $kind_label = $(E("label")).addClass("my-site-row").text(`${localize("Kind:")} `).appendTo($d.$main);
+		const $kind = $(E("select")).attr({ name: "folder-kind" }).append($(E("option")).val("").text(localize("Plain folder")), $(E("option")).val("posts").text(localize("Posts: newest first, with an RSS feed"))).val(config.kind || "").appendTo($kind_label);
+		const $title_label = $(E("label")).addClass("my-site-row").text(`${localize("Title:")} `).appendTo($d.$main);
+		const $title = $(E("input")).attr({ type: "text", name: "folder-title", placeholder: localize("(for the feed)") }).val(config.title || "").appendTo($title_label);
+		$(E("p")).addClass("my-site-note").text(localize("Saved in site.json. A posts folder's feed is at folder/feed.xml; a Folder View element on any page lists its pages.")).appendTo($d.$main);
+		$d.$Button(localize("OK"), async () => {
+			const name = String($name.val()).trim().replace(/^\/+|\/+$/g, "");
+			if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(name)) { $name.focus(); return; }
+			$d.close();
+			try {
+				await save_site_settings({ folders: { [name]: { ...config, kind: String($kind.val()) || undefined, title: String($title.val()).trim() || undefined } } });
+				$status.text(localize("Saved site.json."));
+				refresh();
+			} catch (error) {
+				$status.text(`Couldn't save site.json: ${error.message}`);
+			}
+		}, { type: "submit" });
+		$d.$Button(localize("Cancel"), () => { $d.close(); });
+		$d.$content.css({ width: "min(520px, 92vw)" });
+		$d.center();
+	};
+
+	const show_site_css_dialog = async () => {
+		const { site } = load_settings();
+		let css = "";
+		try {
+			const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/site.css?optional`);
+			if (response.status === 200) { css = await response.text(); }
+		} catch (_error) { /* start empty */ }
+		const $d = $DialogWindow(localize("Site Style"));
+		$d.addClass("site-css-window");
+		$(E("p")).addClass("my-site-note").text(localize("CSS for every page of your site (site.css). Folder views are <ul class=\"folder\">, sections <div class=\"section\">, the contents list <ul class=\"toc\">.")).appendTo($d.$main);
+		const $css = $(E("textarea")).attr({ rows: "14", spellcheck: "false", name: "site-css", placeholder: "body { background: #ffffd9; }\n.folder { list-style: square; }" }).css({ width: "100%", boxSizing: "border-box", font: "12px monospace" }).val(css).appendTo($d.$main);
+		$d.$Button(localize("Save"), async () => {
+			$d.close();
+			try {
+				await write_file("site.css", String($css.val()), "text/css");
+				$status.text(localize("Saved site.css."));
+				refresh();
+			} catch (error) {
+				$status.text(`Couldn't save site.css: ${error.message}`);
+			}
+		}, { type: "submit" });
+		$d.$Button(localize("Cancel"), () => { $d.close(); });
+		$d.$content.css({ width: "min(560px, 94vw)" });
+		$d.center();
+		$css.focus();
+	};
+
 	$w.$Button(localize("Close"), () => { $w.close(); });
 	$w.on("close", () => { $folder = null; });
 	$w.$content.css({ width: "min(520px, 92vw)" });
@@ -581,6 +722,8 @@ $("<style>").text(`
 	.my-site-note {
 		font-size: 11px;
 		opacity: 0.8;
+		max-width: 380px; /* wraps; the dialog's button column must still fit beside it */
+		white-space: normal;
 	}
 `).appendTo(document.head);
 

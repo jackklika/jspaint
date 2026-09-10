@@ -5,6 +5,7 @@
 // browser shows when the page is served raw (an exported zip, another host).
 import counter from "./counter.js";
 import folder from "./folder.js";
+import toc from "./toc.js";
 import guestbook from "./guestbook.js";
 import music from "./music.js";
 import updated from "./updated.js";
@@ -16,7 +17,8 @@ import updated from "./updated.js";
  * @property {Date | null} page_uploaded - when the page file was last written
  * @property {any} state - the site's Durable Object stub (SiteState)
  * @property {Request} request
- * @property {{ list_pages: (folder: string) => Promise<{ path: string, uploaded: number }[]>, page_title: (path: string) => Promise<string | null> }} files - read-only look at the site's pages
+ * @property {{ list_pages: (folder: string) => Promise<{ path: string, uploaded: number }[]>, page_title: (path: string) => Promise<string | null>, page_summary: (path: string) => Promise<string>, settings: () => Promise<any>, has: (path: string) => Promise<boolean> }} files - read-only look at the site's pages and settings
+ * @property {string} page_html - the page being rendered (sanitized), for elements that read the page itself (<x-toc>)
  */
 
 /**
@@ -32,7 +34,7 @@ import updated from "./updated.js";
  */
 
 /** @type {Map<string, XElementDefinition>} */
-const x_elements = new Map([counter, updated, guestbook, music, folder].map((definition) => [definition.tag, definition]));
+const x_elements = new Map([counter, updated, guestbook, music, folder, toc].map((definition) => [definition.tag, definition]));
 
 /**
  * Renders every registered <x-*> element in a page. The tag stays (so the page re-imports), its content is replaced.

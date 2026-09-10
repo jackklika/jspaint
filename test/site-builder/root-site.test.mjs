@@ -42,6 +42,35 @@ await put("root", "posts/index.html", '<html><head><title>posts</title></head><b
 	assert.match(listing, /<b class="folder-title">My posts<\/b><ul class="folder folder-posts"><li class="folder-item"><a href="\/posts\/second.html">Second post<\/a> <small class="folder-date">\d{4}-\d{2}-\d{2}<\/small><\/li><li class="folder-item"><a href="\/posts\/first.html">First post<\/a>/, "newest first, titles from the pages");
 }
 
+// site.json marks a folder as posts: the folder view gets a feed link and <folder>/feed.xml is an RSS feed
+{
+	const response = await fetch(`${editor}/api/sites/root/files/site.json`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ folders: { posts: { kind: "posts", title: "Root posts" } } }) });
+	assert.equal(response.status, 200, "site.json saved");
+	assert.equal((await fetch(`${editor}/api/sites/root/files/other.json`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" })).status, 400, "only site.json");
+	assert.equal((await fetch(`${editor}/api/sites/root/files/site.json`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: "not json" })).status, 400);
+	const listing = await (await get("/posts/")).text();
+	assert.match(listing, /<p class="folder-feed"><a href="\/posts\/feed.xml">RSS feed<\/a><\/p>/);
+	const feed = await get("/posts/feed.xml");
+	assert.equal(feed.status, 200);
+	assert.match(feed.headers.get("Content-Type") || "", /application\/rss\+xml/);
+	const xml = await feed.text();
+	assert.match(xml, /<rss version="2.0"><channel><title>Root posts<\/title>/);
+	assert.match(xml, /<item><title>Second post<\/title><link>[^<]*\/posts\/second.html<\/link>[\s\S]*<item><title>First post<\/title>/, "newest first");
+	assert.match(xml, /<description>one<\/description>/, "a summary from the page's text");
+	assert.equal((await get("/nope/feed.xml")).status, 404, "only posts folders have feeds");
+}
+
+// <x-toc> lists a page's sections by their anchors; site.css is linked into every page
+await put("root", "toc.html", '<html><head><title>toc</title></head><body><x-toc title="On this page">fallback</x-toc><div class="column"><div class="block section" id="alpha"><h2>Alpha</h2><p>a</p></div><div class="block section" id="beta">Just beta words here</div></div></body></html>');
+{
+	const response = await fetch(`${editor}/api/sites/root/files/site.css`, { method: "PUT", headers: { ...headers, "Content-Type": "text/css" }, body: ".toc { color: red; }" });
+	assert.equal(response.status, 200, "site.css saved");
+	const toc = await (await get("/toc.html")).text();
+	assert.match(toc, /<b class="toc-title">On this page<\/b><ul class="toc"><li class="toc-item"><a href="#alpha">Alpha<\/a><\/li><li class="toc-item"><a href="#beta">Just beta words here<\/a><\/li><\/ul>/);
+	assert.match(toc, /<link rel="stylesheet" href="\/site.css">/, "the site's stylesheet is linked in");
+	assert.match(await (await get("/site.css")).text(), /color: red/);
+}
+
 // Served at the domain itself, with the sandbox headers
 let response = await get("/");
 assert.equal(response.status, 200);
@@ -82,7 +111,7 @@ assert.equal(response.status, 302);
 assert.equal(new URL(response.headers.get("Location") || "", sites).search, "?join=root/index.html/1.abc");
 
 // Clean up: the landing page comes back
-for (const [site, path] of [["root", "index.html"], ["root", "about.html"], ["root", "posts/first.html"], ["root", "posts/second.html"], ["root", "posts/index.html"], ["zz-test", "index.html"]]) {
+for (const [site, path] of [["root", "index.html"], ["root", "about.html"], ["root", "posts/first.html"], ["root", "posts/second.html"], ["root", "posts/index.html"], ["root", "site.json"], ["root", "site.css"], ["root", "toc.html"], ["zz-test", "index.html"]]) {
 	await fetch(`${editor}/api/sites/${site}/files/${path}`, { method: "DELETE", headers });
 }
 response = await get("/");

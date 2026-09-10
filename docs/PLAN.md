@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — **Blogging** (Jack: "Yes, do this all"): Sections (flow, column, reorder), anchors + Ctrl+K links, Font toolbar writing tools, `<x-folder>` (blog index) + `<x-toc>`, `site.json` folder kinds (posts → `feed.xml` RSS), `site.css` linked at serve time, My Site › New Post…. Four commits: sections, anchors/links/tools, folder view, posts/feeds. Open: think more about site-wide CSS / customizable HTML blocks (Jack), summaries in folder views, drafts.
+
 - 2026-09-10 — Text blocks: Enter makes `<br>` (`defaultParagraphSeparator`), `normalize_block_lines` on commit, `repair_block_lines` on load — `<div>` line breaks inside `<p>` blocks broke published pages (browser closes the `<p>`). Live room: a tab ignores its own late-echoed messages (`client_id` match). Opening a page from the site counts as saved. Pages send `Cache-Control: no-cache, no-transform`, which stops Cloudflare from injecting its Web Analytics beacon into the sandbox (verified: no `cloudflareinsights` script in the served HTML).
 
 - 2026-09-10 — Jack (incognito): "People should be able to edit the page but not save it to the site" → a plain visit to `edit.coolpaint.world` while not signed in opens the root site's front page as a copy (same as `/~name/page` for strangers); signed in → your own front page.

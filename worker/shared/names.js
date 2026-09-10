@@ -23,6 +23,7 @@ const CONTENT_TYPES = {
 	midi: "audio/midi",
 	wav: "audio/wav",
 	ogg: "audio/ogg",
+	json: "application/json; charset=utf-8", // only site.json (the site's settings); the editor Worker refuses other .json files
 };
 
 /** Files a site may contain, by extension. Anything else is refused at upload. */
