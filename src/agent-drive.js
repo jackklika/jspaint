@@ -578,4 +578,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { get_server_url, is_agent_window_open, load_site_screenshot, publish_site, save_iteration, show_agent_window, toggle_agent_window };
+export { api, get_server_url, is_agent_window_open, load_site_screenshot, publish_site, save_iteration, show_agent_window, toggle_agent_window };

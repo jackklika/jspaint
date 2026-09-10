@@ -21,6 +21,10 @@
 		"worker/.wrangler"
 	],
 	"words": [
+		"webfetch",
+		"websearch",
+		"todowrite",
+		"todoread",
 		"selectstart",
 		"noshade",
 		"cellspacing",

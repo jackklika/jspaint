@@ -34,5 +34,14 @@
 
 	"git": {
 		"remote": "origin"
+	},
+
+	"dev": {
+		"enabled": true,
+		"repo_dir": "..",
+		"model": "",
+		"agent": "",
+		"auto_approve": true,
+		"timeout_minutes": 30
 	}
 }

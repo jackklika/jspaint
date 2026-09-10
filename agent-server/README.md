@@ -1,6 +1,9 @@
-# Agent Drive server
+# Agent server (Code Agent + Agent Drive)
 
-Local companion for JS Paint's **Agent window** (`Extras > Agent Window`). It turns the canvas into a control surface for an LLM agent that edits a static website, and deploys the result to Cloudflare.
+Local companion for two JS Paint windows:
+
+- **Extras › Code Agent** — chat with opencode about *this* app's code while you use it. Each message runs `opencode run` on the JS Paint repo (`dev.repo_dir`, default `..`) with the user's request appended to `dev-chat-prompt.md`; the window streams what the agent reads/edits/runs (`--format json`), follow-ups continue the same opencode session (`--session`), and when files under `src/`, `styles/`, `index.html`… changed the app reloads itself — drawing, elements, and conversation come back (autosave + localStorage). Pick the model via `dev.model` in `config.json` (or the window's Model field), e.g. your z.ai GLM as `provider/model` from `opencode models`; empty means opencode's own default. Only one Code Agent job runs at a time; **Stop** kills it. Mutating API calls are only accepted from pages served on localhost.
+- **Extras › Agent Window** (Agent Drive) — the older tool: the canvas drives an agent that edits a separate static website, deployed to Cloudflare.
 
 ```
 JS Paint ──Ctrl+Alt+I──▶ agent-server ──▶ site repo public/index.html ──wrangler──▶ preview URL   (seconds)
@@ -47,7 +50,7 @@ Everything in the site repo except `public/` is a copy of `site-template/` in th
    npm start
    ```
 
-5. Open <http://localhost:4097/> (JS Paint, same origin) and **Extras > Agent Window**. The log should say "Connected."
+5. Open <http://localhost:4097/> (JS Paint served from the repo, so the Code Agent's edits are what you're running) and **Extras > Code Agent** (or **Extras > Agent Window** for Agent Drive). The status line shows the repo, branch, and model.
 
 ## Shortcuts
 
@@ -66,7 +69,9 @@ On macOS use the physical Control key (Cmd+Option+I is taken by the browser's de
 
 All responses are JSON; long-running work returns `{ "job": id }` to poll at `GET /api/jobs/:id`.
 
-- `GET /api/status`
+- `GET /api/status` (includes `dev: { repo_dir, branch, model, running_job }`)
+- `POST /api/dev/prompt` — JSON `{ prompt, session?, model? }` → `{ job }`; the job carries `events` (`text`, `tool`, `step`, `error`) and a result `{ session, reply, changed_files, app_changed, cost, tokens }`
+- `POST /api/dev/abort/:job` — stop a running Code Agent job
 - `POST /api/iteration?mode=display|html` — body: PNG bytes
 - `PUT /api/screenshots/<NNN|current>` — body: PNG bytes; JS Paint uploads its render of the page here
 - `POST /api/publish`

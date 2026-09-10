@@ -12,6 +12,8 @@
 //                                           so the agent can compare "before" and "annotated" images next round
 //   POST /api/publish                     git add/commit/push; the site repo's GitHub workflow deploys production
 //   GET  /api/jobs/:id                    poll a job started by the POST endpoints (status, log lines, result)
+//   POST /api/dev/prompt                  Code Agent: run opencode on THIS repo with {prompt, session?, model?} → job (events, result)
+//   POST /api/dev/abort/:job              stop a running Code Agent job
 //   GET|PUT /api/rooms/:id/data           JS Paint's built-in multi-user RESTSession protocol (whole canvas as a
 //                                           data URI, synced after every stroke). Used for *live preview*: each
 //                                           write updates public/latest.png (+ the display page) and redeploys.
@@ -67,6 +69,16 @@ const default_config = {
 	git: {
 		remote: "origin",
 	},
+	// The Code Agent window (Extras > Code Agent in JS Paint): prompt opencode to edit THIS repo — the running app —
+	// and reload it. A local dev tool; the server only listens on 127.0.0.1 and only takes these requests from localhost pages.
+	dev: {
+		enabled: true,
+		repo_dir: "..", // the JS Paint fork itself
+		model: "", // provider/model for opencode; empty = opencode's default (opencode.json / `opencode models`)
+		agent: "",
+		auto_approve: true, // --auto: let it edit files without a permission prompt (there's no one to answer one)
+		timeout_minutes: 30,
+	},
 };
 
 function load_config() {
@@ -85,6 +97,7 @@ function load_config() {
 		live: { ...default_config.live, ...(user_config.live || {}) },
 		site_template: { ...default_config.site_template, ...(user_config.site_template || {}) },
 		git: { ...default_config.git, ...(user_config.git || {}) },
+		dev: { ...default_config.dev, ...(user_config.dev || {}) },
 	};
 	if (process.env.AGENT_DRIVE_SITE_DIR) { config.site_dir = process.env.AGENT_DRIVE_SITE_DIR; }
 	if (process.env.AGENT_DRIVE_PORT) { config.port = Number(process.env.AGENT_DRIVE_PORT); }
@@ -97,6 +110,7 @@ const config = load_config();
 const SITE_DIR = path.resolve(__dirname, config.site_dir);
 const PUBLIC_DIR = path.join(SITE_DIR, "public");
 const JSPAINT_DIR = path.resolve(__dirname, "..");
+const REPO_DIR = path.resolve(__dirname, config.dev.repo_dir);
 const PAGE_URL = "/files/public/index.html";
 const DISPLAY_MARKER = "<!-- agent-drive: display -->";
 
@@ -132,6 +146,9 @@ const pub = (...parts) => path.join(PUBLIC_DIR, ...parts);
  * @property {any} [result]
  * @property {string} [error]
  * @property {number} created
+ * @property {any[]} [events] - Code Agent jobs: structured opencode events (see dev_job)
+ * @property {string | null} [session] - Code Agent jobs: the opencode session id
+ * @property {boolean} [aborted]
  */
 
 /** @typedef {(line: string) => void} Logger */
@@ -622,6 +639,168 @@ async function iteration_job(_job, log, mode, png) {
 	};
 }
 
+// #region Code Agent (dev chat)
+
+/** @type {Map<string, import("node:child_process").ChildProcess>} running opencode processes by job id */
+const dev_children = new Map();
+/** Paths (relative to the repo) that the served app is made of; changes there mean "reload JS Paint". */
+const APP_PATHS = /^(?:src|styles|lib|images|help|localization|audio)\/|^(?:index|about|privacy)\.html$|^manifest\.webmanifest$/;
+
+/**
+ * Builds the first message of a Code Agent conversation from dev-chat-prompt.md (read each time so it can be tweaked).
+ * @param {string} prompt - what the user typed
+ */
+function build_dev_prompt(prompt) {
+	const template = fs.readFileSync(path.join(__dirname, "dev-chat-prompt.md"), "utf8");
+	return template.replace(/\{\{PROMPT\}\}/g, prompt).replace(/\{\{PORT\}\}/g, String(config.port));
+}
+
+/** @returns {Promise<Set<string>>} `git status --porcelain` lines of the repo */
+async function repo_status_lines() {
+	const out = await run("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: REPO_DIR, log: () => {} }).catch(() => "");
+	return new Set(out.split("\n").map((line) => line.trimEnd()).filter(Boolean));
+}
+
+/**
+ * Runs `opencode run` on this repo with the user's message, streaming its JSON events into the job:
+ * `job.events` gets {type: "text", text} for the assistant's words, {type: "tool", tool, title, status} per tool
+ * call, and {type: "step", tokens, cost} per step. Resolves with the session id (for follow-ups), the reply,
+ * and which files changed — and whether any of them is part of the running app (so JS Paint reloads).
+ * @param {Job} job
+ * @param {Logger} log
+ * @param {{ prompt: string, session?: string, model?: string }} request
+ */
+async function dev_job(job, log, { prompt, session, model }) {
+	if (!fs.existsSync(path.join(REPO_DIR, "package.json"))) {
+		throw new Error(`${REPO_DIR} doesn't look like the JS Paint repo (dev.repo_dir in config.json).`);
+	}
+	const before = await repo_status_lines();
+	const chosen_model = model || config.dev.model || config.opencode.model;
+	const args = [
+		"run",
+		"--dir", REPO_DIR,
+		"--format", "json",
+		...(session ? ["--session", session] : ["--title", `JS Paint: ${prompt.slice(0, 50).replace(/\s+/g, " ")}`]),
+		...(config.dev.auto_approve ? ["--auto"] : []),
+		...(chosen_model ? ["--model", chosen_model] : []),
+		...(config.dev.agent || config.opencode.agent ? ["--agent", config.dev.agent || config.opencode.agent] : []),
+		session ? prompt : build_dev_prompt(prompt),
+	];
+	job.events = [];
+	job.session = session || null;
+	let reply = "";
+	let cost = 0;
+	const tokens = { input: 0, output: 0 };
+	/** @param {any} event */
+	const on_event = (event) => {
+		if (event.sessionID && !job.session) { job.session = event.sessionID; }
+		const part = event.part || {};
+		if (event.type === "text" && part.text) {
+			reply += (reply && !reply.endsWith("\n") ? "\n" : "") + part.text;
+			job.events.push({ type: "text", text: part.text });
+		} else if (event.type === "tool_use") {
+			const input = part.state?.input || {};
+			const file = input.filePath || input.path || "";
+			const title = part.tool === "bash" ? (input.description || input.command || "") : (file ? path.relative(REPO_DIR, file) : part.state?.title || part.title || "");
+			job.events.push({ type: "tool", tool: part.tool, title: String(title).slice(0, 200), status: part.state?.status || "completed" });
+		} else if (event.type === "step_finish") {
+			cost += part.cost || 0;
+			tokens.input += part.tokens?.input || 0;
+			tokens.output += part.tokens?.output || 0;
+			job.events.push({ type: "step", reason: part.reason, cost: part.cost || 0, tokens: part.tokens || null });
+		} else if (event.type === "error") {
+			job.events.push({ type: "error", text: event.error?.message || event.message || JSON.stringify(event).slice(0, 300) });
+		}
+		if (job.events.length > 800) { job.events.splice(0, job.events.length - 800); }
+	};
+	log(`opencode run${chosen_model ? ` (${chosen_model})` : ""}${session ? ` --session ${session}` : ""} in ${REPO_DIR}`);
+	await new Promise((resolve, reject) => {
+		const child = spawn(config.opencode.command, args, {
+			cwd: REPO_DIR,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1" },
+		});
+		dev_children.set(job.id, child);
+		let buffer = "";
+		let stderr = "";
+		let timed_out = false;
+		const timer = setTimeout(() => {
+			timed_out = true;
+			child.kill("SIGTERM");
+			setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+		}, config.dev.timeout_minutes * 60 * 1000);
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (chunk) => {
+			buffer += chunk;
+			const lines = buffer.split(/\r?\n/);
+			buffer = lines.pop() || "";
+			for (const line of lines) {
+				if (!line.trim()) { continue; }
+				try {
+					on_event(JSON.parse(line));
+				} catch (_error) {
+					log(`agent: ${line}`);
+				}
+			}
+		});
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk;
+			for (const line of chunk.split(/\r?\n/)) { if (line.trim()) { log(`agent: ${line}`); } }
+		});
+		child.on("error", (error) => {
+			clearTimeout(timer);
+			dev_children.delete(job.id);
+			reject(error.code === "ENOENT" ? new Error(`Command not found: ${config.opencode.command}. Is opencode installed and on your PATH?`) : error);
+		});
+		child.on("close", (code, signal) => {
+			clearTimeout(timer);
+			dev_children.delete(job.id);
+			if (buffer.trim()) { try { on_event(JSON.parse(buffer)); } catch (_error) { log(`agent: ${buffer}`); } }
+			if (job.aborted) {
+				resolve(undefined);
+			} else if (timed_out) {
+				reject(new Error(`opencode timed out after ${config.dev.timeout_minutes} minutes`));
+			} else if (code !== 0) {
+				reject(new Error(`opencode exited with code ${code}${signal ? ` (${signal})` : ""}${stderr.trim() ? `:\n${stderr.trim().slice(-800)}` : ""}`));
+			} else {
+				resolve(undefined);
+			}
+		});
+	});
+	const after = await repo_status_lines();
+	const changed_files = [...after].filter((line) => !before.has(line)).map((line) => line.slice(3).replace(/^.* -> /, ""));
+	const app_changed = changed_files.some((file) => APP_PATHS.test(file));
+	log(changed_files.length ? `Changed: ${changed_files.join(", ")}` : "No files changed.");
+	return { session: job.session, reply: reply.trim(), changed_files, app_changed, aborted: !!job.aborted, cost, tokens };
+}
+
+/** Is a Code Agent job still running? (One at a time: they'd edit the same files.) */
+function running_dev_job() {
+	for (const job of jobs.values()) {
+		if (job.type === "dev" && job.status === "running") { return job; }
+	}
+	return null;
+}
+
+/**
+ * Mutating requests are accepted from local pages only. Browsers send Origin on cross-origin (and most POST)
+ * requests; a page from elsewhere on the web must not be able to drive an agent that edits files here.
+ * (Tools like curl send no Origin and are allowed: they're already on this machine.)
+ * @param {http.IncomingMessage} req
+ */
+function from_local_page(req) {
+	const origin = req.headers.origin;
+	if (!origin) { return true; }
+	try {
+		return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(new URL(origin).hostname);
+	} catch (_error) {
+		return false;
+	}
+}
+
+// #endregion
+
 /**
  * @param {Job} _job
  * @param {Logger} log
@@ -859,9 +1038,19 @@ const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
 	const room_match = /^\/api\/rooms\/([^/]+)\/data$/.exec(url.pathname);
 	try {
+		if (req.method !== "GET" && url.pathname.startsWith("/api/") && !from_local_page(req)) {
+			send_json(res, 403, { error: "Only pages served from this computer may use this API." });
+			return;
+		}
 		if (req.method === "GET" && url.pathname === "/api/status") {
 			send_json(res, 200, {
 				ok: true,
+				dev: config.dev.enabled ? {
+					repo_dir: REPO_DIR,
+					branch: (await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: REPO_DIR, log: () => {} }).catch(() => "")).trim(),
+					model: config.dev.model || config.opencode.model || "",
+					running_job: running_dev_job()?.id || null,
+				} : null,
 				site_dir: SITE_DIR,
 				site_url: config.site_url,
 				preview_url: last_preview_url,
@@ -892,6 +1081,39 @@ const server = http.createServer(async (req, res) => {
 		} else if (req.method === "POST" && url.pathname === "/api/publish") {
 			const job = start_job("publish", publish_job);
 			send_json(res, 202, { job: job.id });
+		} else if (req.method === "POST" && url.pathname === "/api/dev/prompt") {
+			if (!config.dev.enabled) {
+				send_json(res, 404, { error: "The Code Agent is disabled (dev.enabled in config.json)." });
+				return;
+			}
+			const body = JSON.parse((await read_body(req)).toString("utf8") || "{}");
+			const prompt = String(body.prompt || "").trim();
+			if (!prompt) {
+				send_json(res, 400, { error: "Say what to change." });
+				return;
+			}
+			if (running_dev_job()) {
+				send_json(res, 409, { error: "The Code Agent is still working on the last request. Stop it, or wait.", job: running_dev_job().id });
+				return;
+			}
+			const session = /^ses_[A-Za-z0-9]+$/.test(String(body.session || "")) ? String(body.session) : undefined;
+			const model = /^[A-Za-z0-9._@/-]{0,120}$/.test(String(body.model || "")) ? String(body.model || "") : "";
+			const job = start_job("dev", (job, log) => dev_job(job, log, { prompt, session, model }));
+			send_json(res, 202, { job: job.id });
+		} else if (req.method === "POST" && /^\/api\/dev\/abort\/[0-9a-f-]+$/.test(url.pathname)) {
+			const job = jobs.get(url.pathname.slice("/api/dev/abort/".length));
+			const child = job && dev_children.get(job.id);
+			if (!job || job.status !== "running") {
+				send_json(res, 404, { error: "No running job with that id" });
+				return;
+			}
+			job.aborted = true;
+			job.log.push("Stopped.");
+			if (child) {
+				child.kill("SIGTERM");
+				setTimeout(() => child.kill("SIGKILL"), 3000).unref();
+			}
+			send_json(res, 200, { ok: true });
 		} else if (req.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
 			const job = jobs.get(url.pathname.slice("/api/jobs/".length));
 			if (!job) {
