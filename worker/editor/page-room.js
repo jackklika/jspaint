@@ -13,7 +13,7 @@
 //   client → room:  hello {client_id, name, color} · seed / replace {width, height, page_properties, layers}
 //                   ops {ops: [{kind, op: "set"|"remove"|"order", item?|id?|ids?}], client_op_id}
 //                   bitmap {x, y, width, height, png (base64), reset?} · props {width?, height?, page_properties?}
-//                   presence {cursor, tool, selected, editing} · ping
+//                   presence {cursor, tool, selected, editing} · stroke {id, phase, tool, button, x, y, points, state} · ping
 //   room → client:  snapshot {version, doc, patches, clients, you} · seeded / ack {version} · replaced · ops {version, client_id, ops}
 //                   bitmap {version, client_id, x, y, width, height, png, reset} · props {version, client_id, …}
 //                   presence {client_id, …} · join {client} · leave {client_id} · request_snapshot · error {message} · pong
@@ -157,6 +157,13 @@ export class PageRoom extends DurableObject {
 				break;
 			case "presence":
 				this.broadcast({ type: "presence", client_id: info.client_id, cursor: message.cursor ?? null, tool: message.tool ?? null, selected: message.selected ?? null, editing: message.editing ?? null }, ws);
+				break;
+			case "stroke":
+				// A stroke in progress (start / move / end / cancel): relayed, never stored — the finished stroke
+				// arrives as a bitmap patch. Receivers replay it with their own copy of the painter's tool.
+				if (!/^(start|move|end|cancel)$/.test(message.phase || "") || typeof message.id !== "string" || message.id.length > 40) { return; }
+				if (Array.isArray(message.points) && message.points.length > 64) { message.points = message.points.slice(-64); }
+				this.broadcast({ type: "stroke", client_id: info.client_id, id: message.id, phase: message.phase, tool: message.tool, button: message.button, x: message.x, y: message.y, points: message.points, state: message.state }, ws);
 				break;
 			case "seed":
 			case "replace":

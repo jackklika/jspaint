@@ -86,7 +86,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
 	const blocks = snapshot_blocks();
 	const key = sidecar_key(session_id);
 	// Which page of which site this document is (so a reload can rejoin its live room and Save goes back there).
-	const site_page = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.site_page === "string" ? { site: load_settings().site, page: system_file_handle.site_page } : null;
+	const site_page = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.site_page === "string" ? { site: system_file_handle.guest?.site || load_settings().site, page: system_file_handle.site_page, guest: system_file_handle.guest || null } : null;
 	if (stickers.length === 0 && text_layers.length === 0 && blocks.length === 0 && !site_page) {
 		remove_layers_sidecar(session_id);
 		callback();
@@ -126,7 +126,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
  */
 async function restore_layers_sidecar(session_id) {
 	const key = sidecar_key(session_id);
-	/** @type {{ stickers?: any[], text_layers?: TextLayerSnapshot[], blocks?: BlockSnapshot[], site_page?: { site: string, page: string } | null } | null} */
+	/** @type {{ stickers?: any[], text_layers?: TextLayerSnapshot[], blocks?: BlockSnapshot[], site_page?: { site: string, page: string, guest?: { site: string, key: string } | null } | null } | null} */
 	let data = null;
 	try {
 		data = await with_store("readonly", (store) => store.get(key));
@@ -164,8 +164,8 @@ async function restore_layers_sidecar(session_id) {
 		current_history_node.blocks = snapshot_blocks();
 		current_history_node.stickers = snapshot_stickers();
 		current_history_node.text_layers = snapshot_text_layers();
-		if (data.site_page && data.site_page.page && data.site_page.site === load_settings().site) {
-			system_file_handle = { site_page: data.site_page.page };
+		if (data.site_page && data.site_page.page && (data.site_page.guest || data.site_page.site === load_settings().site)) {
+			system_file_handle = { site_page: data.site_page.page, ...(data.site_page.guest ? { guest: data.site_page.guest } : {}) };
 			file_name = data.site_page.page;
 			file_format = "text/html";
 			$G.triggerHandler("site-page-restored", [{ page: data.site_page.page }]);

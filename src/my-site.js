@@ -240,7 +240,8 @@ function new_site_page(path) {
  * @returns {Promise<boolean>}
  */
 async function save_page_to_site(path) {
-	if (!await ensure_signed_in()) { return false; }
+	const guest = system_file_handle && typeof system_file_handle === "object" ? system_file_handle.guest : null;
+	if (!guest && !await ensure_signed_in()) { return false; }
 	return show_publish_dialog({ auto: true, page: path });
 }
 

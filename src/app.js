@@ -27,6 +27,7 @@ import { init_live_session } from "./live-session.js";
 import { fit_page_width, init_page_scroll } from "./page-scroll.js";
 import { init_pan_joystick } from "./pan-joystick.js";
 import { init_quick_buttons } from "./quick-buttons.js";
+import { init_share } from "./share.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
@@ -519,7 +520,8 @@ window.$left = $left;
 const $right = $(E("div")).addClass("component-area right").appendTo($H);
 window.$right = $right;
 init_quick_buttons(); // Undo/Redo at the bottom right, next to the colors
-init_pan_joystick(); // joins them there on touch screens
+init_share(); // the Share button joins them; also joins a page from a share link
+init_pan_joystick(); // and the joystick, on touch screens
 
 
 // there's also probably a CSS solution alternative to this

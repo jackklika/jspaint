@@ -132,6 +132,29 @@ assert.equal(snapshot.doc.width, 640);
 assert.deepEqual(snapshot.doc.layers.blocks, []);
 assert.equal(snapshot.patches.length, 1);
 
+// Share keys: the owner mints one for a page; a guest joins that room with it, and only that room
+const invite = await (await fetch(`${editor}/api/sites/${site}/rooms/index.html/invite`, { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ days: 7 }) })).json();
+assert.match(invite.key, /^\d+\.[A-Za-z0-9_-]{16}$/, JSON.stringify(invite));
+assert.equal((await fetch(`${editor}/api/sites/${site}/rooms/index.html/invite`, { method: "POST" })).status, 401, "minting needs the secret");
+const guest = connect(`${ws_base}/api/sites/${site}/rooms/index.html?invite=${invite.key}`);
+assert.equal(await guest.opened, true, "a guest joins with the key");
+guest.send({ type: "hello", client_id: "ggg", name: "Guest", color: "#f58231" });
+snapshot = await guest.next("snapshot");
+assert.equal(snapshot.doc.width, 640);
+const other_room = connect(`${ws_base}/api/sites/${site}/rooms/about.html?invite=${invite.key}`);
+assert.equal(await other_room.opened, false, "the key is for one page");
+const tampered = connect(`${ws_base}/api/sites/${site}/rooms/index.html?invite=${invite.key.replace(/.$/, (c) => c === "A" ? "B" : "A")}`);
+assert.equal(await tampered.opened, false, "a tampered key is refused");
+// …and may save that page (and media), nothing else
+const guest_headers = { Authorization: `Invite ${invite.key}`, "X-Invite-Page": "index.html" };
+assert.equal((await fetch(`${editor}/api/sites/${site}/files`, { headers: guest_headers })).status, 200, "guests can list");
+assert.equal((await fetch(`${editor}/api/sites/${site}/files/index.html`, { method: "PUT", headers: { ...guest_headers, "Content-Type": "text/html" }, body: "<html><body><center><div class=\"collage\"></div></center></body></html>" })).status, 200, "guests save their page");
+assert.equal((await fetch(`${editor}/api/sites/${site}/files/other.html`, { method: "PUT", headers: { ...guest_headers, "Content-Type": "text/html" }, body: "<html><body></body></html>" })).status, 403, "…but not another page");
+assert.equal((await fetch(`${editor}/api/sites/${site}/files/index.html`, { method: "DELETE", headers: guest_headers })).status, 403, "…and can't delete");
+assert.equal((await fetch(`${editor}/api/sites/${site}/files/index.html`, { method: "DELETE", headers: { Authorization: `Bearer ${secret}` } })).status, 200);
+guest.ws.close();
+assert.equal((await a.next("leave")).client_id, "ggg");
+
 // Leaving is announced; bad messages get errors, not disconnects
 b.ws.close(1000, "bye");
 assert.equal((await a.next("leave")).client_id, "bbb");

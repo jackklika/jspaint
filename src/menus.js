@@ -17,6 +17,7 @@ import { is_gif_picker_open, toggle_gif_picker } from "./gif-picker.js";
 import { is_layers_window_open, toggle_layers_window } from "./layers-window.js";
 import { open_live_page, show_my_site_dialog, show_sign_in_dialog } from "./my-site.js";
 import { is_live_sync_enabled, set_live_sync_enabled } from "./live-session.js";
+import { show_share_dialog } from "./share.js";
 import { BLOCK_KINDS, add_block, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, reorder_block, show_block_html_dialog, show_block_properties_dialog } from "./blocks.js";
 import { show_page_properties_dialog } from "./page-properties.js";
 import { PHONE_WIDTH, fit_page_width, make_page_longer, make_page_shorter, set_page_width } from "./page-scroll.js";
@@ -132,6 +133,12 @@ const menus = {
 			speech_recognition: ["save to my site", "publish to my site", "put this on my site", "upload to my site", "save to the web", "publish page"],
 			action: () => { show_publish_dialog(); },
 			description: localize("Publishes this page (picture, elements, GIFs, text) on your site."),
+		},
+		{
+			label: localize("Sha&re Page..."),
+			speech_recognition: ["share", "share page", "share this page", "share link", "qr code", "invite someone", "invite a friend", "let someone join"],
+			action: () => { show_share_dialog(); },
+			description: localize("Shows a link and QR code anyone can use to draw on this page with you, right away."),
 		},
 		MENU_DIVIDER,
 		{

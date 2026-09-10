@@ -135,6 +135,14 @@ const TOOL_POLYGON = "TOOL_POLYGON";
 const TOOL_ELLIPSE = "TOOL_ELLIPSE";
 const TOOL_ROUNDED_RECTANGLE = "TOOL_ROUNDED_RECTANGLE";
 
+/**
+ * Builds a fresh set of tool objects. The app uses one set (`tools`); the live session builds another set per
+ * remote painter, so replaying their strokes with the real tool code never touches the local tools' state
+ * (mask canvases, shape previews, curve points) — see live-session.js.
+ * @returns {Tool[]}
+ */
+function create_tools() {
+/* eslint-disable @stylistic/indent -- the tool definitions keep their original indentation inside the factory */
 /** @type {Tool[]} */
 const tools = [{
 	id: TOOL_FREE_FORM_SELECT,
@@ -1594,12 +1602,18 @@ tools.forEach((tool) => {
 	}
 });
 
+return tools;
+/* eslint-enable @stylistic/indent */
+}
+
+/** @type {Tool[]} the app's tools */
+const tools = create_tools();
 
 export {
 	TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER,
 	TOOL_FILL, TOOL_FREE_FORM_SELECT, TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_LINE, TOOL_MAGNIFIER,
 	TOOL_PENCIL, TOOL_PICK_COLOR, TOOL_POINTER, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, TOOL_TEXT,
-	block_tool_id, tools
+	block_tool_id, create_tools, tools
 };
 // Temporary globals until all dependent code is converted to ES Modules
 window.TOOL_PENCIL = TOOL_PENCIL; // used by app-state.js

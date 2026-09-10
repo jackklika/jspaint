@@ -14,7 +14,7 @@ import { DEFAULT_EDITOR_URL } from "./site-constants.js";
 
 const SETTINGS_KEY = "jspaint site publish settings";
 
-/** @typedef {{ editor_url: string, site: string, page: string, secret: string, remember_secret: boolean }} PublishSettings */
+/** @typedef {{ editor_url: string, site: string, page: string, secret: string, remember_secret: boolean, invite?: { key: string, page: string } }} PublishSettings */
 
 /** @returns {PublishSettings} */
 function load_settings() {
@@ -44,9 +44,15 @@ function get_site_editor_url() {
 	return load_settings().editor_url.replace(/\/+$/, "");
 }
 
-/** Where the signed-in site's files can be read (public reads on the editor API), with a trailing slash; "" if no site. */
+/** The site this document belongs to: a guest's (from a share link) or the signed-in one. */
+function current_site() {
+	const guest = system_file_handle && typeof system_file_handle === "object" ? system_file_handle.guest : null;
+	return guest && guest.site ? guest.site : load_settings().site;
+}
+
+/** Where the current site's files can be read (public reads on the editor API), with a trailing slash; "" if no site. */
 function get_site_files_base() {
-	const { site } = load_settings();
+	const site = current_site();
 	return site ? `${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/` : "";
 }
 
@@ -75,7 +81,8 @@ const extension_for_type = (type) => ({ "image/gif": "gif", "image/png": "png", 
  */
 async function publish_collage(settings, log) {
 	const base = settings.editor_url.replace(/\/+$/, "");
-	const headers = { Authorization: `Bearer ${settings.secret}` };
+	// A guest (share link) saves with their key, scoped to their page; the owner with the edit secret.
+	const headers = settings.invite ? { Authorization: `Invite ${settings.invite.key}`, "X-Invite-Page": settings.invite.page } : { Authorization: `Bearer ${settings.secret}` };
 	const api = `${base}/api/sites/${encodeURIComponent(settings.site)}/files`;
 	const page_base = settings.page.replace(/\.html?$/i, "") || "index";
 
@@ -92,8 +99,8 @@ async function publish_collage(settings, log) {
 	// Check the secret first so a typo fails fast, before any uploads; the listing tells us which
 	// hashed assets are already there (one request, and no 404 noise in the console).
 	const listing = await fetch(api, { headers });
-	if (listing.status === 401) {
-		throw new Error("The edit secret was rejected.");
+	if (listing.status === 401 || listing.status === 403) {
+		throw new Error(settings.invite ? "This share link has expired or doesn't cover this page." : "The edit secret was rejected.");
 	}
 	if (!listing.ok) {
 		throw new Error(`Couldn't reach the editor at ${base} (HTTP ${listing.status}).`);
@@ -122,7 +129,7 @@ async function publish_collage(settings, log) {
 	const result = await upload(`${page_base}.html`, html, "text/html");
 	log(`Saved ${page_base}.html — ${uploaded} asset${uploaded === 1 ? "" : "s"} uploaded, ${reused} reused.`);
 	// The document now lives on the site: Ctrl+S saves it back there (functions.js file_save).
-	system_file_handle = { site_page: `${page_base}.html` };
+	system_file_handle = { site_page: `${page_base}.html`, ...(settings.invite ? { guest: { site: settings.site, key: settings.invite.key } } : {}) };
 	file_name = `${page_base}.html`;
 	file_format = HTML_FORMAT_ID;
 	saved = true;
@@ -140,6 +147,11 @@ async function publish_collage(settings, log) {
 function show_publish_dialog({ auto = false, page } = {}) {
 	const settings = load_settings();
 	if (page) { settings.page = page; } else if (system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page) { settings.page = system_file_handle.site_page; }
+	const guest = system_file_handle && typeof system_file_handle === "object" && system_file_handle.guest ? system_file_handle.guest : null;
+	if (guest) {
+		settings.site = guest.site;
+		settings.invite = { key: guest.key, page: settings.page };
+	}
 	const $w = $DialogWindow(localize("Save to My Site"));
 	$w.addClass("site-publish-window squish");
 	const $main = $w.$main;
@@ -163,6 +175,13 @@ function show_publish_dialog({ auto = false, page } = {}) {
 	const $remember = $(E("input")).attr({ type: "checkbox", id: "site-publish-remember" }).prop("checked", settings.remember_secret).appendTo($remember_row);
 	$(E("label")).attr({ for: "site-publish-remember" }).text(` ${localize("Remember the secret on this computer")}`).appendTo($remember_row);
 	const $editor_url = field(localize("Editor URL: "), "editor_url");
+	if (guest) {
+		// Guests save with their share link's key, to the page it covers: nothing to fill in.
+		for (const $input of [$site, $page, $secret, $editor_url]) { $input.prop("disabled", true); }
+		$secret.closest(".site-publish-row").hide();
+		$remember_row.hide();
+		$(E("div")).addClass("site-publish-row").text(localize("You're editing this page with a share link; Save publishes it for everyone.")).appendTo($main);
+	}
 	const $log = $(E("div")).addClass("site-publish-log inset-deep").appendTo($main);
 	const log = (/** @type {string} */ line) => {
 		$(E("div")).text(line).appendTo($log);
@@ -197,12 +216,17 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			$page.focus();
 			return;
 		}
-		if (!current.secret) {
+		if (!current.secret && !guest) {
 			log("The edit secret is needed to save.");
 			$secret.focus();
 			return;
 		}
-		save_settings(current);
+		if (guest) {
+			current.site = guest.site;
+			current.invite = { key: guest.key, page: current.page };
+		} else {
+			save_settings(current);
+		}
 		$save.prop("disabled", true);
 		$log.empty();
 		log("Saving…");
@@ -223,7 +247,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 	$w.$content.css({ width: "min(460px, 90vw)" });
 	$w.center();
 	($site.val() ? $secret : $site).focus();
-	if (auto && settings.site && settings.secret) {
+	if (auto && settings.site && (settings.secret || guest)) {
 		$save.trigger("click");
 	}
 	return result_promise;
@@ -255,4 +279,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog };
+export { current_site, get_site_editor_url, get_site_files_base, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog };

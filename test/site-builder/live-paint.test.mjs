@@ -88,6 +88,46 @@ await alice.waitForFunction(() => main_ctx.getImageData(530, 450, 1, 1).data.joi
 assert.equal(await pixel(alice, 530, 450), await pixel(bob, 530, 450));
 assert.equal(await alice.evaluate(() => { const d = root_history_node.image_data; return [...d.data.slice((450 * d.width + 530) * 4, (450 * d.width + 530) * 4 + 4)].join(","); }), await pixel(bob, 530, 450), "remote strokes are rebased into Alice's undo tree");
 
+// A stroke in progress: while Bob holds the brush down, Alice sees his stroke on a preview overlay (drawn by her
+// copy of his Brush tool), his cursor shows as painting, and her picture is untouched until he lets go
+const overlay_ink = (page) => page.evaluate(() => {
+	const canvas = document.querySelector(".remote-stroke-layer canvas");
+	if (!canvas) { return -1; }
+	const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+	let count = 0;
+	for (let i = 3; i < data.length; i += 4) { if (data[i] > 0) { count++; } }
+	return count;
+});
+await bob.mouse.move(bc.x + 100, bc.y + 520);
+await bob.mouse.down();
+await bob.mouse.move(bc.x + 300, bc.y + 520, { steps: 8 });
+const overlay_has_ink = () => {
+	const c = document.querySelector(".remote-stroke-layer canvas");
+	if (!c) { return false; }
+	const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+	for (let i = 3; i < d.length; i += 4) {
+		if (d[i] > 0) { return true; }
+	}
+	return false;
+};
+await alice.waitForFunction(overlay_has_ink, null, { timeout: 15000 });
+assert.ok((await overlay_ink(alice)) > 200, "Alice previews Bob's stroke in progress");
+assert.equal(await pixel(alice, 200, 520), "255,255,255,255", "…but her picture is still untouched");
+assert.equal(await alice.evaluate(() => document.querySelector(".live-cursor")?.classList.contains("painting")), true, "Bob's cursor shows as painting");
+await bob.mouse.up();
+await alice.waitForFunction(() => main_ctx.getImageData(200, 520, 1, 1).data.join(",") !== "255,255,255,255", null, { timeout: 15000 });
+const overlay_is_clear = () => {
+	const c = document.querySelector(".remote-stroke-layer canvas");
+	const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+	for (let i = 3; i < d.length; i += 4) {
+		if (d[i] > 0) { return false; }
+	}
+	return true;
+};
+await alice.waitForFunction(overlay_is_clear, null, { timeout: 15000 });
+assert.equal(await pixel(alice, 200, 520), await pixel(bob, 200, 520), "the finished stroke replaced the preview");
+assert.equal(await bob.evaluate(() => current_history_node.name), "Brush", "Bob's own history is the ordinary Brush step");
+
 // Bob moves the marquee with the Pointer tool → Alice sees the new position; Bob undoes → Alice sees it back
 await select_tool(bob, "Pointer");
 const marquee = await (await bob.$('.block-layer[data-tag="marquee"] .block-content')).boundingBox();
@@ -119,15 +159,42 @@ await bob.waitForFunction(() => !document.querySelector('.block-layer[data-tag="
 await alice.mouse.move(ac.x + 200, ac.y + 200);
 await bob.waitForFunction(() => [...document.querySelectorAll(".live-cursor-name")].some((el) => /Alice/.test(el.textContent)), null, { timeout: 15000 });
 
-// A late joiner (Cid) gets the merged document: two blocks, Bob's stroke
-const cid = await open_signed_in("Cid");
-await click_menu_item(cid, "My Site...");
-await cid.waitForSelector(".my-site-window .my-site-row", { timeout: 15000 });
-await cid.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((row) => row.querySelector(".my-site-name").textContent === "about.html").dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+// Alice shares the page: File › Share Page… shows a link and a QR code
+await click_menu_item(alice, "Share Page...");
+await alice.waitForSelector(".share-window input[readonly]", { timeout: 10000 });
+await alice.waitForFunction(() => /#join:/.test(document.querySelector(".share-window input[readonly]")?.value || ""), null, { timeout: 15000 });
+const share_link = await alice.$eval(".share-window input[readonly]", (el) => el.value);
+assert.match(share_link, new RegExp(`#join:${site}/about\\.html/\\d+\\.[A-Za-z0-9_-]{16}$`), share_link);
+assert.equal(await alice.evaluate(() => document.querySelector(".share-window .share-qr canvas") !== null), true, "a QR code is drawn");
+await alice.evaluate(() => [...document.querySelectorAll(".share-window button")].find((b) => b.textContent === "Close").click());
+
+// Cid opens the link with no sign-in at all: a guest, straight into the room with the merged document
+const cid_context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+const cid = await cid_context.newPage();
+cid.on("pageerror", (e) => errors.push(`Cid pageerror: ${e.message}`));
+cid.on("console", (m) => { if (m.type() === "error") { errors.push(`Cid console: ${m.text().slice(0, 200)}`); } });
+// (No site, no secret — only where the editor is, since this test's Paint isn't served by the editor Worker.)
+await cid.addInitScript(([editor]) => {
+	localStorage.setItem("jspaint live name", "Cid");
+	localStorage.setItem("jspaint site publish settings", JSON.stringify({ editor_url: editor }));
+}, [editor]);
+await cid.goto(share_link.replace(/^https?:\/\/[^/]+\//, paint_url), { waitUntil: "domcontentloaded", timeout: 60000 });
+await cid.waitForSelector(".main-canvas", { timeout: 60000 });
 await wait_live(cid, 2);
+assert.deepEqual((await live(cid)).room, { site, page: "about.html" });
+assert.equal(await cid.evaluate(() => system_file_handle.guest.site), site);
 await cid.waitForFunction((expected) => JSON.stringify((current_history_node.blocks || []).map((b) => `${b.id}:${b.tag}@${b.x},${b.y}`)) === JSON.stringify(expected), await blocks(alice), { timeout: 20000 });
 await cid.waitForFunction(() => main_ctx.getImageData(530, 450, 1, 1).data.join(",") !== "255,255,255,255", null, { timeout: 20000 });
 assert.match(await cid.evaluate(() => document.querySelector('.block-layer[data-tag="h1"] .block-el').textContent), /edited live/);
+assert.equal(await cid.evaluate(() => $(".share-button").is(":visible")), true, "guests see the Share button too");
+
+// The guest saves with Ctrl+S: the share key publishes that page (and nothing else)
+await cid.keyboard.press("Control+s");
+await cid.waitForFunction(() => /Done!|Couldn't|rejected|expired/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
+assert.match(await cid.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
+const published = await (await fetch(`${process.env.SITE_BUILDER_SITES_URL}/~${site}/about.html`)).text();
+assert.match(published, /edited live/, "the guest's save is live on the site");
+assert.match(published, /<marquee/, "with everyone's elements");
 
 // Clean up
 const headers = { Authorization: `Bearer ${secret}` };

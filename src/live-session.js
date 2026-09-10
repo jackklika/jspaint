@@ -1,7 +1,7 @@
 // @ts-check
 // eslint-disable-next-line no-unused-vars
-/* global saved:writable */
-/* global $canvas, $canvas_area, $status_area, localize, magnification, main_canvas, main_ctx, root_history_node, selected_tool, system_file_handle, transparency */
+/* global saved:writable, pointer:writable, pointer_previous:writable, pointer_start:writable, pointer_active:writable, pointer_over_canvas:writable, button:writable, reverse:writable, shift:writable, ctrl:writable, stroke_size:writable, brush_size:writable, brush_shape:writable, eraser_size:writable, airbrush_size:writable, pencil_size:writable, stroke_color:writable, fill_color:writable, selected_colors:writable, tool_transparent_mode:writable */
+/* global $canvas, $canvas_area, $status_area, localize, magnification, main_canvas, main_ctx, root_history_node, selected_tool, system_file_handle, transparency, update_fill_and_stroke_colors_and_lineWidth */
 // Live sync: while you edit a page of your site, Paint is connected to that page's room — a Durable Object on
 // the editor Worker (worker/editor/page-room.js) that holds the live draft and relays changes to everyone
 // editing the same page. Local changes are found by diffing the document after each history change: the
@@ -17,6 +17,7 @@ import { get_page_properties, set_page_properties } from "./page-properties.js";
 import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings } from "./site-publish.js";
 import { get_selected_sticker, get_sticker_source, order_stickers, register_sticker_source, remove_sticker_by_id, snapshot_stickers, upsert_sticker_from_snapshot } from "./stickers.js";
 import { get_selected_text_layer, order_text_layers, remove_text_layer_by_id, snapshot_text_layers, upsert_text_layer_from_snapshot } from "./text-layers.js";
+import { create_tools } from "./tools.js";
 
 const ENABLED_KEY = "jspaint live sync";
 const NAME_KEY = "jspaint live name";
@@ -33,7 +34,7 @@ const KINDS = /** @type {const} */ (["blocks", "stickers", "text_layers"]);
 
 /** @type {WebSocket | null} */
 let socket = null;
-/** @type {{ site: string, page: string, authoritative: boolean } | null} */
+/** @type {{ site: string, page: string, authoritative: boolean, guest: boolean } | null} */
 let room = null;
 let connected = false;
 let version = 0;
@@ -130,17 +131,24 @@ function join_current_page() {
  * @param {boolean} authoritative
  */
 function join_page_room(page, authoritative) {
-	if (!is_live_sync_enabled() || !is_signed_in()) { return; }
-	const { site, secret } = load_settings();
+	if (!is_live_sync_enabled()) { return; }
+	// A guest (share link) joins with their key; the owner with the edit secret.
+	const guest = system_file_handle && typeof system_file_handle === "object" && system_file_handle.guest ? system_file_handle.guest : null;
+	if (!guest && !is_signed_in()) { return; }
+	const site = guest ? guest.site : load_settings().site;
 	if (room && room.site === site && room.page === page && socket && socket.readyState <= WebSocket.OPEN) {
-		if (authoritative && connected) { replace_room_document(); }
+		if (authoritative && connected && !guest) { replace_room_document(); }
 		return;
 	}
 	leave_page_room();
-	room = { site, page, authoritative };
+	room = { site, page, authoritative: authoritative && !guest, guest: !!guest };
 	const url = new URL(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/rooms/${encodeURIComponent(page)}`);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-	url.searchParams.set("token", secret);
+	if (guest) {
+		url.searchParams.set("invite", guest.key);
+	} else {
+		url.searchParams.set("token", load_settings().secret);
+	}
 	set_status("connecting");
 	try {
 		socket = new WebSocket(url.href);
@@ -169,7 +177,7 @@ function join_page_room(page, authoritative) {
 		clear_remote_clients();
 		if (!room) { return; }
 		if (event.code === 1008 || event.code === 4401) {
-			set_status("error", localize("The room refused the edit secret."));
+			set_status("error", room.guest ? localize("This share link has expired.") : localize("The room refused the edit secret."));
 			return;
 		}
 		// Reconnect with backoff; the room sends a fresh snapshot on hello.
@@ -234,10 +242,13 @@ function handle_message(message) {
 			version = message.version;
 			remote_clients.clear();
 			for (const client of message.clients || []) { remote_clients.set(client.client_id, client); }
-			if (message.version === 0 || room?.authoritative) {
-				// Nothing there yet (or we're the authority): the room takes our document.
+			if ((message.version === 0 && !room?.guest) || room?.authoritative) {
+				// Nothing there yet (or we're the authority): the room takes our document. Guests never seed.
 				if (room) { room.authoritative = false; }
 				replace_room_document(message.version === 0);
+			} else if (message.version === 0) {
+				set_status("live", localize("This page has nothing in it yet."));
+				remember_current_as_sent();
 			} else {
 				remote_queue = remote_queue.then(() => apply_snapshot(message)).catch((error) => { window.console?.warn("live sync: snapshot failed", error); });
 			}
@@ -257,7 +268,10 @@ function handle_message(message) {
 			break;
 		case "bitmap":
 			version = message.version;
-			remote_queue = remote_queue.then(() => apply_remote_bitmap(message)).catch((error) => { window.console?.warn("live sync: bitmap failed", error); });
+			remote_queue = remote_queue.then(() => apply_remote_bitmap(message)).then(() => { finish_remote_stroke(message.client_id); }).catch((error) => { window.console?.warn("live sync: bitmap failed", error); });
+			break;
+		case "stroke":
+			apply_remote_stroke(message);
 			break;
 		case "props":
 			version = message.version;
@@ -273,6 +287,7 @@ function handle_message(message) {
 			break;
 		case "leave":
 			remove_remote_client(message.client_id);
+			remove_remote_painter(message.client_id);
 			set_status("live");
 			break;
 		case "request_snapshot":
@@ -784,6 +799,7 @@ function render_remote_cursor(client) {
 		$(E("span")).addClass("live-cursor-name").appendTo(client.$cursor);
 	}
 	client.$cursor.find(".live-cursor-name").text(client.tool ? `${client.name} · ${client.tool}` : client.name);
+	client.$cursor.toggleClass("painting", !!remote_painters.get(client.client_id)?.active);
 	position_remote_cursor(client);
 }
 
@@ -805,6 +821,249 @@ function remove_remote_client(id) {
 
 function clear_remote_clients() {
 	for (const id of [...remote_clients.keys()]) { remove_remote_client(id); }
+	for (const id of [...remote_painters.keys()]) { remove_remote_painter(id); }
+}
+
+// ---- strokes in progress: what someone is painting right now, before it lands as a patch ----
+//
+// Sender: while a paint tool is down, the processed pointer positions go out ~30 times a second as `stroke`
+// messages (start / move / end / cancel). Receiver: each remote painter gets its own set of tool objects
+// (create_tools) and its own overlay canvas; the stroke is replayed through the real tool code — pointerdown,
+// paint, and the tool's own preview drawing — with the paint globals (pointer, sizes, colors…) swapped in for
+// the duration of each synchronous step, so the local tools and the local stroke are never touched. Nothing
+// ever hits the real canvas or the history here; when the painter's finished stroke arrives as a bitmap patch,
+// the overlay clears. Tools that would change the document from pointerdown (Fill, selections, Text…) aren't replayed.
+
+const STROKE_TOOLS = new Set(["TOOL_PENCIL", "TOOL_BRUSH", "TOOL_AIRBRUSH", "TOOL_ERASER", "TOOL_LINE", "TOOL_RECTANGLE", "TOOL_ROUNDED_RECTANGLE", "TOOL_ELLIPSE", "TOOL_CURVE"]);
+const MULTI_STEP_TOOLS = new Set(["TOOL_CURVE"]); // stay previewed across clicks until the finished patch arrives
+const STROKE_SEND_INTERVAL_MS = 33;
+const STROKE_CLEAR_AFTER_END_MS = 2500; // in case the stroke changed nothing (no patch will come)
+
+/**
+ * @typedef {object} RemotePainter
+ * @property {Tool[]} tools
+ * @property {Tool | null} tool
+ * @property {any} state - sizes and colors the painter is using
+ * @property {number} button
+ * @property {{ x: number, y: number }} pointer
+ * @property {{ x: number, y: number }} previous
+ * @property {{ x: number, y: number }} start
+ * @property {boolean} active
+ * @property {PixelCanvas} overlay
+ * @property {JQuery<HTMLElement>} $el
+ * @property {ReturnType<typeof setTimeout> | null} clear_timer
+ */
+/** @type {Map<string, RemotePainter>} by client id */
+const remote_painters = new Map();
+
+/** @type {{ id: string, pending: { x: number, y: number }[], timer: number, last: { x: number, y: number } | null } | null} */
+let local_stroke = null;
+
+/** @param {string} client_id_ */
+function get_remote_painter(client_id_) {
+	let painter = remote_painters.get(client_id_);
+	if (!painter) {
+		const $el = $(E("div")).addClass("remote-stroke-layer").insertAfter($canvas);
+		const overlay = make_canvas(main_canvas.width, main_canvas.height);
+		$el.append(overlay);
+		painter = { tools: create_tools(), tool: null, state: null, button: 0, pointer: { x: 0, y: 0 }, previous: { x: 0, y: 0 }, start: { x: 0, y: 0 }, active: false, overlay, $el, clear_timer: null };
+		remote_painters.set(client_id_, painter);
+		position_remote_overlay(painter);
+	}
+	return painter;
+}
+
+/** @param {RemotePainter} painter */
+function position_remote_overlay(painter) {
+	if (painter.overlay.width !== main_canvas.width || painter.overlay.height !== main_canvas.height) {
+		painter.overlay.width = main_canvas.width;
+		painter.overlay.height = main_canvas.height;
+	}
+	painter.$el.css({
+		left: parseFloat($canvas_area.css("padding-left")),
+		top: parseFloat($canvas_area.css("padding-top")),
+		width: magnification * main_canvas.width,
+		height: magnification * main_canvas.height,
+	});
+}
+
+/** @param {string} client_id_ */
+function remove_remote_painter(client_id_) {
+	const painter = remote_painters.get(client_id_);
+	if (!painter) { return; }
+	if (painter.clear_timer) { clearTimeout(painter.clear_timer); }
+	painter.$el.remove();
+	remote_painters.delete(client_id_);
+}
+
+/**
+ * Runs `fn` with the paint globals set to the remote painter's, then puts everything back. Synchronous only.
+ * @param {RemotePainter} painter
+ * @param {() => void} fn
+ */
+function with_painter_globals(painter, fn) {
+	const saved_globals = { pointer, pointer_previous, pointer_start, pointer_active, pointer_over_canvas, button, reverse, shift, ctrl, stroke_size, brush_size, brush_shape, eraser_size, airbrush_size, pencil_size, stroke_color, fill_color, selected_colors, tool_transparent_mode };
+	const saved_ctx = { fillStyle: main_ctx.fillStyle, strokeStyle: main_ctx.strokeStyle, lineWidth: main_ctx.lineWidth };
+	const saved_status = /** @type {any} */ (window).$status_size;
+	const state = painter.state || {};
+	pointer = painter.pointer;
+	pointer_previous = painter.previous;
+	pointer_start = painter.start;
+	pointer_active = true;
+	pointer_over_canvas = true;
+	button = painter.button;
+	reverse = painter.button === 2;
+	shift = false;
+	ctrl = false;
+	stroke_size = state.stroke_size || 1;
+	brush_size = state.brush_size || 4;
+	brush_shape = state.brush_shape || "circle";
+	eraser_size = state.eraser_size || 8;
+	airbrush_size = state.airbrush_size || 9;
+	pencil_size = state.pencil_size || 1;
+	selected_colors = { foreground: state.foreground || "#000000", background: state.background || "#ffffff", ternary: state.ternary || "" };
+	tool_transparent_mode = !!state.tool_transparent_mode;
+	/** @type {any} */ (window).$status_size = { text() {} }; // the tools report sizes to the status bar; not for someone else's stroke
+	try {
+		if (painter.tool) { update_fill_and_stroke_colors_and_lineWidth(painter.tool); }
+		fn();
+	} finally {
+		({ pointer, pointer_previous, pointer_start, pointer_active, pointer_over_canvas, button, reverse, shift, ctrl, stroke_size, brush_size, brush_shape, eraser_size, airbrush_size, pencil_size, stroke_color, fill_color, selected_colors, tool_transparent_mode } = saved_globals);
+		main_ctx.fillStyle = saved_ctx.fillStyle;
+		main_ctx.strokeStyle = saved_ctx.strokeStyle;
+		main_ctx.lineWidth = saved_ctx.lineWidth;
+		/** @type {any} */ (window).$status_size = saved_status;
+	}
+}
+
+/** Draws the painter's tool preview (its own mask/shape/curve so far) onto the painter's overlay. */
+function render_remote_painter(painter) {
+	const ctx = painter.overlay.ctx;
+	ctx.clearRect(0, 0, painter.overlay.width, painter.overlay.height);
+	const tool = painter.tool;
+	if (!tool) { return; }
+	with_painter_globals(painter, () => {
+		for (const draw of [tool.drawPreviewUnderGrid, tool.drawPreviewAboveGrid]) {
+			if (!draw) { continue; }
+			ctx.save();
+			try {
+				draw.call(tool, ctx, painter.pointer.x, painter.pointer.y, false, 1, 0, 0);
+			} catch (error) {
+				window.console?.warn("live sync: remote preview failed", error);
+			}
+			ctx.restore();
+		}
+	});
+}
+
+/** Forgets the stroke in progress (after its patch arrived, or it was canceled). @param {RemotePainter} painter */
+function reset_remote_painter(painter) {
+	if (painter.clear_timer) { clearTimeout(painter.clear_timer); painter.clear_timer = null; }
+	if (painter.tool) {
+		with_painter_globals(painter, () => { painter.tool.cancel?.(); });
+	}
+	painter.active = false;
+	painter.overlay.ctx.clearRect(0, 0, painter.overlay.width, painter.overlay.height);
+	const client = remote_clients.get([...remote_painters].find(([, p]) => p === painter)?.[0] || "");
+	if (client) { render_remote_cursor(client); }
+}
+
+/** The painter's finished stroke landed as a patch: the preview has done its job. @param {string} client_id_ */
+function finish_remote_stroke(client_id_) {
+	const painter = remote_painters.get(client_id_);
+	if (painter && (!painter.active || !painter.tool || !MULTI_STEP_TOOLS.has(painter.tool.id))) {
+		reset_remote_painter(painter);
+	}
+}
+
+/** @param {any} message */
+function apply_remote_stroke(message) {
+	const painter = get_remote_painter(message.client_id);
+	const client = remote_clients.get(message.client_id);
+	position_remote_overlay(painter);
+	if (message.phase === "start") {
+		if (painter.tool && painter.tool.id !== message.tool) { reset_remote_painter(painter); }
+		if (painter.clear_timer) { clearTimeout(painter.clear_timer); painter.clear_timer = null; }
+		painter.tool = STROKE_TOOLS.has(message.tool) ? painter.tools.find((tool) => tool.id === message.tool) || null : null;
+		if (!painter.tool) { return; }
+		painter.state = message.state || {};
+		painter.button = message.button === 2 ? 2 : 0;
+		painter.start = painter.previous = painter.pointer = { x: Number(message.x) || 0, y: Number(message.y) || 0 };
+		painter.active = true;
+		with_painter_globals(painter, () => {
+			painter.tool.pointerdown?.(main_ctx, painter.pointer.x, painter.pointer.y);
+			painter.tool.paint?.(main_ctx, painter.pointer.x, painter.pointer.y);
+		});
+		render_remote_painter(painter);
+	} else if (message.phase === "move") {
+		if (!painter.tool || !painter.active) { return; }
+		for (const point of message.points || []) {
+			painter.previous = painter.pointer;
+			painter.pointer = { x: Number(point.x) || 0, y: Number(point.y) || 0 };
+			with_painter_globals(painter, () => { painter.tool.paint?.(main_ctx, painter.pointer.x, painter.pointer.y); });
+		}
+		render_remote_painter(painter);
+	} else if (message.phase === "end") {
+		painter.active = false;
+		if (painter.tool && !MULTI_STEP_TOOLS.has(painter.tool.id)) {
+			painter.clear_timer = setTimeout(() => { reset_remote_painter(painter); }, STROKE_CLEAR_AFTER_END_MS);
+		}
+	} else if (message.phase === "cancel") {
+		reset_remote_painter(painter);
+	}
+	if (client) {
+		if (message.phase === "start" || message.phase === "move") { client.cursor = { ...painter.pointer }; }
+		render_remote_cursor(client);
+	}
+}
+
+/**
+ * The local painter: a paint tool went down on the canvas. Streams the stroke until pointerup.
+ * @param {JQuery.TriggeredEvent} e
+ */
+function begin_local_stroke(e) {
+	if (!connected || !selected_tool || !STROKE_TOOLS.has(selected_tool.id) || (e.button !== 0 && e.button !== 2)) { return; }
+	const start = to_canvas_coords(e);
+	const id = `${client_id()}-${Date.now().toString(36)}`;
+	const color = (/** @type {string | CanvasPattern} */ c) => typeof c === "string" ? c : "#000000";
+	send({
+		type: "stroke",
+		id,
+		phase: "start",
+		tool: selected_tool.id,
+		button: e.button,
+		x: start.x,
+		y: start.y,
+		state: { stroke_size, brush_size, brush_shape, eraser_size, airbrush_size, pencil_size, foreground: color(selected_colors.foreground), background: color(selected_colors.background), ternary: color(selected_colors.ternary), tool_transparent_mode },
+	});
+	const stroke = local_stroke = { id, pending: [], timer: 0, last: start };
+	const flush = () => {
+		stroke.timer = 0;
+		if (stroke.pending.length && local_stroke === stroke) {
+			send({ type: "stroke", id, phase: "move", points: stroke.pending.splice(0, 64) });
+			if (stroke.pending.length) { stroke.timer = window.setTimeout(flush, STROKE_SEND_INTERVAL_MS); }
+		}
+	};
+	const on_move = () => {
+		// The app's own pointermove handler ran first (it was attached earlier), so `pointer` is the processed position.
+		if (local_stroke !== stroke || !pointer) { return; }
+		if (stroke.last && stroke.last.x === pointer.x && stroke.last.y === pointer.y) { return; }
+		stroke.last = { x: pointer.x, y: pointer.y };
+		stroke.pending.push(stroke.last);
+		if (!stroke.timer) { stroke.timer = window.setTimeout(flush, STROKE_SEND_INTERVAL_MS); }
+	};
+	// Attach after the app's handlers (they attach during this same pointerdown), so ours sees the processed pointer.
+	setTimeout(() => {
+		if (local_stroke !== stroke) { return; }
+		$G.on("pointermove", on_move);
+		$G.one("pointerup pointercancel", (_event, canceling) => {
+			$G.off("pointermove", on_move);
+			if (stroke.timer) { clearTimeout(stroke.timer); }
+			if (stroke.pending.length) { send({ type: "stroke", id, phase: "move", points: stroke.pending.splice(0, 64) }); }
+			send({ type: "stroke", id, phase: canceling ? "cancel" : "end" });
+			if (local_stroke === stroke) { local_stroke = null; }
+		});
+	}, 0);
 }
 
 function reapply_remote_locks() {
@@ -839,7 +1098,12 @@ function init_live_session() {
 	$G.on("layers-changed block-editing-changed", () => { send_presence(); reapply_remote_locks(); });
 	$G.on("site-page-opened", (_event, detail) => { join_page_room(detail.page, !!detail.authoritative); });
 	$G.on("site-page-restored", (_event, detail) => { join_page_room(detail.page, false); });
-	$G.on("resize theme-load", () => { for (const client of remote_clients.values()) { position_remote_cursor(client); } });
+	$G.on("resize theme-load", () => {
+		for (const client of remote_clients.values()) { position_remote_cursor(client); }
+		for (const painter of remote_painters.values()) { position_remote_overlay(painter); }
+	});
+	$canvas_area.on("resize", () => { for (const painter of remote_painters.values()) { position_remote_overlay(painter); } });
+	$canvas.on("pointerdown", (e) => { begin_local_stroke(e); });
 	$canvas.on("pointermove", (e) => {
 		my_cursor = to_canvas_coords(e);
 		send_presence();
@@ -877,6 +1141,21 @@ function init_live_session() {
 			border-right: 6px solid transparent;
 			border-bottom: 12px solid transparent;
 			border-top: 6px solid var(--live-color);
+		}
+		.remote-stroke-layer {
+			position: absolute;
+			z-index: 2; /* over the picture, under the elements */
+			pointer-events: none;
+		}
+		.remote-stroke-layer > canvas {
+			display: block;
+			width: 100%;
+			height: 100%;
+			image-rendering: pixelated;
+		}
+		.live-cursor.painting .live-cursor-arrow {
+			border-left-color: #000;
+			border-top-color: #000;
 		}
 		.live-cursor-name {
 			position: absolute;

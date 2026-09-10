@@ -185,6 +185,7 @@ User pages are user-authored HTML. They are served by a **separate, deliberately
 - **Sanitize on save** in the editor Worker: raw HTML blocks lose `<script>`, `on*=` handlers, `javascript:`/`data:text/html` URLs, `<iframe>`/`<object>`/`<embed>`; `<x-*>` attributes are validated against the registry; guestbook entries are plain text. Sanitize again at serve time (defense in depth; the serve-time pass is cheap).
 - **Uploads**: allow-list by magic bytes (gif/png/jpg/webp/mp3/mid/wav), size caps, per-site quota; served with `Content-Type` fixed from the sniffed type and `X-Content-Type-Options: nosniff`.
 - **Dynamic actions** (`POST /~name/x/guestbook`) go to the sandbox Worker → DO with rate limits per IP; the editor never proxies user-page traffic.
+- **Share links** grant one page, not the site: the key is an HMAC (site, page, expiry) under the edit secret, verified statelessly; a guest can join that page's room and write that page, its bitmap, and hashed media — never delete, never other pages. The secret itself never leaves the owner.
 
 ## 10. Phased plan
 
