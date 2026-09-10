@@ -24,11 +24,10 @@
 	],
 	"vars": {
 		"EDITOR_URL": "https://coolpaint.world",
-		"SITES_URL": "https://sites.coolpaint.world",
-		// Set POSTHOG_API_KEY to a PostHog project's client key (phc_… — the public one) to instrument
-		// every served page: visits, session length, and errors (worker/shared/analytics.js).
-		// POSTHOG_HOST only for non-US clouds, e.g. https://eu.i.posthog.com.
-		"POSTHOG_API_KEY": "",
-		"POSTHOG_HOST": ""
+		"SITES_URL": "https://sites.coolpaint.world"
+		// POSTHOG_API_KEY (a PostHog client key, phc_…) lives in a *secret*, not here — set it with
+		// `wrangler secret put POSTHOG_API_KEY -c sites/wrangler.jsonc` or a dashboard Secret.
+		// (Plain dashboard variables are wiped by deploys; secrets survive.) POSTHOG_HOST likewise,
+		// only for non-US clouds (e.g. https://eu.i.posthog.com).
 	}
 }

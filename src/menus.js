@@ -3,8 +3,6 @@
 /* global $canvas_area, $colorbox, $status_area, $toolbox, available_languages, get_iso_language_name, get_language, get_language_emoji, get_language_endonym, localize, magnification, main_canvas, menu_bar, MENU_DIVIDER, redos, selection, set_language, show_grid, show_thumbnail, systemHooks, textbox, undos */
 // import { available_languages, get_iso_language_name, get_language, get_language_emoji, get_language_endonym, localize, set_language } from "./app-localization.js";
 import { OnCanvasTextBox } from "./OnCanvasTextBox.js";
-import { is_agent_window_open, publish_site, save_iteration, toggle_agent_window } from "./agent-drive.js";
-import { is_code_agent_window_open, toggle_code_agent_window } from "./dev-chat.js";
 import { show_edit_colors_window } from "./edit-colors.js";
 import { palette_formats } from "./file-format-data.js";
 import { are_you_sure, change_url_param, choose_file_to_paste, clear, delete_selection, deselect, edit_copy, edit_cut, edit_paste, file_load_from_url, file_new, file_open, file_print, file_save, file_save_as, image_attributes, image_flip_and_rotate, image_invert_colors, image_stretch_and_skew, redo, render_history_as_gif, sanity_check_blob, save_selection_to_file, select_all, set_magnification, show_about_paint, show_custom_zoom_window, show_document_history, show_file_format_errors, show_multi_user_setup_dialog, show_news, toggle_grid, toggle_thumbnail, undo, view_bitmap } from "./functions.js";
@@ -197,27 +195,6 @@ const menus = {
 				});
 			},
 			description: localize("Uploads the active document to Imgur"),
-		},
-		MENU_DIVIDER,
-		{
-			label: localize("Save &Iteration to Agent"),
-			...shortcut("Ctrl+Alt+I"),
-			speech_recognition: [
-				"save iteration", "send to agent", "send iteration to agent", "save iteration to agent",
-				"send drawing to agent", "send the drawing to the agent", "update the website", "update the site",
-			],
-			action: () => { save_iteration(); },
-			description: localize("Sends the drawing to the agent server to update the website."),
-		},
-		{
-			label: localize("Pu&blish to Web"),
-			...shortcut("Ctrl+Alt+P"),
-			speech_recognition: [
-				"publish", "publish to web", "publish to the web", "publish the website", "publish the site", "publish site",
-				"deploy", "deploy the website", "deploy the site", "push the code", "push to github",
-			],
-			action: () => { publish_site(); },
-			description: localize("Commits and pushes the website so the deploy workflow publishes it."),
 		},
 		MENU_DIVIDER,
 		{
@@ -1191,32 +1168,6 @@ const menus = {
 		// 	},
 		// 	description: localize("Configures JS Paint."),
 		// }
-		{
-			emoji_icon: "🤖",
-			label: localize("&Agent Window"),
-			speech_recognition: [
-				"agent window", "show agent window", "hide agent window", "toggle agent window", "open agent window", "close agent window",
-				"agent panel", "show agent panel", "hide agent panel",
-			],
-			checkbox: {
-				toggle: () => { toggle_agent_window(); },
-				check: () => is_agent_window_open(),
-			},
-			description: localize("Shows or hides the window for driving a website-editing agent with your drawing."),
-		},
-		{
-			emoji_icon: "🛠️",
-			label: localize("&Code Agent"),
-			speech_recognition: [
-				"code agent", "show code agent", "hide code agent", "toggle code agent", "open code agent", "close code agent",
-				"edit the app", "edit the code", "change the code", "opencode",
-			],
-			checkbox: {
-				toggle: () => { toggle_code_agent_window(); },
-				check: () => is_code_agent_window_open(),
-			},
-			description: localize("Chat with opencode to change this app's code while you use it; the app reloads when it's done."),
-		},
 		{
 			emoji_icon: "🤪",
 			label: localize("&Draw Randomly"),

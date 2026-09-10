@@ -1,12 +1,13 @@
-// Needs the GifCities proxy (agent-server) and network: set SITE_BUILDER_PROXY_URL=http://localhost:4097 to run.
+// Needs the GifCities proxy (the editor Worker) and network: set SITE_BUILDER_EDITOR_URL=http://localhost:8787 and
+// SITE_BUILDER_GIF_NETWORK=1 to run (GifCities is a third-party service, so this isn't part of the default run).
 import { assert, open_paint } from "./helpers.mjs";
 
-const proxy = process.env.SITE_BUILDER_PROXY_URL;
-if (!proxy) {
-	console.log("gif-picker: skipped (set SITE_BUILDER_PROXY_URL to the agent-server to run it)");
+const proxy = process.env.SITE_BUILDER_EDITOR_URL;
+if (!proxy || !process.env.SITE_BUILDER_GIF_NETWORK) {
+	console.log("gif-picker: skipped (set SITE_BUILDER_EDITOR_URL and SITE_BUILDER_GIF_NETWORK=1 to run it against GifCities)");
 	process.exit(0);
 }
-const { page, close } = await open_paint({ init: (proxy) => { localStorage.setItem("jspaint agent-drive server url", proxy); }, init_arg: proxy.replace(/\/+$/, "") });
+const { page, close } = await open_paint({ init: (proxy) => { localStorage.setItem("jspaint site publish settings", JSON.stringify({ editor_url: proxy })); }, init_arg: proxy.replace(/\/+$/, "") });
 
 await page.evaluate(() => { [...document.querySelectorAll(".tool")].find((el) => el.getAttribute("title") === "GIF Picker").click(); });
 await page.waitForSelector(".gif-picker-window", { timeout: 5000 });

@@ -16,7 +16,7 @@
 		"*.psd",
 		"*.mp4",
 		"localization",
-		"agent-server/config.json", // contains a random secret
+		"agent-server/", // leftover local config from the removed dev tool (gitignored, contains a secret)
 		"worker/editor/dist",
 		"worker/.wrangler"
 	],

@@ -6,7 +6,6 @@
 import { $ColorBox } from "./$ColorBox.js";
 import { $ToolBox } from "./$ToolBox.js";
 import { Handles } from "./Handles.js";
-import { publish_site, save_iteration } from "./agent-drive.js";
 // import { get_direction, localize } from "./app-localization.js";
 import { default_palette, get_winter_palette } from "./color-data.js";
 import { image_formats } from "./file-format-data.js";
@@ -967,25 +966,6 @@ $G.on("keydown", (e) => {
 		e.key.toUpperCase() === "Y"
 	) {
 		show_document_history();
-		e.preventDefault();
-		return;
-	}
-	if (
-		// Ctrl+Alt+I / Ctrl+Alt+P: Agent Drive (Save Iteration / Publish to Web)
-		// Handled before the generic Ctrl+<key> switch below, which would otherwise
-		// treat Ctrl+Alt+I as Invert Colors. Checking e.code covers macOS, where Option+<key> changes e.key.
-		(e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey &&
-		(e.key.toUpperCase() === "I" || e.code === "KeyI")
-	) {
-		save_iteration();
-		e.preventDefault();
-		return;
-	}
-	if (
-		(e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey &&
-		(e.key.toUpperCase() === "P" || e.code === "KeyP")
-	) {
-		publish_site();
 		e.preventDefault();
 		return;
 	}

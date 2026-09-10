@@ -3,19 +3,15 @@
 // The GIF picker (the "GIFs" button under the tools, or View > GIF Picker): search GifCities — the
 // Internet Archive's collection of GeoCities GIFs — and click or drag a result onto the canvas to add
 // it as an animated sticker (stickers.js). gifcities.org has no API or CORS, so requests go through
-// the agent server's proxy (agent-server/server.js); the hosted editor will proxy through its Worker.
+// the editor Worker's proxy (worker/editor/index.js).
 import { $DialogWindow } from "./$ToolWindow.js";
-import { get_server_url } from "./agent-drive.js";
 import { get_site_editor_url } from "./site-publish.js";
 import { show_error_message } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { add_sticker_from_blob } from "./stickers.js";
 
-/** The GifCities proxy: the hosted editor Worker, or the local agent server when Paint runs from it. */
+/** The GifCities proxy: the editor Worker. */
 function proxy_base() {
-	if (location.origin.startsWith("http://localhost") && get_server_url().startsWith(location.origin)) {
-		return get_server_url();
-	}
 	return get_site_editor_url();
 }
 

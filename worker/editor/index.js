@@ -279,7 +279,7 @@ async function handle_site_files(request, url, env, invite = null) {
 	return json({ error: "Method not allowed" }, 405);
 }
 
-// --- GifCities proxy (same contract as agent-server's, see src/gif-picker.js) ---
+// --- GifCities proxy (see src/gif-picker.js) ---
 const GIFCITIES_HEADERS = { "User-Agent": "jspaint-site-builder (https://github.com/jackklika/jspaint)" };
 
 /**

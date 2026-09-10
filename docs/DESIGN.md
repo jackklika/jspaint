@@ -203,7 +203,7 @@ User pages are user-authored HTML. They are served by a **separate, deliberately
 
 - The `Room` Durable Object (live fan-out) grew into `PageRoom` (editor Worker): the same fan-out plus a stored document, versioned ops, and presence — real-time co-editing inside Paint (`src/live-session.js`).
 - The in-browser `<foreignObject>` page renderer is the static part of whole-page GIF export.
-- Preview-alias deploys and the agent-server's git/wrangler flow become a personal dev tool; hosted pages are saved to R2, not deployed. The LLM "draw to edit" flow returns later as *AI assist* operating on the dialect.
+- Preview-alias deploys and the agent-server's git/wrangler flow were a personal dev tool, removed on 2026-09-10 (in git history); hosted pages are saved to R2, not deployed. The LLM "draw to edit" flow returns later as *AI assist* operating on the dialect.
 
 ## 12. Open items
 
