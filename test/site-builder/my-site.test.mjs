@@ -104,6 +104,13 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	assert.match(await fresh.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
 	await close_fresh();
 }
+// A plain visit while signed in opens the page you last saved — edit.<domain> is where you edit your site
+{
+	const { page: back, close: close_back } = await open_paint({ init: (arg) => { localStorage.setItem("jspaint site publish settings", JSON.stringify(arg)); }, init_arg: { site, secret: minted.password, editor_url: editor, page: "about.html", remember_secret: true } });
+	await back.waitForFunction(() => file_name === "about.html", null, { timeout: 20000 });
+	assert.deepEqual(await back.evaluate(() => system_file_handle), { site_page: "about.html" });
+	await close_back();
+}
 // Already signed in as that site: ?site= opens the folder, no dialog
 {
 	const seed = (/** @type {any} */ arg) => { localStorage.setItem("jspaint site publish settings", JSON.stringify(arg)); };

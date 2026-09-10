@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Jack: "when I go to edit.coolpaint.world it isn't automatically showing the site I made" → a plain visit (no `#local:` session, no `?site`/`?join`) while signed in opens the page you last saved (`load_settings().page`, default index.html) if it exists (`FRESH_VISIT` in my-site.js; `page_exists` probes with `?optional`).
+
 - 2026-09-10 — Jack: "anyone to be able to open any page in the editor, but not be able to publish it to that url unless they have permission": `edit.coolpaint.world/~name/page.html` opens a **copy** for anyone (`open_page_copy`, no sign-in, no room, `system_file_handle.copy_of`); Save to My Site puts it on the site you sign in to; the server already scopes writes (`role_of`). Root UX: New Page suggests `index.html` first.
 
 - 2026-09-10 — **Accounts (minimal) + the URL flip** (Jack: "log in as 'root' with a randomly-generated password, and then edit the base site … coolpaint.world/ … edited at edit.coolpaint.world/"): per-site passwords (`Accounts` DO, `role_of` in the editor Worker, `POST /api/sites/:name/password` master-only, `npm run site-password <site>`), the sites Worker serves the `root` site at `/` and `~name` at `/~name/` on `coolpaint.world` (www/sites./workers.dev redirect), the editor is `edit.coolpaint.world` (`/~name` → `/?site=name`, Paint opens it, Sign In prefilled). Rule: never list one hostname in both wrangler configs. Google OAuth later (Jack).

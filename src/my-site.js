@@ -34,6 +34,9 @@ function public_url(path = "index.html") {
 // its own #local:… id — same mechanism as the share link in share.js), and open_site_from_url() acts on it once the
 // app is up. Other query params are kept (jspaint reads a few of its own).
 const SITE_ENTRY_KEY = "jspaint open site"; // sessionStorage
+// A plain visit (no #local:… session to restore, captured before sessions.js assigns one): signed in, Paint opens
+// your site's page rather than a blank picture — edit.<domain> is where you edit your site.
+const FRESH_VISIT = !location.hash;
 const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.html?$/;
 (() => {
 	const params = new URLSearchParams(location.search);
@@ -64,7 +67,13 @@ async function open_site_from_url() {
 		entry = JSON.parse(sessionStorage.getItem(SITE_ENTRY_KEY) || "null");
 		sessionStorage.removeItem(SITE_ENTRY_KEY);
 	} catch (_error) { /* ignore */ }
-	if (!entry || !entry.site) { return; }
+	if (!entry || !entry.site) {
+		if (FRESH_VISIT && is_signed_in() && await check_sign_in()) {
+			const { site, page } = load_settings();
+			if (await page_exists(site, page || "index.html")) { await open_page_from_site(page || "index.html"); }
+		}
+		return;
+	}
 	if (load_settings().site === entry.site && await check_sign_in()) {
 		if (entry.page && await open_page_from_site(entry.page)) { return; }
 		show_my_site_dialog();
@@ -74,6 +83,19 @@ async function open_site_from_url() {
 	if (!await show_sign_in_dialog({ site: entry.site }) || load_settings().site !== entry.site) { return; }
 	if (entry.page && await open_page_from_site(entry.page)) { return; }
 	show_my_site_dialog();
+}
+
+/**
+ * Whether a site has that page, without signing in (site files are public) and without a console 404.
+ * @param {string} site @param {string} path
+ */
+async function page_exists(site, path) {
+	try {
+		const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/${path}?optional`, { method: "HEAD" });
+		return response.status === 200;
+	} catch (_error) {
+		return false;
+	}
 }
 
 /**
