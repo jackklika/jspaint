@@ -83,7 +83,7 @@ const BLOCK_KINDS = [
 		editable: true,
 		flow: true,
 		icon: "§",
-		props: [],
+		props: [{ attr: "id", label: "Anchor (links to this section end in #this)", type: "text" }],
 	},
 	{
 		id: "marquee",

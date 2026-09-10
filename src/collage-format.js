@@ -16,7 +16,7 @@
 //     <span class="text" style="…">~ est. 1999 ~</span>
 //   </div>
 //   </center></body>
-import { block_markup, get_blocks, get_column_geometry, restore_blocks, snapshot_blocks } from "./blocks.js";
+import { block_markup, ensure_section_ids, get_blocks, get_column_geometry, restore_blocks, snapshot_blocks } from "./blocks.js";
 import { block_kind_for, sanitize_html_fragment } from "./block-kinds.js";
 import { open_from_image_info, read_image_file, show_error_message, write_image_file } from "./functions.js";
 import { get_page_properties, set_page_properties } from "./page-properties.js";
@@ -85,16 +85,31 @@ function canvas_to_png_blob(canvas) {
  */
 async function serialize_collage_html({ canvas = main_canvas, title = file_name, asset_url = (blob) => blob_to_data_url(blob) } = {}) {
 	const bitmap_src = await asset_url(await canvas_to_png_blob(canvas), "bitmap", 0);
+	if (canvas === main_canvas) { ensure_section_ids(); }
 	const all_blocks = canvas === main_canvas ? get_blocks() : [];
+	/** Pictures dropped into text are blob: URLs in the editor; they go to the site like stickers do. @param {BlockSnapshot} snapshot */
+	const with_uploaded_pictures = async (snapshot) => {
+		const sources = [...snapshot.html.matchAll(/src="(blob:[^"]+)"/g)].map((match) => match[1]);
+		if (!sources.length) { return snapshot; }
+		let html = snapshot.html;
+		for (const [index, source] of [...new Set(sources)].entries()) {
+			try {
+				const blob = await (await fetch(source)).blob();
+				const path = await asset_url(blob, "sticker", 1000 + index);
+				html = html.split(`src="${source}"`).join(`src="${escape_html(path)}"`);
+			} catch (_error) { /* leave it; the browser shows a broken picture rather than losing the text */ }
+		}
+		return { ...snapshot, html };
+	};
 	// Sections stack in the page's column (normal flow on the live page); everything else sits where it was put.
 	const sections = all_blocks.filter((block) => block.flow);
 	const column = get_column_geometry();
 	const column_tags = sections.length ? [
 		`\t\t<div class="column" style="left:${column.left}px;top:${column.top}px;width:${column.width}px">`,
-		...sections.map((block) => `\t\t\t${block_markup(block.snapshot(), { positioned: false, column: true })}`),
+		...await Promise.all(sections.map(async (block) => `\t\t\t${block_markup(await with_uploaded_pictures(block.snapshot()), { positioned: false, column: true })}`)),
 		"\t\t</div>",
 	] : [];
-	const block_tags = all_blocks.filter((block) => !block.flow).map((block) => `\t\t${block_markup(block.snapshot())}`);
+	const block_tags = await Promise.all(all_blocks.filter((block) => !block.flow).map(async (block) => `\t\t${block_markup(await with_uploaded_pictures(block.snapshot()))}`));
 	const sticker_tags = [];
 	if (canvas === main_canvas) {
 		let index = 0;

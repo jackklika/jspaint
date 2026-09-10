@@ -8,6 +8,7 @@ import { $DialogWindow } from "./$ToolWindow.js";
 import { current_site, get_site_editor_url } from "./site-publish.js";
 import { show_error_message } from "./functions.js";
 import { $G, E } from "./helpers.js";
+import { insert_html_at_caret, is_editing_container } from "./blocks.js";
 import { add_sticker_from_blob } from "./stickers.js";
 
 /** The GifCities proxy: the editor Worker. */
@@ -64,7 +65,13 @@ async function add_gif_from_url(url, position) {
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status}`);
 		}
-		await add_sticker_from_blob(await response.blob(), position);
+		const blob = await response.blob();
+		if (is_editing_container() && !position) {
+			// Writing a section: the GIF goes into the text at the caret (published as gifs/<hash>.gif with the page)
+			insert_html_at_caret(`<img src="${URL.createObjectURL(blob)}" alt="">`);
+		} else {
+			await add_sticker_from_blob(blob, position);
+		}
 		record_gif_use(url);
 	} catch (error) {
 		show_error_message("Couldn't add the GIF as a sticker.", error);

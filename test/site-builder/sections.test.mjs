@@ -57,14 +57,44 @@ assert.notEqual(after[0], before[0], "the first section grew");
 const [top_after, bottom_after] = await page.evaluate(() => (current_history_node.blocks || []).filter((b) => b.flow).map((b) => [b.y, b.height]));
 assert.equal(bottom_after[0], top_after[0] + top_after[1] + 16, "the second moved down with it");
 
+// Anchors: each section got a #name from what was typed first; a link to it is the page's address plus #name
+assert.deepEqual(await page.evaluate(() => (current_history_node.blocks || []).filter((b) => b.flow).map((b) => b.attrs.id)), ["second-section", "first-section"]);
+assert.equal(await page.evaluate(async () => { const m = await import("/src/blocks.js"); return m.section_link(m.get_selected_block()); }), "#second-section", "not on a site yet: just the anchor");
+
+// Writing tools: Style makes a heading, the list button a list, Ctrl+K a link — all inside the section
+await page.evaluate(() => { const el = [...document.querySelectorAll(".block-layer.flow")].sort((a, b) => a.offsetTop - b.offsetTop)[1]; for (let i = 0; i < 2; i++) { el.querySelector(".block-content").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 })); } });
+await page.waitForSelector(".block-layer.flow.editing", { timeout: 5000 });
+assert.equal(await page.evaluate(() => document.querySelector(".font-box .block-tools").offsetParent !== null), true, "the writing tools show while editing a section");
+await page.keyboard.press("End");
+await page.keyboard.press("Enter");
+await page.keyboard.type("A heading");
+await page.selectOption(".font-box select.block-style", "h2");
+await page.keyboard.press("End");
+await page.keyboard.press("Enter");
+await page.keyboard.type("item one");
+await page.evaluate(() => { const b = /** @type {HTMLElement} */ (document.querySelector('.font-box button[aria-label="Bulleted List"]')); b.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })); b.click(); });
+await page.keyboard.press("End");
+await page.keyboard.press("Enter");
+await page.keyboard.type("item two");
+for (let i = 0; i < 8; i++) { await page.keyboard.press("Shift+ArrowLeft"); } // select "item two" (Shift+Home would take the whole section here)
+await page.keyboard.press("Control+k");
+await page.waitForSelector(".link-window", { timeout: 5000 });
+await page.fill('.link-window input[name="link-url"]', "https://example.com/");
+await page.click(".link-window button[type=submit]");
+await page.waitForFunction(() => !document.querySelector(".link-window"), null, { timeout: 5000 });
+await page.keyboard.press("Escape");
+const rich = await page.evaluate(() => (current_history_node.blocks || []).filter((b) => b.flow).map((b) => b.html)[1]);
+assert.match(rich, /<h2>A heading<\/h2>/, rich);
+assert.match(rich, /<ul><li>item one<\/li><li><a href="https:\/\/example.com\/">item two<\/a><\/li><\/ul>/, rich);
+
 // Published: a column of sections in order, no positions of their own; reads back the same
 const html = await page.evaluate(async () => (await import("/src/collage-format.js")).serialize_collage_html());
 assert.match(html, /<div class="collage has-column"/);
-// (A new section starts as a heading line; typing over the placeholder keeps the <h2>.)
-assert.match(html, /<div class="column" style="left:40px;top:40px;width:720px">\s*<div data-kind="section" class="block section"><h2>Second section<\/h2>(<br>line){6}<\/div>\s*<div data-kind="section" class="block section"><h2>First section<\/h2><\/div>\s*<\/div>/);
+// (A new section starts as a heading line; typing over the placeholder keeps the <h2>, and Enter makes paragraphs.)
+assert.match(html, /<div class="column" style="left:40px;top:40px;width:720px">\s*<div data-kind="section" id="second-section" class="block section"><h2>Second section<\/h2>(<p>line<\/p>){6}<\/div>\s*<div data-kind="section" id="first-section" class="block section"><h2>First section<\/h2><h2>A heading<\/h2><ul>/);
 const parsed = await page.evaluate(async (html) => {
 	const parsed = (await import("/src/collage-format.js")).parse_collage_html(html);
-	return { blocks: parsed.blocks.map((b) => [b.kind, !!b.flow, b.html.replace(/<[^>]+>/g, "").slice(0, 14)]), column: [parsed.page_properties.column_left, parsed.page_properties.column_top, parsed.page_properties.column_width] };
+	return { blocks: parsed.blocks.map((b) => [b.kind, !!b.flow, b.html.replace(/<[^>]+>/g, " ").trim().split(/\s+/).slice(0, 2).join(" ")]), column: [parsed.page_properties.column_left, parsed.page_properties.column_top, parsed.page_properties.column_width] };
 }, html);
 assert.deepEqual(parsed.blocks, [["section", true, "Second section"], ["section", true, "First section"]]);
 assert.deepEqual(parsed.column, [40, 40, 720]);

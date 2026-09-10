@@ -3,7 +3,7 @@
 import { $ToolWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
 import { $G, E, supports_vertical_writing_mode } from "./helpers.js";
-import { is_editing_block, is_editing_block_marquee, toggle_editing_block_marquee } from "./blocks.js";
+import { apply_block_style, apply_list, current_block_style, insert_rule, is_editing_block, is_editing_block_marquee, is_editing_container, show_text_link_dialog, toggle_editing_block_marquee } from "./blocks.js";
 
 // The Marquee toggle's icon: a box of text with a scroll arrow (same size as the B/I/U sprites).
 const MARQUEE_ICON_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\"><rect x=\"1\" y=\"4\" width=\"14\" height=\"7\" fill=\"#fff\"/><path d=\"M0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM9 3h1v1h-1zM10 3h1v1h-1zM11 3h1v1h-1zM12 3h1v1h-1zM13 3h1v1h-1zM14 3h1v1h-1zM15 3h1v1h-1zM0 4h1v1h-1zM15 4h1v1h-1zM0 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM7 5h1v1h-1zM8 5h1v1h-1zM9 5h1v1h-1zM11 5h1v1h-1zM12 5h1v1h-1zM13 5h1v1h-1zM15 5h1v1h-1zM0 6h1v1h-1zM3 6h1v1h-1zM15 6h1v1h-1zM0 7h1v1h-1zM2 7h1v1h-1zM3 7h1v1h-1zM4 7h1v1h-1zM5 7h1v1h-1zM6 7h1v1h-1zM8 7h1v1h-1zM9 7h1v1h-1zM10 7h1v1h-1zM11 7h1v1h-1zM15 7h1v1h-1zM0 8h1v1h-1zM3 8h1v1h-1zM15 8h1v1h-1zM0 9h1v1h-1zM5 9h1v1h-1zM6 9h1v1h-1zM7 9h1v1h-1zM9 9h1v1h-1zM10 9h1v1h-1zM11 9h1v1h-1zM12 9h1v1h-1zM13 9h1v1h-1zM15 9h1v1h-1zM0 10h1v1h-1zM15 10h1v1h-1zM0 11h1v1h-1zM1 11h1v1h-1zM2 11h1v1h-1zM3 11h1v1h-1zM4 11h1v1h-1zM5 11h1v1h-1zM6 11h1v1h-1zM7 11h1v1h-1zM8 11h1v1h-1zM9 11h1v1h-1zM10 11h1v1h-1zM11 11h1v1h-1zM12 11h1v1h-1zM13 11h1v1h-1zM14 11h1v1h-1zM15 11h1v1h-1z\" fill=\"#000\"/></svg>";
@@ -115,7 +115,64 @@ function $FontBox() {
 	$G.on("block-editing-changed textbox-changed", update_marquee);
 	update_marquee();
 	$button_group.append($bold, $italic, $underline, $vertical, $marquee);
+
+	// Writing tools, for a section (or a table cell) being edited: what the line is, lists, a rule, a link.
+	const $block_group = $(E("span")).addClass("text-toolbar-button-group block-tools");
+	const $style = /** @type {JQuery<HTMLSelectElement>} */ ($(E("select")).addClass("inset-deep block-style").attr({ "aria-label": "Style", title: localize("What this line is: plain text, a heading, a quote, or code.") }));
+	for (const [value, label] of [["p", localize("Normal")], ["h1", localize("Heading 1")], ["h2", localize("Heading 2")], ["h3", localize("Heading 3")], ["blockquote", localize("Quote")], ["pre", localize("Code")]]) {
+		$(E("option")).val(value).text(label).appendTo($style);
+	}
+	$style.on("mousedown", (e) => { e.stopPropagation(); });
+	$style.on("change", () => { apply_block_style(String($style.val())); });
+	/** @param {string} label @param {string} title @param {string} svg @param {() => void} action */
+	const icon_button = (label, title, svg, action) => {
+		const $button = $(E("button")).addClass("toggle block-tool").attr({ type: "button", "aria-label": label, title });
+		$(E("span")).addClass("icon block-tool-icon").css({ backgroundImage: `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}")` }).appendTo($button);
+		$button.css({ width: 23, height: 22, padding: 0, display: "inline-flex", alignContent: "center", alignItems: "center", justifyContent: "center" });
+		$button.on("mousedown", (e) => { e.preventDefault(); }); // keep focus in the text
+		$button.on("click", action);
+		return $button;
+	};
+	const px = (/** @type {string} */ d, /** @type {string} */ fill = "#000") => `<path d="${d}" fill="${fill}"/>`;
+	const svg16 = (/** @type {string} */ body) => `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">${body}</svg>`;
+	const $bullets = icon_button("Bulleted List", localize("Bulleted list"), svg16(px("M2 3h2v2H2zM6 3h8v2H6zM2 7h2v2H2zM6 7h8v2H6zM2 11h2v2H2zM6 11h8v2H6z")), () => { apply_list(false); });
+	const $numbers = icon_button("Numbered List", localize("Numbered list"), svg16(px("M2 2h2v4H3V3H2zM6 3h8v2H6zM2 7h2v1H3v1h1v1H2v1h2V7zM6 7h8v2H6zM6 11h8v2H6zM2 11h2v1H2v1h2v1H2z")), () => { apply_list(true); });
+	const $rule = icon_button("Rule", localize("A line across (horizontal rule)"), svg16(px("M2 7h12v1H2z", "#808080") + px("M2 8h12v1H2z", "#fff")), () => { insert_rule(); });
+	const $link = icon_button("Link", localize("Link the selected words to a page, a section, or an address (Ctrl+K)"), svg16(px("M6 4h5v1h1v1h1v3h-1v1h-1v1H9v-1h2V9h1V7h-1V6H9V5H6zM3 6h4v1H5v1H4v2h1v1h2v1H3v-1H2V7h1zM5 8h6v1H5z", "#000080")), () => { show_text_link_dialog(); });
+	$block_group.append($style, $bullets, $numbers, $rule, $link);
+	const update_block_tools = () => {
+		const container = is_editing_container();
+		$block_group.toggle(is_editing_block());
+		$style.prop("disabled", !container);
+		$bullets.prop("disabled", !container);
+		$numbers.prop("disabled", !container);
+		$rule.prop("disabled", !container);
+		if (container) { $style.val(current_block_style()); }
+	};
+	$G.on("block-editing-changed block-style-changed", update_block_tools);
+	update_block_tools();
 	$("<style>").text(`
+		.font-box .block-tools {
+			margin-left: 4px;
+		}
+		.font-box .block-style {
+			height: 22px;
+			max-width: 110px;
+			vertical-align: top;
+		}
+		.font-box .block-tool-icon,
+		.font-box .toggle .block-tool-icon {
+			display: block;
+			width: 16px;
+			height: 16px;
+			flex: 0 0 auto;
+			background-position: 0 0 !important;
+			background-size: 16px 16px !important;
+			background-repeat: no-repeat !important;
+			-webkit-mask-image: none !important;
+			mask-image: none !important;
+			image-rendering: pixelated;
+		}
 		.font-box .marquee-icon,
 		.font-box .toggle .marquee-icon {
 			display: block;
@@ -131,7 +188,7 @@ function $FontBox() {
 			image-rendering: pixelated;
 		}
 	`).appendTo(document.head);
-	$fb.append($family, $size, $button_group);
+	$fb.append($family, $size, $button_group, $block_group);
 
 	const update_font = () => {
 		text_tool_font.size = Number($size.val());

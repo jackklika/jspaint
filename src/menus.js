@@ -16,7 +16,7 @@ import { is_layers_window_open, toggle_layers_window } from "./layers-window.js"
 import { open_live_page, show_my_site_dialog, show_sign_in_dialog } from "./my-site.js";
 import { is_live_sync_enabled, set_live_sync_enabled } from "./live-session.js";
 import { show_share_dialog } from "./share.js";
-import { BLOCK_KINDS, add_block, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, reorder_block, show_block_html_dialog, show_block_properties_dialog } from "./blocks.js";
+import { BLOCK_KINDS, add_block, copy_section_link, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, is_editing_block, reorder_block, show_block_html_dialog, show_block_properties_dialog, show_text_link_dialog } from "./blocks.js";
 import { show_page_properties_dialog } from "./page-properties.js";
 import { PHONE_WIDTH, fit_page_width, make_page_longer, make_page_shorter, set_page_width } from "./page-scroll.js";
 import { is_pan_joystick_shown, toggle_pan_joystick } from "./pan-joystick.js";
@@ -976,6 +976,21 @@ const menus = {
 			enabled: () => has_linkable_element(),
 			action: () => { show_element_link_dialog(); },
 			description: localize("Makes the selected element a link, or removes its link."),
+		},
+		{
+			label: localize("Insert Lin&k..."),
+			...shortcut("Ctrl+K"),
+			speech_recognition: ["insert link", "add link", "link the text", "make a link", "hyperlink"],
+			enabled: () => is_editing_block(),
+			action: () => { show_text_link_dialog(); },
+			description: localize("Links the selected words to a page of your site, a section, or an address."),
+		},
+		{
+			label: localize("Copy Link to &Section"),
+			speech_recognition: ["copy link to section", "copy section link", "link to this section", "section link"],
+			enabled: () => !!get_selected_block()?.flow,
+			action: () => { copy_section_link(); },
+			description: localize("Copies the address of the selected section (the page plus #its-name)."),
 		},
 		MENU_DIVIDER,
 		{
