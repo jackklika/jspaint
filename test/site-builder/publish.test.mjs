@@ -40,7 +40,7 @@ assert.match(response.headers.get("content-security-policy") || "", /script-src 
 const html = await response.text();
 assert.match(html, /class="collage"/);
 assert.match(html, /<img class="sticker" src="gifs\/[0-9a-f]{40}\.gif"/);
-assert.match(html, /class="bitmap" src="collages\/index\.png"/);
+assert.match(html, /class="bitmap" src="collages\/index\.png\?v=[0-9a-f]{12}"/); // versioned so a re-save shows at once
 assert.match(html, /<span class="text"[^>]*>Published text<\/span>/);
 const gif_path = /src="(gifs\/[0-9a-f]{40}\.gif)"/.exec(html)[1];
 const gif = await fetch(`${sites}/~${site}/${gif_path}`);

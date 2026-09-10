@@ -21,6 +21,7 @@
 		"worker/.wrangler"
 	],
 	"words": [
+		"revertable",
 		"webfetch",
 		"websearch",
 		"todowrite",

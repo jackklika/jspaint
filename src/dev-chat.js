@@ -24,6 +24,8 @@ const MAX_TRANSCRIPT = 300;
  * @property {string | null} job - a job we were polling when the page reloaded
  * @property {number} events_seen - how many of that job's events are already in the transcript
  * @property {string} draft
+ * @property {string | null} last_job - the last finished job, whose file changes can be reverted
+ * @property {string[]} last_changed - the files it changed
  */
 
 /** @returns {CodeAgentState} */
@@ -42,6 +44,8 @@ function load_state() {
 		job: stored.job || null,
 		events_seen: stored.events_seen || 0,
 		draft: stored.draft || "",
+		last_job: stored.last_job || null,
+		last_changed: Array.isArray(stored.last_changed) ? stored.last_changed : [],
 	};
 }
 function save_state() {
@@ -64,7 +68,11 @@ let $status = null;
 let $send = null;
 /** @type {JQuery<HTMLButtonElement> | null} */
 let $stop = null;
+/** @type {JQuery<HTMLButtonElement> | null} */
+let $revert = null;
 let polling = false;
+/** @type {string | null} a prompt typed while a job was running: sent as soon as that job has stopped */
+let queued_prompt = null;
 
 const TOOL_ICONS = { write: "✎", edit: "✎", patch: "✎", read: "👁", bash: "$", glob: "🔍", grep: "🔍", list: "📁", webfetch: "🌐", websearch: "🌐", todowrite: "☑", todoread: "☑", task: "⚙" };
 
@@ -104,8 +112,11 @@ function render_entry(entry) {
 
 /** @param {boolean} busy */
 function set_busy(busy) {
-	$send?.prop("disabled", busy);
+	// Send stays usable while working: it becomes "Stop & Send" (the new instruction takes over).
+	$send?.text(busy ? localize("Stop & Send") : localize("Send"));
 	$stop?.prop("disabled", !busy);
+	$revert?.prop("disabled", busy || !state.last_job || state.last_changed.length === 0)
+		.attr("title", state.last_changed.length ? `${localize("Undo the agent's changes to:")} ${state.last_changed.join(", ")}` : localize("Nothing to revert"));
 	$window?.toggleClass("code-agent-busy", busy);
 	$status?.toggleClass("working", busy);
 	if (busy && $status) { $status.text(localize("Working…")); }
@@ -143,7 +154,16 @@ async function check_status() {
 async function send_prompt() {
 	if (!$prompt) { return; }
 	const prompt = String($prompt.val()).trim();
-	if (!prompt || state.job) { return; }
+	if (!prompt) { return; }
+	if (state.job) {
+		// Stop & Send: interrupt the running job; the new instruction goes out once it has stopped (see poll_job).
+		queued_prompt = prompt;
+		$prompt.val("");
+		state.draft = "";
+		add_entry({ role: "note", text: localize("Stopping the agent to send your new instruction…") }, false);
+		stop_job();
+		return;
+	}
 	add_entry({ role: "user", text: prompt });
 	$prompt.val("");
 	state.draft = "";
@@ -205,12 +225,15 @@ async function poll_job(job_id) {
 				const result = job.result;
 				const files = result.changed_files || [];
 				const money = result.cost || cost ? ` · $${(result.cost || cost).toFixed(3)}` : "";
+				state.last_job = job_id;
+				state.last_changed = files;
 				if (result.aborted) {
-					add_entry({ role: "note", text: `${localize("Stopped.")}${files.length ? ` ${localize("Changed:")} ${files.join(", ")}` : ""}` });
+					add_entry({ role: "note", text: `${localize("Stopped.")}${files.length ? ` ${localize("It had changed:")} ${files.join(", ")} — ${localize("Revert undoes that.")}` : ""}` });
 				} else {
 					add_entry({ role: "note", text: `${files.length ? `${localize("Changed:")} ${files.join(", ")}` : localize("No files changed.")}${money}` });
 				}
-				if (result.app_changed && state.auto_reload && !result.aborted && served_from_agent_server()) {
+				// A queued instruction (Stop & Send) goes out now, before any reload; the reload comes after that job.
+				if (result.app_changed && state.auto_reload && !result.aborted && served_from_agent_server() && !queued_prompt) {
 					add_entry({ role: "note", text: localize("Reloading the app with the changes…") });
 					save_state();
 					setTimeout(() => { location.reload(); }, 1200);
@@ -228,15 +251,45 @@ async function poll_job(job_id) {
 		polling = false;
 		set_busy(false);
 		check_status();
+		if (queued_prompt && $prompt && !state.job) {
+			const next = queued_prompt;
+			queued_prompt = null;
+			$prompt.val(next);
+			send_prompt();
+		}
 	}
 }
 
 async function stop_job() {
 	if (!state.job) { return; }
+	if ($status) { $status.text(localize("Stopping…")); }
+	$stop?.prop("disabled", true);
 	try {
 		await api(`/api/dev/abort/${state.job}`, { method: "POST" });
 	} catch (error) {
 		add_entry({ role: "error", text: error.message }, false);
+	}
+}
+
+/** Undoes the file changes of the last finished job (new files removed, tracked files restored from git). */
+async function revert_last_job() {
+	if (!state.last_job || state.job) { return; }
+	const job_id = state.last_job;
+	$revert?.prop("disabled", true);
+	try {
+		const result = await api(`/api/dev/revert/${job_id}`, { method: "POST" });
+		add_entry({ role: "note", text: result.reverted.length ? `${localize("Reverted:")} ${result.reverted.join(", ")}` : localize("Nothing to revert.") });
+		state.last_changed = [];
+		save_state();
+		if (result.app_changed && state.auto_reload && served_from_agent_server()) {
+			add_entry({ role: "note", text: localize("Reloading the app without those changes…") });
+			save_state();
+			setTimeout(() => { location.reload(); }, 1200);
+		}
+	} catch (error) {
+		add_entry({ role: "error", text: error.message }, false);
+	} finally {
+		set_busy(!!state.job);
 	}
 }
 
@@ -301,8 +354,10 @@ function show_code_agent_window() {
 	}).appendTo($model_label);
 
 	$send = $window.$Button(localize("Send"), () => { send_prompt(); }, { type: "submit" });
-	$send.attr("title", localize("Ctrl+Enter"));
+	$send.attr("title", localize("Ctrl+Enter. While the agent works, this stops it and sends the new instruction instead."));
 	$stop = $window.$Button(localize("Stop"), () => { stop_job(); });
+	$stop.attr("title", localize("Stops the agent (opencode and anything it started). The conversation continues from there."));
+	$revert = $window.$Button(localize("Revert"), () => { revert_last_job(); });
 	$window.$Button(localize("New Conversation"), () => { new_conversation(); });
 	$window.$Button(localize("Reload App"), () => { save_state(); location.reload(); });
 	$window.$Button(localize("Close"), () => { $window.close(); });
@@ -315,6 +370,7 @@ function show_code_agent_window() {
 		$status = null;
 		$send = null;
 		$stop = null;
+		$revert = null;
 		$G.triggerHandler("code-agent-toggled");
 	});
 	set_busy(!!state.job);

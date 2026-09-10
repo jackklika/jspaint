@@ -13,7 +13,8 @@
 //   POST /api/publish                     git add/commit/push; the site repo's GitHub workflow deploys production
 //   GET  /api/jobs/:id                    poll a job started by the POST endpoints (status, log lines, result)
 //   POST /api/dev/prompt                  Code Agent: run opencode on THIS repo with {prompt, session?, model?} → job (events, result)
-//   POST /api/dev/abort/:job              stop a running Code Agent job
+//   POST /api/dev/abort/:job              stop a running Code Agent job (kills opencode's whole process group)
+//   POST /api/dev/revert/:job             undo the files that job changed (new files removed, tracked files restored)
 //   GET|PUT /api/rooms/:id/data           JS Paint's built-in multi-user RESTSession protocol (whole canvas as a
 //                                           data URI, synced after every stroke). Used for *live preview*: each
 //                                           write updates public/latest.png (+ the display page) and redeploys.
@@ -152,6 +153,7 @@ const pub = (...parts) => path.join(PUBLIC_DIR, ...parts);
  * @property {any[]} [events] - Code Agent jobs: structured opencode events (see dev_job)
  * @property {string | null} [session] - Code Agent jobs: the opencode session id
  * @property {boolean} [aborted]
+ * @property {{ path: string, from: string | null, untracked: boolean }[]} [changed] - Code Agent jobs: files the job changed (revertable)
  */
 
 /** @typedef {(line: string) => void} Logger */
@@ -722,6 +724,7 @@ async function dev_job(job, log, { prompt, session, model }) {
 			cwd: REPO_DIR,
 			stdio: ["ignore", "pipe", "pipe"],
 			env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1" },
+			detached: true, // its own process group, so Stop can take opencode's helpers (LSP servers, shells) down with it
 		});
 		dev_children.set(job.id, child);
 		let buffer = "";
@@ -729,8 +732,7 @@ async function dev_job(job, log, { prompt, session, model }) {
 		let timed_out = false;
 		const timer = setTimeout(() => {
 			timed_out = true;
-			child.kill("SIGTERM");
-			setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+			kill_dev_child(child);
 		}, config.dev.timeout_minutes * 60 * 1000);
 		child.stdout.setEncoding("utf8");
 		child.stdout.on("data", (chunk) => {
@@ -772,10 +774,61 @@ async function dev_job(job, log, { prompt, session, model }) {
 		});
 	});
 	const after = await repo_status_lines();
-	const changed_files = [...after].filter((line) => !before.has(line)).map((line) => line.slice(3).replace(/^.* -> /, ""));
+	// Files whose git status line is new since the job started: the agent's work (files you had already
+	// modified yourself keep their line, so they're deliberately not listed — and not revertable from here).
+	const changed = [...after].filter((line) => !before.has(line)).map((line) => {
+		const status = line.slice(0, 2);
+		const paths = line.slice(3).split(" -> ");
+		return { path: paths[paths.length - 1], from: paths.length > 1 ? paths[0] : null, untracked: status === "??" };
+	});
+	const changed_files = changed.map((change) => change.path);
 	const app_changed = changed_files.some((file) => APP_PATHS.test(file));
+	job.changed = changed;
 	log(changed_files.length ? `Changed: ${changed_files.join(", ")}` : "No files changed.");
 	return { session: job.session, reply: reply.trim(), changed_files, app_changed, aborted: !!job.aborted, cost, tokens };
+}
+
+/**
+ * Stops an opencode process and everything it started (it runs in its own process group).
+ * @param {import("node:child_process").ChildProcess} child
+ */
+function kill_dev_child(child) {
+	const signal_group = (/** @type {NodeJS.Signals} */ signal) => {
+		try {
+			if (child.pid) { process.kill(-child.pid, signal); } else { child.kill(signal); }
+		} catch (_error) {
+			try { child.kill(signal); } catch (_error2) { /* already gone */ }
+		}
+	};
+	signal_group("SIGTERM");
+	setTimeout(() => { if (child.exitCode === null && child.signalCode === null) { signal_group("SIGKILL"); } }, 3000).unref();
+}
+
+/**
+ * Undoes the file changes a Code Agent job made: new files are deleted, modified/deleted tracked files are
+ * restored from git. Only files that were clean before the job are touched (see dev_job).
+ * @param {Job} job
+ * @param {Logger} log
+ */
+async function revert_dev_job(job, log) {
+	/** @type {string[]} */
+	const reverted = [];
+	for (const change of job.changed || []) {
+		for (const relative of [change.path, change.from].filter(Boolean)) {
+			const absolute = path.resolve(REPO_DIR, relative);
+			if (!absolute.startsWith(REPO_DIR + path.sep) || /(^|[\\/])\.git([\\/]|$)/.test(relative)) { continue; }
+			if (change.untracked || (change.from && relative === change.path)) {
+				await fsp.rm(absolute, { force: true, recursive: false }).catch(() => {});
+				log(`Removed ${relative}`);
+			} else {
+				await run("git", ["checkout", "--", relative], { cwd: REPO_DIR, log: () => {} }).catch(() => run("git", ["checkout", "HEAD", "--", relative], { cwd: REPO_DIR, log: () => {} })).catch((error) => log(`Couldn't restore ${relative}: ${error.message.split("\n")[0]}`));
+				log(`Restored ${relative}`);
+			}
+			reverted.push(relative);
+		}
+	}
+	job.changed = [];
+	return { reverted, app_changed: reverted.some((file) => APP_PATHS.test(file)) };
 }
 
 /** Is a Code Agent job still running? (One at a time: they'd edit the same files.) */
@@ -1114,11 +1167,16 @@ const server = http.createServer(async (req, res) => {
 			}
 			job.aborted = true;
 			job.log.push("Stopped.");
-			if (child) {
-				child.kill("SIGTERM");
-				setTimeout(() => child.kill("SIGKILL"), 3000).unref();
-			}
+			if (child) { kill_dev_child(child); }
 			send_json(res, 200, { ok: true });
+		} else if (req.method === "POST" && /^\/api\/dev\/revert\/[0-9a-f-]+$/.test(url.pathname)) {
+			const job = jobs.get(url.pathname.slice("/api/dev/revert/".length));
+			if (!job || job.type !== "dev" || job.status === "running") {
+				send_json(res, 404, { error: "No finished Code Agent job with that id" });
+				return;
+			}
+			const lines = [];
+			send_json(res, 200, { ok: true, ...(await revert_dev_job(job, (line) => lines.push(line))), log: lines });
 		} else if (req.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
 			const job = jobs.get(url.pathname.slice("/api/jobs/".length));
 			if (!job) {
@@ -1168,6 +1226,19 @@ const server = http.createServer(async (req, res) => {
 		send_json(res, 400, { error: error?.message || String(error) });
 	}
 });
+
+// Stopping the server stops its agents too (they run in their own process groups and would otherwise live on,
+// editing the repo with nobody watching).
+for (const signal of /** @type {NodeJS.Signals[]} */ (["SIGINT", "SIGTERM", "SIGHUP"])) {
+	process.on(signal, () => {
+		for (const [job_id, child] of dev_children) {
+			const job = jobs.get(job_id);
+			if (job) { job.aborted = true; }
+			kill_dev_child(child);
+		}
+		setTimeout(() => process.exit(0), dev_children.size ? 500 : 0).unref();
+	});
+}
 
 server.listen(config.port, "127.0.0.1", () => {
 	console.log(`Agent Drive server listening on http://localhost:${config.port}`);

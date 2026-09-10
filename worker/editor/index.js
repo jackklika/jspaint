@@ -93,6 +93,7 @@ async function handle_site_files(request, url, env) {
 		headers.set("Content-Type", content_type_for(path));
 		headers.set("Content-Length", String(object.size));
 		headers.set("ETag", object.httpEtag);
+		headers.set("Cache-Control", "no-cache"); // Paint re-opens pages from here right after saving them
 		return new Response(request.method === "HEAD" ? null : object.body, { headers });
 	}
 	if (request.method === "DELETE") {

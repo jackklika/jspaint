@@ -104,9 +104,10 @@ async function publish_collage(settings, log) {
 	const html = await serialize_collage_html({
 		title: page_base,
 		asset_url: async (blob, kind) => {
+			const hash = await hash_blob(blob);
 			const path = kind === "bitmap" ?
 				`collages/${page_base}.png` :
-				`gifs/${await hash_blob(blob)}.${extension_for_type(blob.type)}`;
+				`gifs/${hash}.${extension_for_type(blob.type)}`;
 			if (kind === "sticker" && existing.has(path)) {
 				reused++;
 				return path;
@@ -114,7 +115,8 @@ async function publish_collage(settings, log) {
 			await upload(path, blob, blob.type || "application/octet-stream");
 			uploaded++;
 			log(`Uploaded ${path} (${Math.max(1, Math.round(blob.size / 1024))} KB)`);
-			return path;
+			// The bitmap keeps one path per page but changes with every save: a content hash in the URL beats browser caches.
+			return kind === "bitmap" ? `${path}?v=${hash.slice(0, 12)}` : path;
 		},
 	});
 	const result = await upload(`${page_base}.html`, html, "text/html");

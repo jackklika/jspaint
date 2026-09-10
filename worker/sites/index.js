@@ -183,8 +183,9 @@ ${env.EDITOR_URL ? `<p><a href="${env.EDITOR_URL}">Make one</a></p>` : ""}
 		headers.set("Content-Type", content_type_for(path));
 		headers.set("Content-Length", String(object.size));
 		headers.set("ETag", object.httpEtag);
-		// Hashed asset names (gifs/<hash>.gif) never change; other files may.
-		headers.set("Cache-Control", /^gifs\/[0-9a-f]{20,}\./.test(path) ? "public, max-age=31536000, immutable" : "public, max-age=300");
+		// Hashed asset names (gifs/<hash>.gif) never change; a page's bitmap (collages/<page>.png) changes with every
+		// save (pages reference it with a ?v=<hash> query, so revalidating is cheap); other files may change.
+		headers.set("Cache-Control", /^gifs\/[0-9a-f]{20,}\./.test(path) ? "public, max-age=31536000, immutable" : /^collages\//.test(path) ? "no-cache" : "public, max-age=300");
 		void extension_of;
 		return new Response(request.method === "HEAD" ? null : object.body, { headers });
 	},
