@@ -115,7 +115,7 @@ export function capture_saves(page) {
 /** @param {import("playwright").Page} page */
 export const canvas_box = async (page) => (await page.$(".main-canvas")).boundingBox();
 
-/** Selects a tool by its toolbox button label (e.g. "Text"). */
+/** Selects a tool by its toolbox button label (e.g. "Text", "Web Text"). */
 export async function select_tool(page, name) {
 	await page.evaluate((name) => {
 		const button = [...document.querySelectorAll(".tool")].find((el) => (el.getAttribute("aria-label") || el.getAttribute("title")) === name);
@@ -126,8 +126,8 @@ export async function select_tool(page, name) {
 }
 
 /** Draws a text box with the Text tool, types into it, and commits by clicking elsewhere. */
-export async function type_text_box(page, text, { x = 50, y = 50, width = 250, height = 70 } = {}) {
-	await select_tool(page, "Text");
+export async function type_text_box(page, text, { x = 50, y = 50, width = 250, height = 70, tool = "Text" } = {}) {
+	await select_tool(page, tool);
 	const c = await canvas_box(page);
 	await page.mouse.move(c.x + x, c.y + y);
 	await page.mouse.down();

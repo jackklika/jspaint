@@ -1,10 +1,12 @@
 // @ts-check
-/* global localize, text_tool_font */
+/* global textbox, localize, text_tool_font */
 import { $ToolWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
 import { $G, E, supports_vertical_writing_mode } from "./helpers.js";
 import { is_editing_block, is_editing_block_marquee, toggle_editing_block_marquee } from "./blocks.js";
-import { is_web_text_mode, set_web_text_mode } from "./text-layers.js";
+
+// The Marquee toggle's icon: a box of text with a scroll arrow (same size as the B/I/U sprites).
+const MARQUEE_ICON_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\"><rect x=\"1\" y=\"4\" width=\"14\" height=\"7\" fill=\"#fff\"/><path d=\"M0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM9 3h1v1h-1zM10 3h1v1h-1zM11 3h1v1h-1zM12 3h1v1h-1zM13 3h1v1h-1zM14 3h1v1h-1zM15 3h1v1h-1zM0 4h1v1h-1zM15 4h1v1h-1zM0 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM7 5h1v1h-1zM8 5h1v1h-1zM9 5h1v1h-1zM11 5h1v1h-1zM12 5h1v1h-1zM13 5h1v1h-1zM15 5h1v1h-1zM0 6h1v1h-1zM3 6h1v1h-1zM15 6h1v1h-1zM0 7h1v1h-1zM2 7h1v1h-1zM3 7h1v1h-1zM4 7h1v1h-1zM5 7h1v1h-1zM6 7h1v1h-1zM8 7h1v1h-1zM9 7h1v1h-1zM10 7h1v1h-1zM11 7h1v1h-1zM15 7h1v1h-1zM0 8h1v1h-1zM3 8h1v1h-1zM15 8h1v1h-1zM0 9h1v1h-1zM5 9h1v1h-1zM6 9h1v1h-1zM7 9h1v1h-1zM9 9h1v1h-1zM10 9h1v1h-1zM11 9h1v1h-1zM12 9h1v1h-1zM13 9h1v1h-1zM15 9h1v1h-1zM0 10h1v1h-1zM15 10h1v1h-1zM0 11h1v1h-1zM1 11h1v1h-1zM2 11h1v1h-1zM3 11h1v1h-1zM4 11h1v1h-1zM5 11h1v1h-1zM6 11h1v1h-1zM7 11h1v1h-1zM8 11h1v1h-1zM9 11h1v1h-1zM10 11h1v1h-1zM11 11h1v1h-1zM12 11h1v1h-1zM13 11h1v1h-1zM14 11h1v1h-1zM15 11h1v1h-1z\" fill=\"#000\"/></svg>";
 
 const eachFont = async (callback, afterAllCallback) => {
 	function localFontAccessUnavailable() {
@@ -85,31 +87,50 @@ function $FontBox() {
 	// const $vertical = $Toggle(3, "vertical", "Vertical Writing Mode", localize("Vertical writing works best with Far East scripts."));
 	$vertical.prop("disabled", !supports_vertical_writing_mode());
 
-	// Web text: keep finished text as an editable, linkable layer instead of pixels (see text-layers.js).
-	const $web_text = $(E("button")).addClass("toggle web-text-toggle").attr({
-		type: "button",
-		"aria-pressed": String(is_web_text_mode()),
-		"aria-label": "Web Text",
-		title: localize("Keeps the text as text (editable, can be a link) instead of drawing it as pixels."),
-	}).text("Web");
-	$web_text.on("mousedown", (e) => { e.preventDefault(); }); // keep focus in the text editor
-	$web_text.on("click", () => { set_web_text_mode(!is_web_text_mode()); });
-	$G.on("web-text-mode-changed", () => { $web_text.attr("aria-pressed", String(is_web_text_mode())); });
-	// Marquee: scrolling text, a style like bold — for a page text block being edited in place (blocks.js).
+	// Marquee: scrolling text, a style like bold. For a page text block being edited in place it switches the block
+	// to/from <marquee> (blocks.js); while typing in the Text tool's box it makes finishing produce a <marquee> element.
 	const $marquee = $(E("button")).addClass("toggle marquee-toggle").attr({
 		type: "button",
-		"aria-pressed": String(is_editing_block_marquee()),
+		"aria-pressed": "false",
 		"aria-label": "Marquee",
-		title: localize("Makes the text scroll across its box, like a <marquee> (for text on the page)."),
-	}).text("«»");
-	$marquee.on("mousedown", (e) => { e.preventDefault(); });
-	$marquee.on("click", () => { toggle_editing_block_marquee(); });
+		"aria-description": localize("Makes the text scroll across its box, like a <marquee>."),
+		title: localize("Marquee: the text scrolls across its box."),
+	});
+	$(E("span")).addClass("icon marquee-icon").appendTo($marquee);
+	$marquee.css({ width: 23, height: 22, padding: 0, display: "inline-flex", alignContent: "center", alignItems: "center", justifyContent: "center" });
+	const marquee_on = () => (is_editing_block() ? is_editing_block_marquee() : !!(textbox && /** @type {any} */ (textbox).marquee));
 	const update_marquee = () => {
-		$marquee.prop("disabled", !is_editing_block()).attr("aria-pressed", String(is_editing_block_marquee())).toggleClass("selected", is_editing_block_marquee());
+		const on = marquee_on();
+		$marquee.prop("disabled", !is_editing_block() && !textbox).attr("aria-pressed", String(on)).toggleClass("selected", on);
 	};
-	$G.on("block-editing-changed", update_marquee);
+	$marquee.on("mousedown", (e) => { e.preventDefault(); }); // keep focus in the text editor
+	$marquee.on("click", () => {
+		if (is_editing_block()) {
+			toggle_editing_block_marquee();
+		} else if (textbox) {
+			/** @type {any} */ (textbox).marquee = !(/** @type {any} */ (textbox).marquee);
+		}
+		update_marquee();
+	});
+	$G.on("block-editing-changed textbox-changed", update_marquee);
 	update_marquee();
-	$button_group.append($bold, $italic, $underline, $vertical, $marquee, $web_text);
+	$button_group.append($bold, $italic, $underline, $vertical, $marquee);
+	$("<style>").text(`
+		.font-box .marquee-icon,
+		.font-box .toggle .marquee-icon {
+			display: block;
+			width: 16px;
+			height: 16px;
+			flex: 0 0 auto;
+			background-image: url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(MARQUEE_ICON_SVG)}") !important;
+			background-position: 0 0 !important;
+			background-size: 16px 16px !important;
+			background-repeat: no-repeat !important;
+			-webkit-mask-image: none !important;
+			mask-image: none !important;
+			image-rendering: pixelated;
+		}
+	`).appendTo(document.head);
 	$fb.append($family, $size, $button_group);
 
 	const update_font = () => {

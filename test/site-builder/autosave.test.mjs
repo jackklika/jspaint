@@ -1,10 +1,10 @@
 import { assert, make_gif, open_paint, paste_file, type_text_box } from "./helpers.mjs";
 
-const { page, close } = await open_paint({ init: () => { localStorage.setItem("jspaint web text mode", "true"); } });
+const { page, close } = await open_paint();
 await paste_file(page, await make_gif(page, { width: 40, height: 30 }), "a.gif");
 await page.waitForSelector(".sticker", { timeout: 5000 });
 await page.keyboard.press("Shift+ArrowRight");
-await type_text_box(page, "Survives reload", { x: 300, y: 200, width: 200, height: 60 });
+await type_text_box(page, "Survives reload", { x: 300, y: 200, width: 200, height: 60, tool: "Web Text" });
 await page.waitForSelector(".text-layer", { timeout: 5000 });
 await page.waitForTimeout(600); // autosave debounce
 const snapshot = () => page.evaluate(() => ({

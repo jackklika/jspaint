@@ -25,11 +25,13 @@
 	],
 	"durable_objects": {
 		"bindings": [
-			{ "name": "PAGE_ROOM", "class_name": "PageRoom" }
+			{ "name": "PAGE_ROOM", "class_name": "PageRoom" },
+			{ "name": "GIF_STATS", "class_name": "GifStats" }
 		]
 	},
 	"migrations": [
-		{ "tag": "v1", "new_sqlite_classes": ["PageRoom"] }
+		{ "tag": "v1", "new_sqlite_classes": ["PageRoom"] },
+		{ "tag": "v2", "new_sqlite_classes": ["GifStats"] }
 	],
 	"vars": {
 		"EDITOR_URL": "https://coolpaint.world",

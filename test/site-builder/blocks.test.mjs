@@ -1,7 +1,7 @@
 // Page elements (blocks): place a heading with its toolbox tool, type into it, arrange it with the Pointer tool,
 // paint through it with a paint tool, add a counter and a marquee, round-trip through the web page format,
 // and flatten. Also checks the toolbox: a divider, custom icons, one-shot tools.
-import { assert, canvas_box, capture_saves, click_menu_item, open_paint, select_tool } from "./helpers.mjs";
+import { assert, canvas_box, capture_saves, click_menu_item, commit_by_clicking_bare_canvas, open_paint, select_tool } from "./helpers.mjs";
 
 const { page, close } = await open_paint();
 const blocks = () => page.evaluate(() => (current_history_node.blocks || []).map((b) => `${b.id}:${b.tag}@${b.x},${b.y} ${b.width}x${b.height}`));
@@ -20,10 +20,11 @@ await page.evaluate(() => [...document.querySelectorAll(".my-site-sign-in button
 await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 5000 });
 
 const tool_titles = await page.evaluate(() => [...document.querySelectorAll(".tools > *")].map((el) => el.classList.contains("tool-divider") ? "---" : el.getAttribute("title")));
-assert.deepEqual(tool_titles.slice(15, 20), ["Rounded Rectangle", "---", "Pointer", "Text Box", "Divider"]);
+assert.deepEqual(tool_titles.slice(9, 11), ["Text", "Web Text"], "the classic Text tool and Web Text side by side");
+assert.deepEqual(tool_titles.slice(16, 21), ["Rounded Rectangle", "---", "Pointer", "Text Box", "Divider"]);
 assert.ok(tool_titles.includes("GIF Picker") && tool_titles.includes("Guestbook") && tool_titles.includes("HTML"), tool_titles.join(","));
 assert.ok(!tool_titles.includes("Heading") && !tool_titles.includes("Marquee"), "no separate Heading/Marquee tools");
-assert.equal(await page.evaluate(() => document.querySelectorAll(".tool-icon.custom-tool-icon").length), 11);
+assert.equal(await page.evaluate(() => document.querySelectorAll(".tool-icon.custom-tool-icon").length), 12);
 assert.equal(await page.evaluate(() => main_canvas.width), 800, "new documents are page width");
 
 // Text Box tool: drag a box → a <p> block, selected, in edit mode, Pointer tool active
@@ -106,6 +107,28 @@ await page.keyboard.press("Control+y");
 await page.keyboard.press("Control+y");
 assert.equal((await blocks()).length, 3);
 assert.deepEqual(await page.evaluate(() => current_history_node.blocks.map((b) => b.tag)), ["p", "x-counter", "marquee"]);
+
+// Marquee from the classic Text tool: type, press the toggle (a real click), finish → a <marquee> element in that font
+await select_tool(page, "Text");
+assert.equal(await page.evaluate(() => document.querySelector(".font-box .marquee-toggle").disabled), true, "no text box yet: nothing to make scroll");
+await page.mouse.move(c.x + 60, c.y + 520);
+await page.mouse.down();
+await page.mouse.move(c.x + 300, c.y + 560, { steps: 4 });
+await page.mouse.up();
+await page.waitForSelector(".textbox", { timeout: 5000 });
+await page.keyboard.type("scroll me");
+await page.waitForFunction(() => document.querySelector(".font-box .marquee-toggle")?.disabled === false, null, { timeout: 5000 });
+const mt = await (await page.$(".font-box .marquee-toggle")).boundingBox();
+await page.mouse.click(mt.x + mt.width / 2, mt.y + mt.height / 2);
+assert.equal(await page.evaluate(() => document.querySelector(".font-box .marquee-toggle").getAttribute("aria-pressed")), "true");
+assert.equal(await page.evaluate(() => document.querySelector(".textbox textarea").value), "scroll me", "typing continues after the toggle");
+await commit_by_clicking_bare_canvas(page, { x: 60, y: 520, width: 240, height: 40 });
+await page.waitForFunction(() => (current_history_node.blocks || []).length === 4, null, { timeout: 5000 });
+assert.equal(await page.evaluate(() => current_history_node.blocks[3].tag), "marquee");
+assert.match(await page.evaluate(() => current_history_node.blocks[3].html), /^<font face="[^"]+" size="\d" color="#000080">scroll me<\/font>$/);
+assert.equal(await page.evaluate(() => current_history_node.name), "Add Marquee");
+await page.keyboard.press("Control+z");
+assert.equal((await blocks()).length, 3);
 
 // Layers window lists the elements
 await click_menu_item(page, "Layers");

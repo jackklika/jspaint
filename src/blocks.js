@@ -438,7 +438,7 @@ function apply_font_to_selection() {
  * (like Paste switches to Select). Text kinds start editing right away with their placeholder selected.
  * @param {string} kind_id
  * @param {{ x: number, y: number, width?: number, height?: number }} rect - canvas coordinates; width/height default to the kind's
- * @param {Partial<Pick<BlockSnapshot, "tag" | "attrs" | "html">>} [overrides]
+ * @param {Partial<Pick<BlockSnapshot, "tag" | "attrs" | "html">> & { edit?: boolean }} [overrides] - `edit: false` places it without starting to edit
  * @returns {OnCanvasBlock}
  */
 function add_block(kind_id, rect, overrides = {}) {
@@ -461,7 +461,7 @@ function add_block(kind_id, rect, overrides = {}) {
 		select_block(block);
 	});
 	select_tool(get_tool_by_id("TOOL_POINTER"));
-	if (kind.editable) {
+	if (kind.editable && overrides.edit !== false) {
 		block.begin_edit();
 	}
 	return block;
@@ -1048,6 +1048,7 @@ export {
 	init_blocks,
 	is_editing_block,
 	is_editing_block_marquee,
+	legacy_size_for,
 	nudge_selected_block,
 	order_blocks,
 	remove_block_by_id,

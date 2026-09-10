@@ -155,9 +155,11 @@ await alice.keyboard.press("Escape");
 await bob.waitForFunction(() => /edited live/.test(document.querySelector('.block-layer[data-tag="h1"] .block-el').textContent), null, { timeout: 15000 });
 await bob.waitForFunction(() => !document.querySelector('.block-layer[data-tag="h1"].remote-editing'), null, { timeout: 15000 });
 
-// Remote cursor shows up with the name
+// Remote cursor shows up with the name, and the icon of the tool Alice is holding
 await alice.mouse.move(ac.x + 200, ac.y + 200);
 await bob.waitForFunction(() => [...document.querySelectorAll(".live-cursor-name")].some((el) => /Alice/.test(el.textContent)), null, { timeout: 15000 });
+await bob.waitForFunction(() => !!document.querySelector(".live-cursor-tool img"), null, { timeout: 15000 });
+assert.equal(await bob.$eval(".live-cursor-tool", (el) => el.getAttribute("data-tool")), await alice.evaluate(() => selected_tool.id));
 
 // Alice shares the page: File › Share Page… shows a link and a QR code
 await click_menu_item(alice, "Share Page...");
@@ -202,7 +204,7 @@ assert.equal(await cid.evaluate(() => system_file_handle.guest.site), site);
 await cid.waitForFunction((expected) => JSON.stringify((current_history_node.blocks || []).map((b) => `${b.id}:${b.tag}@${b.x},${b.y}`)) === JSON.stringify(expected), await blocks(alice), { timeout: 20000 });
 await cid.waitForFunction(() => main_ctx.getImageData(530, 450, 1, 1).data.join(",") !== "255,255,255,255", null, { timeout: 20000 });
 assert.match(await cid.evaluate(() => document.querySelector('.block-layer[data-tag="h1"] .block-el').textContent), /edited live/);
-assert.equal(await cid.evaluate(() => $(".share-button").is(":visible")), true, "guests see the Share button too");
+assert.match(await cid.getAttribute(".site-globe-button", "title"), /guest/, "the globe knows Cid is a guest (Share lives in its My Site view)");
 
 // The guest saves with Ctrl+S: the share key publishes that page (and nothing else)
 await cid.keyboard.press("Control+s");

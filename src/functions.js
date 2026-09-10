@@ -13,12 +13,12 @@ import { image_formats } from "./file-format-data.js";
 import { $G, E, TAU, debounce, from_canvas_coords, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, is_discord_embed, is_pride_month, make_canvas, render_access_key, to_canvas_coords } from "./helpers.js";
 import { apply_image_transformation, draw_grid, draw_selection_box, flip_horizontal, flip_vertical, invert_monochrome, invert_rgb, rotate, stretch_and_skew, threshold_black_and_white } from "./image-manipulation.js";
 import { show_imgur_uploader } from "./imgur.js";
-import { clear_blocks, restore_blocks, snapshot_blocks } from "./blocks.js";
+import { add_block, clear_blocks, legacy_size_for, restore_blocks, snapshot_blocks } from "./blocks.js";
 import { HTML_FORMAT_ID, open_collage_from_file, serialize_collage_html } from "./collage-format.js";
 import { save_page_to_site } from "./my-site.js";
 import { reset_page_properties } from "./page-properties.js";
 import { add_sticker_from_blob, clear_stickers, is_animated_gif, restore_stickers, snapshot_stickers } from "./stickers.js";
-import { clear_text_layers, create_text_layer_from_textbox, is_web_text_mode, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
+import { clear_text_layers, create_text_layer_from_textbox, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
 import { showMessageBox } from "./msgbox.js";
 import { localStore } from "./storage.js";
 import { TOOL_CURVE, TOOL_FREE_FORM_SELECT, TOOL_POLYGON, TOOL_SELECT, TOOL_TEXT, tools } from "./tools.js";
@@ -2527,14 +2527,19 @@ function meld_selection_into_canvas(going_to_history_node) {
  */
 function meld_textbox_into_canvas(going_to_history_node) {
 	const text = textbox.$editor.val();
+	// @ts-ignore (marquee is set by the Font toolbar's Marquee toggle while typing)
+	if (text && !going_to_history_node && textbox.marquee) {
+		meld_textbox_into_marquee(text);
+		return;
+	}
 	if (text && !going_to_history_node) {
 		undoable({
 			name: localize("Text"),
 			icon: get_icon_for_tool(get_tool_by_id(TOOL_TEXT)),
 			soft: true,
 		}, () => { });
-		// @ts-ignore (web_text_layer_id is set by text-layers.js when re-editing a layer)
-		const as_web_text = (is_web_text_mode() || textbox.web_text_layer_id) && !text_tool_font.vertical;
+		// @ts-ignore (web_text is set by the Web Text tool; web_text_layer_id by text-layers.js when re-editing a layer)
+		const as_web_text = (textbox.web_text || textbox.web_text_layer_id) && !text_tool_font.vertical;
 		undoable({
 			name: "Finish Text",
 			icon: get_icon_for_tool(get_tool_by_id(TOOL_TEXT)),
@@ -2552,6 +2557,24 @@ function meld_textbox_into_canvas(going_to_history_node) {
 		textbox.destroy();
 		textbox = null;
 	}
+}
+/**
+ * Finishes the text box as a <marquee> page element instead: the typed words, in the Font toolbar's font, scrolling.
+ * @param {string} text
+ */
+function meld_textbox_into_marquee(text) {
+	const { x, y, width, height } = textbox;
+	const font = text_tool_font;
+	let html = text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+	if (font.bold) { html = `<b>${html}</b>`; }
+	if (font.italic) { html = `<i>${html}</i>`; }
+	if (font.underline) { html = `<u>${html}</u>`; }
+	const face = String(font.family).replace(/^"|"$/g, "").replace(/"/g, "");
+	const color = typeof selected_colors.foreground === "string" ? selected_colors.foreground : "";
+	html = `<font face="${face}" size="${legacy_size_for(font.size)}"${color ? ` color="${color}"` : ""}>${html}</font>`;
+	textbox.destroy();
+	textbox = null;
+	add_block("marquee", { x, y, width, height }, { html, edit: false });
 }
 /**
  * @param {boolean} [going_to_history_node]

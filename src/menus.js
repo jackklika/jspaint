@@ -5,7 +5,7 @@
 import { OnCanvasTextBox } from "./OnCanvasTextBox.js";
 import { show_edit_colors_window } from "./edit-colors.js";
 import { palette_formats } from "./file-format-data.js";
-import { are_you_sure, change_url_param, choose_file_to_paste, clear, delete_selection, deselect, edit_copy, edit_cut, edit_paste, file_load_from_url, file_new, file_open, file_print, file_save, file_save_as, image_attributes, image_flip_and_rotate, image_invert_colors, image_stretch_and_skew, redo, render_history_as_gif, sanity_check_blob, save_selection_to_file, select_all, set_magnification, show_about_paint, show_custom_zoom_window, show_document_history, show_file_format_errors, show_multi_user_setup_dialog, show_news, toggle_grid, toggle_thumbnail, undo, view_bitmap } from "./functions.js";
+import { are_you_sure, change_url_param, choose_file_to_paste, clear, delete_selection, deselect, edit_copy, edit_cut, edit_paste, file_load_from_url, file_new, file_open, file_print, file_save, file_save_as, image_attributes, image_flip_and_rotate, image_invert_colors, image_stretch_and_skew, redo, render_history_as_gif, sanity_check_blob, save_selection_to_file, select_all, set_magnification, show_about_paint, show_custom_zoom_window, show_document_history, show_file_format_errors, show_news, toggle_grid, toggle_thumbnail, undo, view_bitmap } from "./functions.js";
 import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
@@ -24,7 +24,6 @@ import { PAGE_WIDTH } from "./site-constants.js";
 import { get_tool_by_id } from "./functions.js";
 import { manage_storage } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
-import { simulateRandomGesturesPeriodically, simulatingGestures, stopSimulatingGestures } from "./simulate-random-gestures.js";
 import { speech_recognition_active, speech_recognition_available } from "./speech-recognition.js";
 import { get_theme, set_theme } from "./theme.js";
 import { has_linkable_element, show_element_link_dialog } from "./element-link.js";
@@ -1168,119 +1167,7 @@ const menus = {
 		// 	},
 		// 	description: localize("Configures JS Paint."),
 		// }
-		{
-			emoji_icon: "🤪",
-			label: localize("&Draw Randomly"),
-			speech_recognition: [
-				"draw randomly", "draw pseudorandomly", "draw wildly", "make random art",
-			],
-			checkbox: {
-				toggle: () => {
-					if (simulatingGestures) {
-						stopSimulatingGestures();
-					} else {
-						simulateRandomGesturesPeriodically();
-					}
-				},
-				check: () => {
-					return simulatingGestures;
-				},
-			},
-			description: localize("Draws randomly with different tools."),
-		},
 		MENU_DIVIDER,
-		{
-			emoji_icon: "👥",
-			label: localize("&Multi-User"),
-			submenu: [
-				{
-					label: localize("&New Session From Document"),
-					speech_recognition: [
-						"new session from document",
-						"session from document",
-						"online session",
-						"enable multi-user",
-						"enable multiplayer",
-						"start multi-user",
-						"start multiplayer",
-						"start collaboration",
-						"start collaborating",
-						"multi-user mode",
-						"multiplayer mode",
-						"collaboration mode",
-						"collaborative mode",
-						"collaborating mode",
-						"online mode",
-						"go online",
-						"share canvas",
-						"play with friends",
-						"draw with friends",
-						"draw together with friends",
-						"draw together",
-						"multiplayer",
-						"multi-user",
-						"collaborate",
-						"collaboration",
-						"collaborative",
-						"collaborating",
-					],
-					action: () => {
-						show_multi_user_setup_dialog(true);
-					},
-					description: localize("Starts a new multi-user session from the current document."),
-				},
-				{
-					label: localize("New &Blank Session"),
-					speech_recognition: [
-						"new blank session",
-						"new empty session",
-						"new fresh session",
-						"new blank multi-user session",
-						"new empty multi-user session",
-						"new fresh multi-user session",
-						"new blank multiplayer session",
-						"new empty multiplayer session",
-						"new fresh multiplayer session",
-						"new multi-user session",
-						"new multiplayer session",
-						"new collaboration session",
-						"new collaborative session",
-						"start multi-user session",
-						"start multiplayer session",
-						"start collaboration session",
-						"start collaborative session",
-						"start multi-user with a new",
-						"start multiplayer with a new",
-						"start collaboration with a new",
-						"start collaborating with a new",
-						"start multi-user with a blank",
-						"start multiplayer with a blank",
-						"start collaboration with a blank",
-						"start collaborating with a blank",
-						"start multi-user with an empty",
-						"start multiplayer with an empty",
-						"start collaboration with an empty",
-						"start collaborating with an empty",
-						"start multi-user with new",
-						"start multiplayer with new",
-						"start collaboration with new",
-						"start collaborating with new",
-						"start multi-user with blank",
-						"start multiplayer with blank",
-						"start collaboration with blank",
-						"start collaborating with blank",
-						"start multi-user with empty",
-						"start multiplayer with empty",
-						"start collaboration with empty",
-						"start collaborating with empty",
-					],
-					action: () => {
-						show_multi_user_setup_dialog(false);
-					},
-					description: localize("Starts a new multi-user session from an empty document."),
-				},
-			],
-		},
 		{
 			emoji_icon: "💄",
 			label: localize("&Themes"),
@@ -1382,57 +1269,6 @@ const menus = {
 					description: localize("Makes JS Paint look festive for the holidays."),
 				},
 				{
-					emoji_icon: "🤘",
-					label: localize("&Occult"),
-					speech_recognition: [
-						"occult theme", "switch to occult theme", "use occult theme", "set theme to occult", "set theme occult", "switch to occult theme", "switch theme to occult", "switch theme occult",
-						"occultist theme", "switch to occultist theme", "use occultist theme", "set theme to occultist", "set theme occultist", "switch to occultist theme", "switch theme to occultist", "switch theme occultist",
-						"occultism theme", "switch to occultism theme", "use occultism theme", "set theme to occultism", "set theme occultism", "switch to occultism theme", "switch theme to occultism", "switch theme occultism",
-						"satan theme", "switch to satan theme", "use satan theme", "set theme to satan", "set theme satan", "switch to satan theme", "switch theme to satan", "switch theme satan",
-						"satanic theme", "switch to satanic theme", "use satanic theme", "set theme to satanic", "set theme satanic", "switch to satanic theme", "switch theme to satanic", "switch theme satanic",
-						"satanist theme", "switch to satanist theme", "use satanist theme", "set theme to satanist", "set theme satanist", "switch to satanist theme", "switch theme to satanist", "switch theme satanist",
-						"satanism theme", "switch to satanism theme", "use satanism theme", "set theme to satanism", "set theme satanism", "switch to satanism theme", "switch theme to satanism", "switch theme satanism",
-						"demon theme", "switch to demon theme", "use demon theme", "set theme to demon", "set theme demon", "switch to demon theme", "switch theme to demon", "switch theme demon",
-						"demonic theme", "switch to demonic theme", "use demonic theme", "set theme to demonic", "set theme demonic", "switch to demonic theme", "switch theme to demonic", "switch theme demonic",
-						"daemon theme", "switch to daemon theme", "use daemon theme", "set theme to daemon", "set theme daemon", "switch to daemon theme", "switch theme to daemon", "switch theme daemon",
-						"daemonic theme", "switch to daemonic theme", "use daemonic theme", "set theme to daemonic", "set theme daemonic", "switch to daemonic theme", "switch theme to daemonic", "switch theme daemonic",
-						"devil theme", "switch to devil theme", "use devil theme", "set theme to devil", "set theme devil", "switch to devil theme", "switch theme to devil", "switch theme devil",
-						"devilish theme", "switch to devilish theme", "use devilish theme", "set theme to devilish", "set theme devilish", "switch to devilish theme", "switch theme to devilish", "switch theme devilish",
-						"devil worship theme", "switch to devil worship theme", "use devil worship theme", "set theme to devil worship", "set theme devil worship", "switch to devil worship theme", "switch theme to devil worship", "switch theme devil worship",
-						"witchcraft theme", "switch to witchcraft theme", "use witchcraft theme", "set theme to witchcraft", "set theme witchcraft", "switch to witchcraft theme", "switch theme to witchcraft", "switch theme witchcraft",
-						"witch theme", "switch to witch theme", "use witch theme", "set theme to witch", "set theme witch", "switch to witch theme", "switch theme to witch", "switch theme witch",
-						"witchy theme", "switch to witchy theme", "use witchy theme", "set theme to witchy", "set theme witchy", "switch to witchy theme", "switch theme to witchy", "switch theme witchy",
-						"witchery theme", "switch to witchery theme", "use witchery theme", "set theme to witchery", "set theme witchery", "switch to witchery theme", "switch theme to witchery", "switch theme witchery",
-						"ritual theme", "switch to ritual theme", "use ritual theme", "set theme to ritual", "set theme ritual", "switch to ritual theme", "switch theme to ritual", "switch theme ritual",
-						"ritualism theme", "switch to ritualism theme", "use ritualism theme", "set theme to ritualism", "set theme ritualism", "switch to ritualism theme", "switch theme to ritualism", "switch theme ritualism",
-						"ritualistic theme", "switch to ritualistic theme", "use ritualistic theme", "set theme to ritualistic", "set theme ritualistic", "switch to ritualistic theme", "switch theme to ritualistic", "switch theme ritualistic",
-						"Halloween theme", "switch to Halloween theme", "use Halloween theme", "set theme to Halloween", "set theme Halloween", "switch to Halloween theme", "switch theme to Halloween", "switch theme Halloween",
-
-						"summon demon", "summon daemon", "summon demon theme", "summon daemon theme",
-						"summon demons", "summon daemons", "summon demons theme", "summon daemons theme",
-						"demon summoning", "daemon summoning", "demon summoning theme", "daemon summoning theme",
-						"demons summoning", "daemons summoning", "demons summoning theme", "daemons summoning theme",
-						"welcome demon", "welcome daemon", "welcome demon theme", "welcome daemon theme",
-						"welcome demons", "welcome daemons", "welcome demons theme", "welcome daemons theme",
-						"summon satan", "summon satan theme", "summon daemon theme",
-						"satan summoning", "satan summoning theme", "daemon summoning theme",
-						"welcome satan", "welcome satan theme",
-						"summon devil", "summon the devil", "summon devil theme", "summon the devil theme",
-						"welcome devil", "welcome the devil", "welcome devil theme", "welcome the devil theme",
-
-						"I beseech thee", "I entreat thee", "I summon thee", "I call upon thy name", "I call upon thine name", "Lord Satan", "hail Satan", "hail Lord Satan", "O Mighty Satan", "Oh Mighty Satan",
-						"In nomine Dei nostri Satanas Luciferi Excelsi", "Rege Satanas", "Ave Satanas", "Rege Satana", "Ave Satana",
-						"go demonic", "go daemonic", "go occult", "666",
-						"begin ritual", "begin the ritual", "begin a ritual",
-						"start ritual", "start the ritual", "start a ritual",
-					],
-					action: () => {
-						set_theme("occult.css");
-					},
-					enabled: () => get_theme() != "occult.css",
-					description: localize("Starts the ritual."),
-				},
-				{
 					emoji_icon: "🫧",
 					label: localize("&Bubblegum"),
 					speech_recognition: [
@@ -1506,73 +1342,6 @@ const menus = {
 			)),
 		},
 		{
-			emoji_icon: "🧑",
-			// label: localize("Head Tracking"),
-			// label: localize("M&ove Cursor With Head"),
-			label: localize("Head Tracker"), // adding (Experimental) makes it too long, "WIP" or "Beta" feels too techy
-			speech_recognition: [
-				"head tracking", "head tracker", "move cursor with head", "control cursor with head", "mouse with head", "mouse cursor with head",
-				"face tracking", "face tracker", "move cursor with face", "control cursor with face", "mouse with face", "mouse cursor with face",
-				"head mouse", "face mouse", "facial mouse",
-				"head cursor", "face cursor", "facial cursor",
-				"head pointer", "face pointer", "facial pointer",
-				"head control", "face control", "facial control",
-				"head movement", "face movement", "facial movement",
-				"head motion", "face motion", "facial motion",
-				"head gestures", "face gestures", "facial gestures",
-				"tracky mouse", // name of the library
-			],
-			checkbox: {
-				toggle: () => {
-					if (/head-tracker/i.test(location.hash)) {
-						change_url_param("head-tracker", false);
-					} else {
-						change_url_param("head-tracker", true);
-					}
-				},
-				check: () => {
-					return /head-tracker/i.test(location.hash);
-				},
-			},
-			description: localize("Controls the cursor with head movements."),
-		},
-		// Later on I'll probably merge the Head Tracker and Dwell Clicker options into a Tracky Mouse option,
-		// or I'll create a preferences screen, where I'll be able to better clarify the relationships between features.
-		{
-			emoji_icon: "⏱️",
-			// label: localize("Dwell &Click"),
-			label: localize("Dwell &Clicker"),
-			speech_recognition: [
-				"dwell clicking", "dwell click", "dwell clicker", "auto click", "auto clicker", "auto clicking", "click automatically",
-				"stop clicking", "stop auto clicking", "stop auto click", "stop auto clicker", "stop dwell clicking", "stop dwell click", "stop dwell clicker",
-			],
-			checkbox: {
-				toggle: () => {
-					if (/head-tracker/i.test(location.hash)) {
-						// @TODO: confirmation dialog that you could cancel with dwell clicking!
-						// Or: make head tracker work independently of dwell clicking, i.e. with facial gestures
-						// if (confirm("This will disable head tracker mode.")) {
-						// change_some_url_params({
-						// 	"head-tracker": false,
-						// 	"dwell-clicker": false,
-						// });
-						// }
-					} else if (/dwell-clicker/i.test(location.hash)) {
-						change_url_param("dwell-clicker", false);
-					} else {
-						change_url_param("dwell-clicker", true);
-					}
-				},
-				check: () => {
-					return /dwell-clicker|head-tracker/i.test(location.hash);
-				},
-			},
-			enabled: () => {
-				return !/head-tracker/i.test(location.hash);
-			},
-			description: localize("Clicks automatically after hovering in one place."),
-		},
-		{
 			emoji_icon: "🔍",
 			// label: localize("&Enlarge Buttons"), // too specific; it also enlarges windows and other UI elements
 			label: localize("&Enlarge UI"), // a bit technical, but hopefully common enough
@@ -1593,49 +1362,6 @@ const menus = {
 				},
 			},
 			description: localize("Enlarges buttons, windows, and menus for easier clicking."),
-		},
-		{
-			emoji_icon: "↩️", // doesn't match orientation of the actual button icon's arrow
-			// label: localize("&Floating Undo/Redo Buttons"),
-			// label: localize("Easy Undo/Redo"),
-			// label: localize("Easy &Undo"),
-			// label: localize("Easy &Undo Button"),
-			// label: localize("Floating &Undo"), // it might not always be floating, it might become part of the tool box
-			label: localize("Quick Undo Button"), // a bit long
-			// label: localize("Quick Undo"), // "Quick Undo" also refers to pressing both mouse buttons to cancel an action, not that you can't have multiple ways to "quick undo" if that's the better name
-			speech_recognition: [
-			],
-			checkbox: {
-				toggle: () => {
-					change_url_param("easy-undo", !/easy-undo/i.test(location.hash));
-				},
-				check: () => {
-					return /easy-undo/i.test(location.hash);
-				},
-			},
-			description: localize("Adds a button for undoing the last action."),
-		},
-		{
-			emoji_icon: "↕️",
-			label: localize("&Vertical Color Box"),
-			speech_recognition: [
-				"toggle vertical color box", "toggle vertical color box mode",
-				"toggle vertical colors box", "toggle vertical colors box mode",
-				"toggle vertical palette", "toggle vertical palette mode",
-				"toggle horizontal color box", "toggle horizontal color box mode",
-				"toggle horizontal colors box", "toggle horizontal colors box mode",
-				"toggle horizontal palette", "toggle horizontal palette mode",
-				// @TODO: "use a vertical/horizontal color box", "place palette on the left", "make palette tall/wide", etc.
-			],
-			checkbox: {
-				toggle: () => {
-					change_url_param("vertical-color-box-mode", !/vertical-color-box-mode/i.test(location.hash));
-				},
-				check: () => {
-					return /vertical-color-box-mode/i.test(location.hash);
-				},
-			},
-			description: localize("Arranges the color box vertically."),
 		},
 		{
 			emoji_icon: "🎙️",

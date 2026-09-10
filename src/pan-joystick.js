@@ -6,6 +6,9 @@
 import { $G, E } from "./helpers.js";
 import { get_quick_buttons_container } from "./quick-buttons.js";
 
+// The arrows cross behind the knob (four bold triangles), so the control reads as "pan".
+const PAN_CROSS_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><g fill="#404040"><path d="M20 3l7 8H13z"/><path d="M20 37l-7-8h14z"/><path d="M3 20l8-7v14z"/><path d="M37 20l-8 7V13z"/></g></svg>';
+
 const SETTING_KEY = "jspaint pan joystick"; // "auto" | "on" | "off"
 const RADIUS = 14; // knob travel in px
 const SPEED = 0.45; // px scrolled per frame per px of knob travel (≈ 6 px/frame at full tilt)
@@ -149,14 +152,11 @@ function init_pan_joystick() {
 			pointer-events: none;
 		}
 		.pan-joystick::before {
-			content: "✥";
+			content: "";
 			position: absolute;
 			left: 0; right: 0; top: 0; bottom: 0;
-			text-align: center;
-			line-height: 40px;
-			font-size: 26px;
-			color: var(--ButtonShadow, #808080);
-			opacity: 0.5;
+			background: url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(PAN_CROSS_SVG)}") center / 40px 40px no-repeat;
+			opacity: 0.9;
 		}
 	`).appendTo(document.head);
 }

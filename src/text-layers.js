@@ -15,9 +15,7 @@ import { get_tool_by_id, make_or_update_undoable, select_tool, undoable } from "
 import { $G, E, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, make_canvas, make_css_cursor, to_canvas_coords } from "./helpers.js";
 import { deselect_block } from "./blocks.js";
 import { deselect_sticker } from "./stickers.js";
-import { TOOL_TEXT } from "./tools.js";
-
-const WEB_TEXT_MODE_KEY = "jspaint web text mode";
+import { TOOL_WEB_TEXT } from "./tools.js";
 
 /** @type {OnCanvasText[]} bottom to top */
 let text_layers = [];
@@ -25,23 +23,7 @@ let text_layers = [];
 let selected_text_layer = null;
 let next_text_layer_id = 1;
 
-const text_icon = () => get_icon_for_tool(get_tool_by_id(TOOL_TEXT));
-
-/** @returns {boolean} whether finishing a textbox should make a text layer (vs. pixels) */
-function is_web_text_mode() {
-	try {
-		return localStorage.getItem(WEB_TEXT_MODE_KEY) === "true";
-	} catch (_error) {
-		return false;
-	}
-}
-/** @param {boolean} on */
-function set_web_text_mode(on) {
-	try {
-		localStorage.setItem(WEB_TEXT_MODE_KEY, String(on));
-	} catch (_error) { /* ignore */ }
-	$G.triggerHandler("web-text-mode-changed");
-}
+const text_icon = () => get_icon_for_tool(get_tool_by_id(TOOL_WEB_TEXT));
 
 /**
  * CSS for a layer's font, shared by the on-canvas element, the rasterized copy, and the collage format.
@@ -270,8 +252,9 @@ function edit_text_layer(layer) {
 			tool_transparent_mode = true;
 		}
 		$G.trigger("option-changed");
-		select_tool(get_tool_by_id(TOOL_TEXT));
-		const box = /** @type {OnCanvasTextBox & { web_text_layer_id?: string, web_text_href?: string }} */ (new OnCanvasTextBox(snapshot.x, snapshot.y, snapshot.width, snapshot.height, snapshot.text));
+		select_tool(get_tool_by_id(TOOL_WEB_TEXT));
+		const box = /** @type {OnCanvasTextBox & { web_text?: boolean, web_text_layer_id?: string, web_text_href?: string }} */ (new OnCanvasTextBox(snapshot.x, snapshot.y, snapshot.width, snapshot.height, snapshot.text));
+		box.web_text = true;
 		box.web_text_layer_id = snapshot.id;
 		box.web_text_href = snapshot.href;
 		textbox = box;
@@ -531,20 +514,6 @@ function init_text_layers() {
 		.text-layer.selected {
 			outline: 1px dashed #000;
 		}
-		.font-box .web-text-toggle, .font-box .marquee-toggle {
-			font: bold 11px sans-serif;
-			padding: 0 4px;
-			min-width: 28px;
-			height: 22px;
-		}
-		.font-box .marquee-toggle {
-			letter-spacing: -1px;
-		}
-		.font-box .marquee-toggle[aria-pressed="true"],
-		.font-box .web-text-toggle[aria-pressed="true"] {
-			box-shadow: inset 1px 1px #808080, inset -1px -1px #fff;
-			background: #e0e0e0;
-		}
 	`).appendTo(document.head);
 }
 
@@ -563,7 +532,6 @@ export {
 	get_selected_text_layer,
 	get_text_layers,
 	init_text_layers,
-	is_web_text_mode,
 	nudge_selected_text_layer,
 	order_text_layers,
 	remove_text_layer_by_id,
@@ -572,7 +540,6 @@ export {
 	restore_text_layers,
 	select_text_layer,
 	set_selected_text_layer_link,
-	set_web_text_mode,
 	snapshot_text_layers,
 	upsert_text_layer_from_snapshot
 };

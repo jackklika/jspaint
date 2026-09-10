@@ -13,7 +13,7 @@
 //   client → room:  hello {client_id, name, color} · seed / replace {width, height, page_properties, layers}
 //                   ops {ops: [{kind, op: "set"|"remove"|"order", item?|id?|ids?}], client_op_id}
 //                   bitmap {x, y, width, height, png (base64), reset?} · props {width?, height?, page_properties?}
-//                   presence {cursor, tool, selected, editing} · stroke {id, phase, tool, button, x, y, points, state} · ping
+//                   presence {cursor, tool, tool_id, selected, editing} · stroke {id, phase, tool, button, x, y, points, state} · ping
 //   room → client:  snapshot {version, doc, patches, clients, you} · seeded / ack {version} · replaced · ops {version, client_id, ops}
 //                   bitmap {version, client_id, x, y, width, height, png, reset} · props {version, client_id, …}
 //                   presence {client_id, …} · join {client} · leave {client_id} · request_snapshot · error {message} · pong
@@ -156,7 +156,7 @@ export class PageRoom extends DurableObject {
 				this.send(ws, { type: "pong", version: this.doc.version });
 				break;
 			case "presence":
-				this.broadcast({ type: "presence", client_id: info.client_id, cursor: message.cursor ?? null, tool: message.tool ?? null, selected: message.selected ?? null, editing: message.editing ?? null }, ws);
+				this.broadcast({ type: "presence", client_id: info.client_id, cursor: message.cursor ?? null, tool: message.tool ?? null, tool_id: message.tool_id ?? null, selected: message.selected ?? null, editing: message.editing ?? null }, ws);
 				break;
 			case "stroke":
 				// A stroke in progress (start / move / end / cancel): relayed, never stored — the finished stroke

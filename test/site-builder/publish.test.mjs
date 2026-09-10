@@ -12,10 +12,10 @@ if (!editor || !sites || !secret) {
 }
 const site = `test-${Date.now().toString(36)}`;
 
-const { page, close } = await open_paint({ init: () => { localStorage.setItem("jspaint web text mode", "true"); } });
+const { page, close } = await open_paint();
 await paste_file(page, await make_gif(page, { width: 40, height: 30 }), "a.gif");
 await page.waitForSelector(".sticker", { timeout: 5000 });
-await type_text_box(page, "Published text", { x: 300, y: 200, width: 220, height: 60 });
+await type_text_box(page, "Published text", { x: 300, y: 200, width: 220, height: 60, tool: "Web Text" });
 await page.waitForSelector(".text-layer", { timeout: 5000 });
 
 await click_menu_item(page, "Save to My Site...");

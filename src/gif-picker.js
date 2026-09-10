@@ -5,7 +5,7 @@
 // it as an animated sticker (stickers.js). gifcities.org has no API or CORS, so requests go through
 // the editor Worker's proxy (worker/editor/index.js).
 import { $DialogWindow } from "./$ToolWindow.js";
-import { get_site_editor_url } from "./site-publish.js";
+import { current_site, get_site_editor_url } from "./site-publish.js";
 import { show_error_message } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { add_sticker_from_blob } from "./stickers.js";
@@ -13,6 +13,25 @@ import { add_sticker_from_blob } from "./stickers.js";
 /** The GifCities proxy: the editor Worker. */
 function proxy_base() {
 	return get_site_editor_url();
+}
+
+// Opening the picker shows one of these right away, so there's something to grab before typing.
+const STARTER_QUERIES = ["under construction", "welcome", "sparkle", "dancing", "email", "new", "fire", "stars", "rainbow", "cat", "hamster", "skull", "flower", "spinning", "counter", "guestbook", "cool", "hearts", "alien", "computer"];
+
+/**
+ * Remembers that a GifCities GIF was used (POST /api/gifs/used: per site and overall — for "top GIFs" later).
+ * Best effort; nothing waits on it.
+ * @param {string} url
+ */
+function record_gif_use(url) {
+	const match = /\/api\/gifcities\/gif\/([A-Z0-9]{20,40})/.exec(url);
+	if (!match) { return; }
+	fetch(`${proxy_base()}/api/gifs/used`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ gif: match[1], site: current_site() || "" }),
+		keepalive: true,
+	}).catch(() => { /* ignore */ });
 }
 
 /** dataTransfer type for dragging a result from the picker onto the canvas (handled in app.js) */
@@ -46,6 +65,7 @@ async function add_gif_from_url(url, position) {
 			throw new Error(`HTTP ${response.status}`);
 		}
 		await add_sticker_from_blob(await response.blob(), position);
+		record_gif_use(url);
 	} catch (error) {
 		show_error_message("Couldn't add the GIF as a sticker.", error);
 	}
@@ -139,6 +159,11 @@ function show_gif_picker() {
 	});
 	$G.triggerHandler("gif-picker-toggled");
 	$query.focus();
+	// Something to look at right away
+	const starter = STARTER_QUERIES[Math.floor(Math.random() * STARTER_QUERIES.length)];
+	$query.val(starter);
+	search(starter);
+	$query.select();
 }
 
 function toggle_gif_picker() {

@@ -10,8 +10,8 @@
 // erases someone else's. Presence (cursors, who's editing which text) is relayed but not stored. Publishing
 // (Save to My Site) remains explicit; the room is the shared draft, so the page looks the same wherever you sign in.
 import { get_editing_block, get_selected_block, order_blocks, remove_block_by_id, set_remote_editor_lookup, snapshot_blocks, upsert_block_from_snapshot } from "./blocks.js";
-import { resize_canvas_without_saving_dimensions, update_helper_layer, update_title } from "./functions.js";
-import { $G, E, make_canvas, to_canvas_coords } from "./helpers.js";
+import { get_tool_by_id, resize_canvas_without_saving_dimensions, update_helper_layer, update_title } from "./functions.js";
+import { $G, E, get_icon_for_tool, make_canvas, to_canvas_coords } from "./helpers.js";
 import { upload_asset } from "./my-site.js";
 import { get_page_properties, set_page_properties } from "./page-properties.js";
 import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings } from "./site-publish.js";
@@ -30,7 +30,7 @@ const KINDS = /** @type {const} */ (["blocks", "stickers", "text_layers"]);
 
 /** @typedef {typeof KINDS[number]} LayerKind */
 /** @typedef {{ kind: LayerKind, op: "set", item: any } | { kind: LayerKind, op: "remove", id: string } | { kind: LayerKind, op: "order", ids: string[] }} LiveOp */
-/** @typedef {{ client_id: string, name: string, color: string, cursor?: { x: number, y: number } | null, tool?: string | null, selected?: string | null, editing?: string | null, $cursor?: JQuery<HTMLElement> }} RemoteClient */
+/** @typedef {{ client_id: string, name: string, color: string, cursor?: { x: number, y: number } | null, tool?: string | null, tool_id?: string | null, selected?: string | null, editing?: string | null, $cursor?: JQuery<HTMLElement> }} RemoteClient */
 
 /** @type {WebSocket | null} */
 let socket = null;
@@ -762,6 +762,7 @@ function send_presence(now = false) {
 			type: "presence",
 			cursor: my_cursor,
 			tool: selected_tool?.name || null,
+			tool_id: selected_tool?.id || null,
 			selected: get_selected_block()?.id || get_selected_sticker()?.id || get_selected_text_layer()?.id || null,
 			editing: get_editing_block()?.id || null,
 		});
@@ -779,6 +780,7 @@ function update_remote_client(message) {
 	const client = remote_clients.get(message.client_id) || { client_id: message.client_id, name: "Someone", color: "#000080" };
 	client.cursor = message.cursor;
 	client.tool = message.tool;
+	client.tool_id = message.tool_id || null;
 	client.selected = message.selected;
 	client.editing = message.editing;
 	remote_clients.set(message.client_id, client);
@@ -794,11 +796,21 @@ function render_remote_cursor(client) {
 		return;
 	}
 	if (!client.$cursor) {
+		// The pointer: a right triangle whose corner is exactly where they point; their tool's icon hangs below-left of
+		// it, with their name under that.
 		client.$cursor = $(E("div")).addClass("live-cursor").css({ "--live-color": client.color }).appendTo($canvas_area);
-		$(E("span")).addClass("live-cursor-arrow").appendTo(client.$cursor);
+		$(E("span")).addClass("live-cursor-pointer").html('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M11.5 0.5H0.5L11.5 11.5Z"/></svg>').appendTo(client.$cursor);
+		$(E("span")).addClass("live-cursor-tool").appendTo(client.$cursor);
 		$(E("span")).addClass("live-cursor-name").appendTo(client.$cursor);
 	}
-	client.$cursor.find(".live-cursor-name").text(client.tool ? `${client.name} · ${client.tool}` : client.name);
+	const $tool = client.$cursor.find(".live-cursor-tool");
+	const tool = client.tool_id ? get_tool_by_id(/** @type {ToolID} */ (client.tool_id)) : null;
+	if (tool && $tool.attr("data-tool") !== tool.id) {
+		$tool.empty().append(get_icon_for_tool(tool)).attr({ "data-tool": tool.id, title: tool.name }).show();
+	} else if (!tool) {
+		$tool.empty().removeAttr("data-tool").hide();
+	}
+	client.$cursor.find(".live-cursor-name").text(client.name);
 	client.$cursor.toggleClass("painting", !!remote_painters.get(client.client_id)?.active);
 	position_remote_cursor(client);
 }
@@ -1131,16 +1143,43 @@ function init_live_session() {
 			position: absolute;
 			z-index: 6;
 			pointer-events: none;
-			transform: translate(-1px, -1px);
-		}
-		.live-cursor-arrow {
-			display: block;
 			width: 0;
 			height: 0;
-			border-left: 6px solid var(--live-color);
-			border-right: 6px solid transparent;
-			border-bottom: 12px solid transparent;
-			border-top: 6px solid var(--live-color);
+		}
+		.live-cursor-pointer {
+			position: absolute;
+			left: -12px;
+			top: 0;
+			width: 12px;
+			height: 12px;
+			display: block;
+		}
+		.live-cursor-pointer svg {
+			display: block;
+		}
+		.live-cursor-pointer path {
+			fill: var(--live-color);
+			stroke: #000;
+			stroke-width: 1;
+		}
+		.live-cursor-tool {
+			position: absolute;
+			left: -34px;
+			top: 8px;
+			width: 24px;
+			height: 24px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			background: #fff;
+			border: 1px solid #000;
+			box-shadow: 1px 1px 0 var(--live-color);
+			box-sizing: border-box;
+		}
+		.live-cursor-tool img {
+			width: 16px;
+			height: 16px;
+			image-rendering: pixelated;
 		}
 		.remote-stroke-layer {
 			position: absolute;
@@ -1153,14 +1192,13 @@ function init_live_session() {
 			height: 100%;
 			image-rendering: pixelated;
 		}
-		.live-cursor.painting .live-cursor-arrow {
-			border-left-color: #000;
-			border-top-color: #000;
+		.live-cursor.painting .live-cursor-pointer path {
+			stroke-width: 2;
 		}
 		.live-cursor-name {
 			position: absolute;
-			left: 10px;
-			top: 10px;
+			left: -34px;
+			top: 34px;
 			font: 10px sans-serif;
 			line-height: 13px;
 			padding: 0 4px;

@@ -1,9 +1,9 @@
 import { assert, canvas_box, capture_saves, click_menu_item, open_paint, type_text_box } from "./helpers.mjs";
 
-const { page, close } = await open_paint({ init: () => { localStorage.setItem("jspaint web text mode", "true"); } });
+const { page, close } = await open_paint();
 const layers = () => page.evaluate(() => (current_history_node.text_layers || []).map((t) => `${t.id}:"${t.text}"@${t.x},${t.y} ${t.font.family} href=${t.href}`));
 
-await type_text_box(page, "Hello web", { x: 50, y: 50 });
+await type_text_box(page, "Hello web", { x: 50, y: 50, tool: "Web Text" });
 await page.waitForSelector(".text-layer", { timeout: 5000 });
 assert.deepEqual(await layers(), ['t1:"Hello web"@50,50 "Arial" href=']);
 assert.equal(await page.evaluate(() => current_history_node.name), "Finish Text");

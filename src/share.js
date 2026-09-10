@@ -12,7 +12,6 @@ import { HTML_FORMAT_ID } from "./collage-format.js";
 import { update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { qr_modules, render_qr_canvas } from "./qr.js";
-import { get_quick_buttons_container } from "./quick-buttons.js";
 import { preview_path, render_share_preview } from "./share-preview.js";
 import { current_site, get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
 
@@ -225,27 +224,12 @@ function show_share_dialog() {
 	refresh();
 }
 
-/** Call once the quick buttons exist (app.js). Adds the Share button and joins from a share link if there is one. */
+/** Call once the app is up (app.js): joins from a share link if there is one, and keeps shared pages' previews fresh. */
 function init_share() {
-	const $container = get_quick_buttons_container();
-	/** @type {JQuery<HTMLButtonElement> | null} */
-	let $share = null;
-	if ($container) {
-		$share = /** @type {JQuery<HTMLButtonElement>} */ ($(E("button")).addClass("quick-button share-button").attr({ type: "button", title: localize("Share this page: a link and QR code others can join right away"), "aria-label": localize("Share") }).hide().prependTo($container));
-		$(E("span")).addClass("quick-button-icon share-icon").appendTo($share);
-		$share.on("mousedown", (e) => { e.preventDefault(); });
-		$share.on("click", () => { show_share_dialog(); });
-	}
-	const update = () => { $share?.toggle(!!current_site_page()); };
-	$G.on("history-update site-page-opened site-page-restored", update);
 	$G.on("history-update", schedule_preview_refresh);
-	update();
 	window.addEventListener("load", () => { setTimeout(join_from_share_link, 400); });
 
 	$("<style>").text(`
-		.share-icon {
-			background-image: url("data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges"><rect x="1" y="5" width="9" height="9" fill="#fff" stroke="#000"/><path d="M8 1h7v7h-1V3H9V2h6zM7 3h1v1h1v1h1v1H9v3H8V6H7z" fill="#000080"/><path d="M14 2v1h-4v1h4v1h1V2z" fill="#000080"/><path d="M6 9h1V8h1V7h1v3H8v1H7v1H6zM9 4h1v1h-1z" fill="#000080"/></svg>')}");
-		}
 		.share-blurb {
 			margin: 0 0 8px;
 		}

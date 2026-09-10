@@ -14,7 +14,7 @@ let $undo = null;
 let $redo = null;
 
 /**
- * A 16×16 icon from rows of pixel art ("#" = ink), in one color. `etched` adds the Windows disabled look: a white
+ * A square icon from rows of pixel art ("#" = ink), in one color. `etched` adds the Windows disabled look: a white
  * copy one pixel down and right, under a grey glyph.
  * @param {string[]} rows @param {string} color @param {boolean} [etched]
  */
@@ -22,27 +22,36 @@ function pixel_icon(rows, color, etched = false) {
 	const path = rows.flatMap((row, y) => [...row].map((ch, x) => (ch === "#" ? `M${x} ${y}h1v1h-1z` : "")).filter(Boolean)).join("");
 	const glyph = (/** @type {string} */ fill, /** @type {number} */ offset) => `<path d="${path}" fill="${fill}"${offset ? ` transform="translate(${offset} ${offset})"` : ""}/>`;
 	const body = etched ? glyph("#fff", 1) + glyph("#808080", 0) : glyph(color, 0);
-	return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">${body}</svg>`)}`;
+	const size = rows.length;
+	return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">${body}</svg>`)}`;
 }
 
-// Bold curved arrows: a solid head and a 2px stroke, black on the button face (undo bends left, redo bends right).
+// Thick curved arrows, 24px: a fat 4px arc with a big head (undo bends left, redo bends right), black on the button face.
 const UNDO_ROWS = [
-	"................",
-	"................",
-	"................",
-	".......#####....",
-	".....#########..",
-	"....###....####.",
-	"...###.......##.",
-	"..####.......##.",
-	".#####.......##.",
-	"..####.......##.",
-	"...###.......##.",
-	"....##..........",
-	"................",
-	"................",
-	"................",
-	"................",
+	"........................",
+	"........................",
+	"........................",
+	"........................",
+	"..........########......",
+	"........############....",
+	".......##############...",
+	".......###############..",
+	"......#####......#####..",
+	"....######........#####.",
+	"...#######.........####.",
+	"..########.........####.",
+	".#########.........####.",
+	"..########.........####.",
+	"...#######.........####.",
+	"....######.........####.",
+	"......####........#####.",
+	".......###.......#####..",
+	"........##.......#####..",
+	".........#........###...",
+	"..................##....",
+	"........................",
+	"........................",
+	"........................",
 ];
 const REDO_ROWS = UNDO_ROWS.map((row) => [...row].reverse().join(""));
 const UNDO_ICON = pixel_icon(UNDO_ROWS, "#000");
@@ -100,11 +109,11 @@ function init_quick_buttons() {
 		}
 		.quick-button-icon {
 			display: block;
-			width: 16px;
-			height: 16px;
+			width: 24px;
+			height: 24px;
 			background-image: var(--icon);
 			background-repeat: no-repeat;
-			background-size: 16px 16px;
+			background-size: 24px 24px;
 			image-rendering: pixelated;
 		}
 		.quick-button:disabled .quick-button-icon {

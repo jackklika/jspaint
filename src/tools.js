@@ -128,6 +128,9 @@ const TOOL_PENCIL = "TOOL_PENCIL";
 const TOOL_BRUSH = "TOOL_BRUSH";
 const TOOL_AIRBRUSH = "TOOL_AIRBRUSH";
 const TOOL_TEXT = "TOOL_TEXT";
+const TOOL_WEB_TEXT = "TOOL_WEB_TEXT";
+// The Web Text tool's toolbox icon: letters in a box, with a link underline (the other tools' icons come from the theme).
+const WEB_TEXT_ICON = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges"><rect x="0.5" y="0.5" width="15" height="12" fill="#fff" stroke="#000"/>${[[6, 2], [7, 2], [5, 3], [8, 3], [5, 4], [8, 4], [5, 5], [6, 5], [7, 5], [8, 5], [5, 6], [8, 6], [5, 7], [8, 7]].map(([x, y]) => `<rect x="${x}" y="${y}" width="1" height="1" fill="#000"/>`).join("")}<rect x="3" y="9" width="9" height="1" fill="#000080"/></svg>`)}`;
 const TOOL_LINE = "TOOL_LINE";
 const TOOL_CURVE = "TOOL_CURVE";
 const TOOL_RECTANGLE = "TOOL_RECTANGLE";
@@ -822,6 +825,28 @@ const tools = [{
 	selectBox(rect_x, rect_y, rect_width, rect_height) {
 		if (rect_width > 1 && rect_height > 1) {
 			textbox = new OnCanvasTextBox(rect_x, rect_y, rect_width, rect_height);
+		}
+	},
+	$options: $choose_transparent_mode,
+}, {
+	// Web Text: the same text box, but finishing keeps the words as text on the page (a layer that stays editable
+	// and can be a link — text-layers.js) instead of drawing them into the picture.
+	id: TOOL_WEB_TEXT,
+	name: localize("Web Text"),
+	speech_recognition: [
+		"web text", "live text", "html text", "text layer", "real text", "link text", "editable text",
+	],
+	help_icon: "p_txt.gif",
+	icon_svg: WEB_TEXT_ICON,
+	description: localize("Puts text on the page as text — editable later, and it can be a link — instead of as pixels."),
+	cursor: ["precise", [16, 16], "crosshair"],
+	preload() {
+		setTimeout(FontDetective.preload, 10);
+	},
+	selectBox(rect_x, rect_y, rect_width, rect_height) {
+		if (rect_width > 1 && rect_height > 1) {
+			textbox = new OnCanvasTextBox(rect_x, rect_y, rect_width, rect_height);
+			/** @type {any} */ (textbox).web_text = true;
 		}
 	},
 	$options: $choose_transparent_mode,
@@ -1612,7 +1637,7 @@ const tools = create_tools();
 export {
 	TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER,
 	TOOL_FILL, TOOL_FREE_FORM_SELECT, TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_LINE, TOOL_MAGNIFIER,
-	TOOL_PENCIL, TOOL_PICK_COLOR, TOOL_POINTER, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, TOOL_TEXT,
+	TOOL_PENCIL, TOOL_PICK_COLOR, TOOL_POINTER, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, TOOL_TEXT, TOOL_WEB_TEXT,
 	block_tool_id, create_tools, tools
 };
 // Temporary globals until all dependent code is converted to ES Modules

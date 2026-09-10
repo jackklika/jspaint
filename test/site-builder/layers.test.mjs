@@ -1,11 +1,11 @@
 import { assert, click_menu_item, make_gif, open_paint, paste_file, type_text_box } from "./helpers.mjs";
 
-const { page, close } = await open_paint({ init: () => { localStorage.setItem("jspaint web text mode", "true"); } });
+const { page, close } = await open_paint();
 await paste_file(page, await make_gif(page, { width: 40, height: 30 }), "a.gif");
 await page.waitForSelector(".sticker", { timeout: 5000 });
 await paste_file(page, await make_gif(page, { width: 20, height: 20 }), "b.gif");
 await page.waitForFunction(() => document.querySelectorAll(".sticker").length === 2, null, { timeout: 5000 });
-await type_text_box(page, "Layer text", { x: 300, y: 200, width: 200, height: 60 });
+await type_text_box(page, "Layer text", { x: 300, y: 200, width: 200, height: 60, tool: "Web Text" });
 await page.waitForSelector(".text-layer", { timeout: 5000 });
 
 await click_menu_item(page, "Layers");

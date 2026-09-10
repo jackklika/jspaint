@@ -12,6 +12,7 @@
 //   GET    /api/sites/:name/rooms/:page?token=…      WebSocket: the page's live room (PageRoom Durable Object, page-room.js)
 //   POST   /api/sites/:name/rooms/:page/invite       make a share key for that page (owner only) → { key, expires }
 //   …?invite=<key> / Authorization: Invite <key>    a guest: may join that page's room and save that page (and its previews/ card, gifs/, midi/)
+//   POST   /api/gifs/used {gif, site?}                 remember a GifCities GIF was used (GifStats DO); GET /api/gifs/top?site=&limit= lists the most used
 //   GET    /?join=<site>/<page>/<key>                a share link: Paint with link-preview tags for that page (share_landing)
 //
 // Auth: `Authorization: Bearer <SITE_EDIT_SECRET>` on /api/whoami, listing, and writes. Reads of site files are public.
@@ -19,6 +20,7 @@
 import { content_type_for, is_html_path, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { x_elements } from "../shared/x-elements/index.js";
+export { GifStats } from "./gif-stats.js";
 export { PageRoom } from "./page-room.js";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -321,7 +323,7 @@ export function canonical_redirect(url, canonical_url) {
 export default {
 	/**
 	 * @param {Request} request
-	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
+	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, GIF_STATS: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
@@ -371,6 +373,22 @@ export default {
 				const upstream = await fetch(`https://blob.gifcities.org/gifcities/${gif_match[1]}.gif`, { headers: GIFCITIES_HEADERS, cf: { cacheTtl: 86400, cacheEverything: true } });
 				if (!upstream.ok) { return json({ error: `GifCities returned HTTP ${upstream.status}` }, 502); }
 				return new Response(upstream.body, { headers: { ...CORS_HEADERS, "Content-Type": "image/gif", "Cache-Control": "public, max-age=86400" } });
+			}
+			// GIF usage: which GifCities GIFs people use (GifStats Durable Object), for "top GIFs" per site and overall.
+			if (url.pathname === "/api/gifs/used" && request.method === "POST") {
+				const body = await request.json().catch(() => ({}));
+				const gif = String(body.gif || "");
+				const site = String(body.site || "");
+				if (!/^[A-Z0-9]{20,40}$/.test(gif)) { return json({ error: "gif must be a GifCities id" }, 400); }
+				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
+				await env.GIF_STATS.getByName("global").record(gif, site);
+				return json({ ok: true });
+			}
+			if (url.pathname === "/api/gifs/top") {
+				const site = url.searchParams.get("site") || "";
+				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
+				const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit")) || 50));
+				return json({ site, top: await env.GIF_STATS.getByName("global").top(site, limit) });
 			}
 			if (url.pathname === "/api/x-elements") {
 				return json([...x_elements.values()].map((definition) => ({ tag: definition.tag, attrs: definition.attrs, editor: definition.editor })));

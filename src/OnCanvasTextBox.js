@@ -306,6 +306,8 @@ class OnCanvasTextBox extends OnCanvasObject {
 			this.$editor[0].scrollIntoView({ block: "nearest", inline: "nearest" });
 			displace_font_box();
 		});
+		// After the caller stores this box in the `textbox` global: the Font toolbar's Marquee toggle follows it.
+		setTimeout(() => { $G.triggerHandler("textbox-changed"); }, 0);
 	}
 	position() {
 		super.position(true);
@@ -313,6 +315,7 @@ class OnCanvasTextBox extends OnCanvasObject {
 	}
 	destroy() {
 		super.destroy();
+		setTimeout(() => { $G.triggerHandler("textbox-changed"); }, 0);
 		// Don't want to call close() anymore since the "close" event is handled to toggle `show_font_box` now,
 		// and we don't want to toggle the preference when destroying the textbox.
 		// The window is essentially a lazy-loaded singleton, hidden instead of closed.
