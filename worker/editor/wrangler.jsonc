@@ -10,13 +10,11 @@
 	"preview_urls": false,
 	"observability": { "enabled": true },
 	// Custom Domains (the zone coolpaint.world is on this account): DNS records and certificates are created on deploy.
-	// The editor is edit.coolpaint.world (first: `wrangler dev` takes routes[0] as the local host). The apex + www are
-	// listed here only during the flip (deploy step 1) so they aren't detached before the sites Worker takes them; step 3
-	// removes them — a hostname must never stay in both configs (a non-TTY deploy would silently steal it back).
+	// The editor is edit.coolpaint.world only. The apex and www belong to the sites Worker — a hostname must never be
+	// listed in both configs: wrangler treats this list as the Worker's complete set of Custom Domains and, without a
+	// TTY, silently re-points a hostname that another Worker holds.
 	"routes": [
-		{ "pattern": "edit.coolpaint.world", "custom_domain": true },
-		{ "pattern": "coolpaint.world", "custom_domain": true },
-		{ "pattern": "www.coolpaint.world", "custom_domain": true }
+		{ "pattern": "edit.coolpaint.world", "custom_domain": true }
 	],
 	"assets": {
 		"directory": "./dist",
