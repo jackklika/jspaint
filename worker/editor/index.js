@@ -16,14 +16,14 @@
 //   …?invite=<key> / Authorization: Invite <key>    a guest: may join that page's room and save that page (and its previews/ card, gifs/, midi/)
 //   POST   /api/gifs/used {gif, site?}                 remember a GifCities GIF was used (GifStats DO); GET /api/gifs/top?site=&limit= lists the most used
 //   GET    /?join=<site>/<page>/<key>                a share link: Paint with link-preview tags for that page (share_landing)
-//   GET    /~name[/page.html]                        → 302 /?site=name[&page=…]: Paint opens that site (site_entry_redirect)
+//   GET    /~name[/page]  and  /page (root site)     → 302 /?site=name[&page=…]: Paint opens that page (site_entry_redirect; ".html" optional)
 //
 // Auth: `Authorization: Bearer <token>` on whoami, listing, writes, invites, and rooms (?token= on the WebSocket).
 // The token is either the master key (SITE_EDIT_SECRET: every site, plus minting passwords) or one site's password
 // (random, minted by the master, stored only as a keyed hash in the Accounts Durable Object — accounts.js). role_of()
 // says which. Reads of site files are public. Open sign-up / Google OAuth come later (docs/PLAN.md phase 5).
 import { inject_analytics } from "../shared/analytics.js";
-import { content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
+import { ROOT_SITE, content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { x_elements } from "../shared/x-elements/index.js";
 export { Accounts } from "./accounts.js";
@@ -428,25 +428,41 @@ export function canonical_redirect(url, canonical_url) {
 }
 
 const SITE_ENTRY = /^\/~([^/]+)(?:\/(.*))?$/;
+// Paint's own files, served as they are; everything else on the editor host is a page address.
+const APP_DIRECTORIES = /^\/(src|lib|images|styles|help|audio|localization)\//;
+const APP_FILES = new Set(["/", "/index.html", "/favicon.ico", "/manifest.webmanifest", "/browserconfig.xml"]);
 /**
- * edit.<domain>/~name[/page.html] → Paint with ?site=&page= (src/my-site.js opens that site: Sign In first if needed).
- * A path that isn't a page (a GIF, a typo) just opens the site.
+ * Page addresses on the editor host mirror the sites host, and open that page in Paint (src/my-site.js: the page
+ * itself when you're signed in as the site, a copy otherwise): edit.<domain>/~name[/page] → ?site=name[&page=…],
+ * and edit.<domain>/about (or /about.html, /blog/post) → the root site's page. ".html" is optional. A path under
+ * a site that isn't a page (a GIF, a typo) just opens the site. Returns null for Paint's own files.
  * @param {URL} url
  * @returns {Response | null}
  */
 export function site_entry_redirect(url) {
-	const match = SITE_ENTRY.exec(url.pathname);
-	if (!match) { return null; }
-	const site = match[1];
-	if (!valid_site_name(site)) { return new Response("Not found", { status: 404 }); }
-	let page = match[2] || "";
+	if (APP_FILES.has(url.pathname) || APP_DIRECTORIES.test(url.pathname)) { return null; }
+	let site, rest;
+	const tilde = SITE_ENTRY.exec(url.pathname);
+	if (tilde) {
+		site = tilde[1];
+		if (!valid_site_name(site)) { return new Response("Not found", { status: 404 }); }
+		rest = tilde[2] || "";
+	} else {
+		site = ROOT_SITE;
+		rest = url.pathname.slice(1);
+	}
+	let page = rest;
+	if (page && !page.endsWith("/") && !/\.[A-Za-z0-9]+$/.test(page)) { page += ".html"; } // /about → about.html
 	if (page.endsWith("/")) { page += "index.html"; }
 	try {
 		page = decodeURIComponent(page);
 	} catch (_error) {
 		page = "";
 	}
-	if (page && !(valid_path(page) && is_html_path(page))) { page = ""; }
+	if (page && !(valid_path(page) && is_html_path(page))) {
+		if (!tilde) { return null; } // not a page on the root site (e.g. /foo.png): let the assets answer (404 if there's none)
+		page = "";
+	}
 	const params = new URLSearchParams({ site });
 	if (page) { params.set("page", page); }
 	return new Response(null, { status: 302, headers: { Location: `/?${params}`, "Cache-Control": "no-store" } });

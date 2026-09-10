@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Jack: "edit.coolpaint.world/about or /about.html … automatically go to that page" → editor-host page addresses mirror the sites host: `/about`, `/about.html`, `/blog/post` → the root site's page; `/~jack/about` too (`.html` optional). `run_worker_first: true`; Paint's own files/dirs are excluded by name (`APP_FILES`/`APP_DIRECTORIES` in worker/editor/index.js).
+
 - 2026-09-10 — Jack: "when I go to edit.coolpaint.world it isn't automatically showing the site I made" → a plain visit (no `#local:` session, no `?site`/`?join`) while signed in opens the page you last saved (`load_settings().page`, default index.html) if it exists (`FRESH_VISIT` in my-site.js; `page_exists` probes with `?optional`).
 
 - 2026-09-10 — Jack: "anyone to be able to open any page in the editor, but not be able to publish it to that url unless they have permission": `edit.coolpaint.world/~name/page.html` opens a **copy** for anyone (`open_page_copy`, no sign-in, no room, `system_file_handle.copy_of`); Save to My Site puts it on the site you sign in to; the server already scopes writes (`role_of`). Root UX: New Page suggests `index.html` first.

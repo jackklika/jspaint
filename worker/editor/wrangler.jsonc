@@ -19,8 +19,9 @@
 	"assets": {
 		"directory": "./dist",
 		"binding": "ASSETS",
-		// The Worker sees the API and the page shell (so the shell can 301 to the domain); every other asset is served directly.
-		"run_worker_first": ["/api/*", "/", "/index.html", "/~*"]
+		// The Worker sees every request: page addresses (/~name/page, /about) redirect into Paint, the shell can 301 to the
+		// domain, and Paint's own files fall through to the assets (index.js site_entry_redirect).
+		"run_worker_first": true
 	},
 	"r2_buckets": [
 		{ "binding": "SITES", "bucket_name": "jspaint-sites" }
