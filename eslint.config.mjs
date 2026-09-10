@@ -295,22 +295,10 @@ export default [
 				"textbox": "readonly",
 				"file_format": "readonly",
 				"file_name": "readonly",
+				"system_file_handle": "readonly",
+				"selected_tool": "readonly",
 				"undos": "readonly",
 				"saved": "writable",
-			},
-		},
-	},
-	{
-		"files": [
-			"desktop/**/*.js",
-		],
-		"languageOptions": {
-			"sourceType": "module",
-			"globals": {
-				...globals.browser,
-				"$": "readonly",
-				"jQuery": "readonly",
-				"$Window": "readonly",
 			},
 		},
 	},

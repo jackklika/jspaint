@@ -182,6 +182,9 @@ declare function make_monochrome_palette(rgba1?: number[], rgba2?: number[]): (s
  * @param {number=} options.textbox_width - the width of the textbox, if any
  * @param {number=} options.textbox_height - the height of the textbox, if any
  * @param {TextToolFontOptions | null=} options.text_tool_font - the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox)
+ * @param {StickerSnapshot[] | null=} options.stickers - the sticker layer (stickers.js)
+ * @param {TextLayerSnapshot[] | null=} options.text_layers - the web text layers (text-layers.js)
+ * @param {BlockSnapshot[] | null=} options.blocks - the page elements (blocks.js)
  * @param {boolean=} options.tool_transparent_mode - whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
  * @param {string | CanvasPattern=} options.foreground_color - selected foreground color (left click)
  * @param {string | CanvasPattern=} options.background_color - selected background color (right click)
@@ -190,7 +193,7 @@ declare function make_monochrome_palette(rgba1?: number[], rgba2?: number[]): (s
  * @param {HTMLImageElement |HTMLCanvasElement | null=} options.icon - a visual representation of the operation type, shown in the history window, e.g. get_help_folder_icon("p_blank.png")
  * @returns {HistoryNode}
  */
-declare function make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
+declare function make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, stickers, text_layers, blocks, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
 	parent?: (HistoryNode | null) | undefined;
 	futures?: HistoryNode[] | undefined;
 	timestamp?: number | undefined;
@@ -205,6 +208,9 @@ declare function make_history_node({ parent, futures, timestamp, soft, image_dat
 	textbox_width?: number | undefined;
 	textbox_height?: number | undefined;
 	text_tool_font?: (TextToolFontOptions | null) | undefined;
+	stickers?: (StickerSnapshot[] | null) | undefined;
+	text_layers?: (TextLayerSnapshot[] | null) | undefined;
+	blocks?: (BlockSnapshot[] | null) | undefined;
 	tool_transparent_mode?: boolean | undefined;
 	foreground_color?: (string | CanvasPattern) | undefined;
 	background_color?: (string | CanvasPattern) | undefined;
@@ -314,7 +320,7 @@ interface Window {
 	 * @param {HTMLImageElement |HTMLCanvasElement | null=} options.icon - a visual representation of the operation type, shown in the history window, e.g. get_help_folder_icon("p_blank.png")
 	 * @returns {HistoryNode}
 	 */
-	make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
+	make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, stickers, text_layers, blocks, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
 		parent?: (HistoryNode | null) | undefined;
 		futures?: HistoryNode[] | undefined;
 		timestamp?: number | undefined;
@@ -672,7 +678,12 @@ type ToolID =
 	"TOOL_RECTANGLE" |
 	"TOOL_POLYGON" |
 	"TOOL_ELLIPSE" |
-	"TOOL_ROUNDED_RECTANGLE";
+	"TOOL_ROUNDED_RECTANGLE" |
+	// page tools (page-tools.js)
+	"TOOL_POINTER" |
+	"TOOL_GIF_PICKER" |
+	"TOOL_IMAGE_UPLOAD" |
+	`TOOL_BLOCK_${string}`;
 
 // This is very silly!
 // This isn't a coherent API, but rather a layered set of functionality
@@ -700,6 +711,12 @@ interface Tool {
 	stroke_only?: boolean,
 	/** Used by Airbrush tool */
 	paint_on_time_interval?: number,
+	/** Page tools (page-tools.js): shown below a divider in the toolbox */
+	page_tool?: boolean,
+	/** An inline (data: URL) icon, for tools without one in the help folder */
+	icon_svg?: string,
+	/** A one-shot tool: clicking its button runs this instead of selecting the tool */
+	action?(): void,
 
 	/** Called when... */
 	preload?(): void,
@@ -809,6 +826,8 @@ interface HistoryNode {
 	stickers: StickerSnapshot[] | null;
 	/** the web text layers, if any (see text-layers.js) */
 	text_layers: TextLayerSnapshot[] | null;
+	/** the page elements (blocks), if any (see blocks.js) */
+	blocks: BlockSnapshot[] | null;
 	/** whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque */
 	tool_transparent_mode: boolean;
 	/** selected foreground color (left click) */
@@ -862,6 +881,23 @@ interface TextLayerSnapshot {
 	text: string;
 	font: TextLayerFont;
 	href: string;
+}
+
+/** One page element (block) as stored on history nodes and in the page (see blocks.js, block-kinds.js). */
+interface BlockSnapshot {
+	id: string;
+	/** kind id from block-kinds.js ("heading", "marquee", "x-counter", …), derived from tag + attrs */
+	kind: string;
+	/** element tag name, lowercase */
+	tag: string;
+	/** attributes other than class and style */
+	attrs: Record<string, string>;
+	/** inner HTML */
+	html: string;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
 }
 
 interface ActionMetadata {

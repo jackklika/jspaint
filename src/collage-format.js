@@ -1,32 +1,44 @@
 // @ts-check
 // eslint-disable-next-line no-unused-vars
-/* global current_history_node:writable, file_format:writable */
-/* global file_name, main_canvas */
-// The collage file format: a page in the HTML dialect (docs/DESIGN.md §3.3) containing one `div.collage`
-// with the bitmap and the sticker layers. Saving produces a self-contained .html (assets as data URLs);
-// the same markup is what gets written into a site's page with file references instead.
+/* global current_history_node:writable, file_format:writable, file_name:writable, system_file_handle:writable */
+/* global main_canvas */
+// The page file format: a page in the HTML dialect (docs/DESIGN.md §3) containing one `div.collage` — the
+// Paint document — with the bitmap, the page elements (blocks), the stickers, and the text layers as
+// positioned children. Saving locally produces a self-contained .html (assets as data URLs); the same
+// markup is what gets written into a site's page with file references instead.
 //
-//   <div class="collage" style="width:600px;height:400px">
+//   <body bgcolor="#ffffd9"><center>
+//   <div class="collage" style="width:800px;height:600px">
 //     <img class="bitmap" src="…png">
+//     <h1 class="block" style="left:20px;top:10px;width:400px;height:48px"><font face="Comic Sans MS">hi</font></h1>
+//     <x-counter class="block" style="…">You are visitor number <b>?????</b></x-counter>
 //     <img class="sticker" src="…gif" style="left:20px;top:30px;width:64px;height:64px;transform:scale(-1, 1)">
+//     <span class="text" style="…">~ est. 1999 ~</span>
 //   </div>
+//   </center></body>
+import { block_markup, get_blocks, restore_blocks, snapshot_blocks } from "./blocks.js";
+import { block_kind_for, sanitize_html_fragment } from "./block-kinds.js";
 import { open_from_image_info, read_image_file, show_error_message, write_image_file } from "./functions.js";
+import { get_page_properties, set_page_properties } from "./page-properties.js";
 import { PAGE_WIDTH } from "./site-constants.js";
 import { get_sticker_source, get_stickers, register_sticker_source, restore_stickers, snapshot_stickers } from "./stickers.js";
 import { font_css, get_text_layers, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
 
 const HTML_FORMAT_ID = "text/html";
 
-// Every collage page carries this so it renders identically anywhere, with no external stylesheet.
+// Every page carries this so it renders identically anywhere, with no external stylesheet.
 const COLLAGE_CSS = `
-.collage { position: relative; display: inline-block; overflow: hidden; line-height: 0; }
+body > center { line-height: 0; }
+.collage { position: relative; display: inline-block; overflow: hidden; line-height: 0; text-align: left; }
 .collage > .bitmap { display: block; image-rendering: pixelated; }
-.collage > .sticker, .collage > .text { position: absolute; }
+.collage > .sticker, .collage > .text, .collage > .block { position: absolute; }
 .collage > .sticker { image-rendering: pixelated; }
 .collage > a.sticker { display: block; }
 .collage > a.sticker > img { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
 .collage > .text { box-sizing: border-box; margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: break-word; overflow: hidden; text-decoration: none; }
 .collage > a.text { text-decoration: underline; }
+.collage > .block { display: block; margin: 0; box-sizing: border-box; overflow: hidden; line-height: normal; font: 16px "Times New Roman", Times, serif; color: #000; }
+.collage > hr.block { height: auto !important; }
 `.trim();
 
 /**
@@ -61,15 +73,16 @@ function canvas_to_png_blob(canvas) {
 }
 
 /**
- * Serializes the document (bitmap + stickers) as a collage page.
+ * Serializes the document (bitmap + blocks + stickers + text layers) as a page.
  * @param {object} [options]
- * @param {HTMLCanvasElement} [options.canvas] - defaults to the main canvas; another canvas (e.g. a selection) gets no stickers
+ * @param {HTMLCanvasElement} [options.canvas] - defaults to the main canvas; another canvas (e.g. a selection) gets no layers
  * @param {string} [options.title]
  * @param {(blob: Blob, kind: "bitmap" | "sticker", index: number) => Promise<string>} [options.asset_url] - where assets go; defaults to data URLs
  * @returns {Promise<string>}
  */
 async function serialize_collage_html({ canvas = main_canvas, title = file_name, asset_url = (blob) => blob_to_data_url(blob) } = {}) {
 	const bitmap_src = await asset_url(await canvas_to_png_blob(canvas), "bitmap", 0);
+	const block_tags = canvas === main_canvas ? get_blocks().map((block) => `\t\t${block_markup(block.snapshot())}`) : [];
 	const sticker_tags = [];
 	if (canvas === main_canvas) {
 		let index = 0;
@@ -99,21 +112,28 @@ async function serialize_collage_html({ canvas = main_canvas, title = file_name,
 		}
 	}
 	const page_title = title.replace(/\.(bmp|dib|a?png|gif|jpe?g|jpe|jfif|tiff?|webp|raw|html?)$/i, "") || "Untitled";
+	const props = get_page_properties();
+	const body_attrs = [
+		props.bgcolor ? ` bgcolor="${escape_html(props.bgcolor)}"` : "",
+		props.text_color ? ` text="${escape_html(props.text_color)}"` : "",
+		props.background ? ` background="${escape_html(props.background)}"` : "",
+	].join("");
 	return `<!DOCTYPE html>
 <html data-page-width="${PAGE_WIDTH}">
 <head>
 <meta charset="utf-8">
-<meta name="generator" content="JS Paint collage">
+<meta name="generator" content="JS Paint site builder">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escape_html(page_title)}</title>
 <style>
 ${COLLAGE_CSS}
 </style>
 </head>
-<body>
+<body${body_attrs}>
 <center>
 	<div class="collage" style="width:${canvas.width}px;height:${canvas.height}px">
 		<img class="bitmap" src="${bitmap_src}" width="${canvas.width}" height="${canvas.height}" alt="">
-${[...sticker_tags, ...text_tags].join("\n")}
+${[...block_tags, ...sticker_tags, ...text_tags].join("\n")}
 	</div>
 </center>
 </body>
@@ -128,6 +148,9 @@ ${[...sticker_tags, ...text_tags].join("\n")}
  * @property {string} bitmap_src
  * @property {{ src: string, x: number, y: number, width: number, height: number, flip_x: boolean, flip_y: boolean, rotation: number, href: string }[]} stickers
  * @property {TextLayerSnapshot[]} text_layers
+ * @property {BlockSnapshot[]} blocks
+ * @property {string} title
+ * @property {{ bgcolor: string, text_color: string, background: string }} page_properties
  */
 
 /**
@@ -190,9 +213,40 @@ function parse_collage_html(html) {
 			href: el.getAttribute("href") || "",
 		});
 	}
+	/** @type {BlockSnapshot[]} */
+	const blocks = [];
+	for (const [index, el] of [...collage.children].filter((child) => child.classList.contains("block")).entries()) {
+		const style = /** @type {HTMLElement} */ (el).style;
+		const tag = el.tagName.toLowerCase();
+		/** @type {Record<string, string>} */
+		const attrs = {};
+		for (const attr of el.attributes) {
+			if (!/^(class|style|contenteditable)$/i.test(attr.name) && !/^on/i.test(attr.name)) {
+				attrs[attr.name.toLowerCase()] = attr.value;
+			}
+		}
+		blocks.push({
+			id: `b${index + 1}`,
+			kind: block_kind_for(tag, attrs).id,
+			tag,
+			attrs,
+			html: sanitize_html_fragment(el.innerHTML),
+			x: px(style.left),
+			y: px(style.top),
+			width: px(style.width) || 100,
+			height: px(style.height) || 24,
+		});
+	}
 	const style = /** @type {HTMLElement} */ (collage).style;
 	return {
 		text_layers,
+		blocks,
+		title: doc.title || "",
+		page_properties: {
+			bgcolor: doc.body.getAttribute("bgcolor") || "",
+			text_color: doc.body.getAttribute("text") || "",
+			background: doc.body.getAttribute("background") || "",
+		},
 		width: px(style.width) || Number(bitmap.getAttribute("width")) || 0,
 		height: px(style.height) || Number(bitmap.getAttribute("height")) || 0,
 		bitmap_src: bitmap.getAttribute("src") || "",
@@ -217,27 +271,30 @@ function is_collage_html(html) {
 }
 
 /**
- * Loads a collage page (from File > Open, drag and drop, etc.) as the current document.
+ * Loads a page (from File > Open, drag and drop, My Site, etc.) as the current document.
  * @param {Blob} file
+ * @param {object} [options]
+ * @param {string} [options.base_url] - where relative asset paths resolve (a site's files); standalone files need data URLs
+ * @param {string} [options.site_page] - the page's path on My Site, so Save puts it back there
+ * @returns {Promise<boolean>} whether it opened
  */
-async function open_collage_from_file(file) {
+async function open_collage_from_file(file, { base_url, site_page } = {}) {
 	let parsed;
 	try {
 		parsed = parse_collage_html(await file.text());
 	} catch (error) {
 		show_error_message("Paint cannot open this file.", error);
-		return;
+		return false;
 	}
 	if (!parsed) {
 		show_error_message("This web page doesn't contain a collage (a <div class=\"collage\"> with an <img class=\"bitmap\">), so Paint can't open it.");
-		return;
+		return false;
 	}
-	const base = file instanceof File && !/^data:/.test(parsed.bitmap_src) ? null : location.href;
 	const load_blob = async (/** @type {string} */ src) => {
-		if (!/^(data|blob|https?):/.test(src)) {
+		if (!/^(data|blob|https?):/.test(src) && !base_url) {
 			throw new Error(`Can't load a relative asset from a standalone file: ${src}`);
 		}
-		const response = await fetch(new URL(src, base || location.href).href);
+		const response = await fetch(new URL(src, base_url || location.href).href);
 		if (!response.ok) { throw new Error(`HTTP ${response.status} loading ${src.slice(0, 80)}`); }
 		return response.blob();
 	};
@@ -245,12 +302,13 @@ async function open_collage_from_file(file) {
 	try {
 		bitmap_blob = await load_blob(parsed.bitmap_src);
 	} catch (error) {
-		show_error_message("Paint cannot open this collage's bitmap.", error);
-		return;
+		show_error_message("Paint cannot open this page's bitmap.", error);
+		return false;
 	}
-	read_image_file(bitmap_blob, (error, info) => {
+	return new Promise((resolve) => read_image_file(bitmap_blob, (error, info) => {
 		if (error) {
-			show_error_message("Paint cannot open this collage's bitmap.", error);
+			show_error_message("Paint cannot open this page's bitmap.", error);
+			resolve(false);
 			return;
 		}
 		info.source_blob = file; // so the document takes the .html file's name
@@ -276,14 +334,22 @@ async function open_collage_from_file(file) {
 					show_error_message("Couldn't load one of the collage's stickers; skipping it.", error);
 				}
 			}
+			restore_blocks(parsed.blocks);
 			restore_stickers(snapshots);
 			restore_text_layers(parsed.text_layers);
+			set_page_properties(parsed.page_properties, false);
 			// The layers are part of the opened state, not a change to it.
+			current_history_node.blocks = snapshot_blocks();
 			current_history_node.stickers = snapshot_stickers();
 			current_history_node.text_layers = snapshot_text_layers();
 			file_format = HTML_FORMAT_ID; // so File > Save writes the web page again
-		});
-	});
+			if (site_page) {
+				file_name = site_page;
+				system_file_handle = { site_page }; // so File > Save puts it back on the site (my-site.js)
+			}
+			resolve(true);
+		}, () => resolve(false));
+	}));
 }
 
-export { HTML_FORMAT_ID, is_collage_html, open_collage_from_file, parse_collage_html, serialize_collage_html };
+export { COLLAGE_CSS, HTML_FORMAT_ID, is_collage_html, open_collage_from_file, parse_collage_html, serialize_collage_html };

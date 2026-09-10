@@ -4,7 +4,7 @@ Companion to [DESIGN.md](DESIGN.md). This file is the hand-off between work sess
 
 ## How to resume (read me first)
 
-- Repo root is the **Paint** app (jspaint fork). New site-builder code goes in `src/` for Paint-side features (stickers, text layers, collage I/O, GIF export), `desktop/` for the Win98 shell + Page Editor windows (phase 3), `worker/` for the Cloudflare Workers (phase 2+).
+- Repo root is the **Paint** app (jspaint fork), and **Paint is the whole editor** (Jack, 2026-09-09: no separate desktop; everything in the jspaint view). Site-builder code lives in `src/`: `page-tools.js` (the toolbox's page tools), `blocks.js` + `block-kinds.js` (page elements on the canvas), `stickers.js`, `text-layers.js`, `collage-format.js` (the page file format), `my-site.js` + `site-publish.js` (File menu site management), `page-properties.js`, `gif-export.js`, `layers-window.js`, `gif-picker.js`. `worker/` holds the Cloudflare Workers. (`desktop/` was the phase-3 shell; removed in commit "Everything inside Paint".)
 - Lint/typecheck: `npm run lint` (cspell + tsc + eslint). New words go in `cspell.json`. Tabs, `// @ts-check`, snake_case like the surrounding code.
 - Dev server for Paint: `npm run dev` (live-server on :1999). UI tests: `npm run test:site-builder` (Playwright is a devDependency; `npx playwright install chromium` once). See `test/site-builder/README.md`. Add a test file there for every new feature — they've caught real bugs (canvas tainting, dblclick suppression, focus stealing, a floating window covering the click target).
 - The one layout constant: `PAGE_WIDTH = 800` (create it in `src/site-constants.js` when first needed; the desktop and Workers import it).
@@ -12,6 +12,8 @@ Companion to [DESIGN.md](DESIGN.md). This file is the hand-off between work sess
 - Extension model: `<x-*>` elements via one registry (DESIGN.md §3.5). No feature-specific formats.
 - Security posture is DESIGN.md §9: user pages come from the sandboxed `sites` Worker only.
 - Existing "Agent Drive" code (`src/agent-drive.js`, `agent-server/`, `jspaint-site` repo) is a personal dev tool now; leave it working, don't build on it.
+- The interaction rule to preserve: elements are click-through while a paint tool is active (except the selected one); the Pointer tool makes them all live; adding an element switches to the Pointer tool. Deselect-on-canvas-click handlers run in the **capture phase** so an element a tool creates on that click stays selected.
+- Local end-to-end: `cd worker && npm run dev:sites` (:8788) and `npm run build:editor && npx wrangler dev -c editor/wrangler.jsonc --port 8787 --inspector-port 9230 --persist-to .wrangler/state`; then `JSPAINT_URL=http://localhost:8787/ SITE_BUILDER_EDITOR_URL=http://localhost:8787 SITE_BUILDER_SITES_URL=http://localhost:8788 SITE_BUILDER_SECRET=dev-secret-123 node test/site-builder/run.mjs publish my-site`. Rebuild `editor/dist` after every Paint change or the Worker serves stale files.
 
 ## Phase 1 — the Blingee half (Paint extensions)
 
@@ -41,23 +43,27 @@ Order note: 1.7 (collage I/O) and 1.8 (GIF export) come before 1.5/1.6 — they 
 
 Phase 2 notes (2026-09-09): everything verified against local `wrangler dev` (shared `--persist-to .wrangler/state` so both Workers see one R2). Editor Worker needs a distinct `--inspector-port` when both run. `worker/editor/.dev.vars` carries `SITE_EDIT_SECRET` and `SITES_URL=http://localhost:8788` for local runs. The sanitizer is HTMLRewriter-based (strips scripts, frames, forms, handlers, `javascript:` URLs, unknown `<x-*>` attributes); `<x-*>` rendering keeps the tag and replaces its content so pages re-import. `test/site-builder/publish.test.mjs` covers Paint → editor → sites, including hashed-asset reuse and cleanup.
 
-## Phase 3 — Page Editor + desktop
+## Phase 3 — page elements inside Paint (revised 2026-09-09)
 
-- [x] 3.1 `desktop/` shell: os-gui desktop with taskbar + Start menu; windows: Paint (the app in a frame), Page Editor, GIFs, My Site. Served by the editor Worker at `/desktop/`.
-- [x] 3.2 Page Editor: parse dialect → blocks; select/move/delete per block; inline `contenteditable` text with an execCommand `<font>` toolbar (classic fonts, size, color, B/I/U, links, alignment); Add: heading, paragraph, marquee, line, GIF (window), image upload, collage (Paint round-trip via postMessage), raw HTML, every registry `<x-*>`; Page Properties (title, colors, wallpaper); pages dropdown + New.
-- [ ] 3.3 Doodle layer: transparent Paint canvas over the 800px column → `img.doodle`.
-- [x] 3.4 GIFs window (desktop): search via the editor proxy; click or drag into the Page Editor → uploaded to `gifs/<sha1>.gif` and inserted as an image block. (Paint keeps its own picker for stickers.)
-- [x] 3.5 My Site window: file list, open page, view, delete, upload assets, new page. (Rename and zip export still to do.)
-- [ ] 3.6 Live preview of the page while editing (reuse the Room DO pattern).
+The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs, My Site windows with Paint in a frame). Jack: *"stylistically I want this to ALL be within the jspaint view… add each element via buttons with icons alongside the other ones on the left side"* and *"Blocks can be put into the page like text boxes or other native paint things"*. Rebuilt as:
 
-Phase 3 notes (2026-09-09): Paint runs in an `<iframe src="../index.html?desktop=1">`; `src/desktop-bridge.js` decides desktop mode once at load (sessions.js rewrites the URL) and exposes File › Send to Page Editor, which posts the collage (data-URL assets) to the desktop; `desktop/page-editor.js` `import_collage` uploads the assets content-addressed and inserts the block. In the editor, site files are displayed through the editor's own API path (same origin, public reads) and saved as site-relative URLs; clones for serialization use inert `<template>` content because setting `src` on a detached `<img>` fetches. `desktop.test.mjs` covers sign-in → blocks → save → sites Worker → collage round-trip. Remaining in Phase 3: 3.3 doodle layer, 3.6 live preview, rename/zip in My Site.
+- [x] 3.1 **Page tools in the toolbox** (`src/page-tools.js`): a groove after Rounded Rectangle, then Pointer, Heading, Paragraph, Marquee, Divider, GIF Picker, Image, Table, Colored Box, Guestbook, Visitor Counter, Music, HTML — inline 16×16 SVG icons (`Tool.icon_svg`, `$ToolBox` `.custom-tool-icon`), one-shot tools via `Tool.action`. Element tools use the Text tool's `selectBox` gesture (click = default size, drag = box).
+- [x] 3.2 **Blocks on the canvas** (`src/blocks.js`, `src/block-kinds.js`): `OnCanvasBlock extends OnCanvasObject` — the semantic element itself (`h1`, `p`, `marquee`, `hr`, `table`, `x-*`, `div[data-kind=raw]`) inside a magnification-scaled content box; Handles; drag; `blocks` on history nodes (undo/redo, coalesced "Edit Text" while typing); Layers window rows; sidecar autosave; GIF export/flatten via an SVG `<foreignObject>` raster; Add Link (selected words or whole element). Kinds registry with defaults, Properties-dialog schemas, and a live refresh of `<x-*>` kinds from `/api/x-elements`.
+- [x] 3.3 **In-place editing**: double-click (or Enter) → `contenteditable`; the Font toolbar and the color box apply to the selection (`<font>`, `<b>`, `<i>`, `<u>`; execCommand, `styleWithCSS=false`); the toolbar reflects the caret's formatting (`text-tool-font-changed`); Escape ends. `prevent_selection` and the clipboard handler skip contenteditable targets.
+- [x] 3.4 **Interaction rule**: elements are `pointer-events: none` unless selected or `body.pointer-tool`; adding an element selects the Pointer tool; capture-phase deselect handlers.
+- [x] 3.5 **File menu site management** (`src/my-site.js`): Sign In to My Site… (validates with `/api/whoami`; autocomplete off; "e.g. jack" placeholder; URL-in-name check), My Site… (files with icons; Open / View / New Page… / Upload… / Delete / Refresh / Sign Out), Save to My Site…, and Ctrl+S saves back when `system_file_handle = { site_page }`; View › Live Page. Pages open from the site with `base_url` for relative assets.
+- [x] 3.6 **Page menu**: Page Properties… (`body` bgcolor/text/background, previewed around the canvas), Insert ▸, Edit Element Text, Element Properties…, Edit Element HTML…, Add Link, Bring Forward/Send Backward, Flatten, Flatten All, Delete.
+- [x] 3.7 **`x-guestbook`** (entries in the DO, POST form to `/~name/x/guestbook`, honeypot, 30 s / 20 per day per IP hash, 2000 entries per site) and **`x-music`** (`<audio controls>` for same-site files) in `worker/shared/x-elements/`; the sites Worker handles `POST /~name/x/<element>` via the registry's `action`. Sanitizer keeps `class/style/id/title/data-*` on `<x-*>` (it had been stripping the position).
+- [x] 3.8 The page format: `.collage > .block` positioned children + `body` attributes (`docs/DESIGN.md` §3.2–3.3); `serialize_collage_html`/`parse_collage_html` round-trip blocks; new documents are 800×600.
+- [x] 3.9 Tests: `blocks.test.mjs` (toolbox layout, place/type/bold/escape, Pointer drag, paint-through, click-to-place, undo/redo, Layers rows, save/reopen, flatten), `my-site.test.mjs` (sign in → New Page → Ctrl+S → served with the counter rendered → reopened from My Site). Removed `desktop.test.mjs`.
+- [ ] 3.10 Rename and zip export in My Site; live preview while editing (Room DO pattern) — still open.
 
-## Phase 4 — dynamic blocks, media, import
+## Phase 4 — media, import, polish
 
-- [ ] 4.1 `x-guestbook` (entries + POST form, plain text, rate-limited), `x-music` (audio + play button), tiled wallpaper, image maps, tables/colored boxes.
-- [ ] 4.2 Whole-page GIF export (foreignObject render + sticker/marquee compositing; caps).
-- [ ] 4.3 HTML import (best-effort; wedding page as fixture), zip import.
-- [ ] 4.4 Quotas and upload validation.
+- [ ] 4.1 Wallpaper upload flow from Page Properties; image maps; a doodle layer *over* elements if wanted.
+- [ ] 4.2 HTML import (best-effort; wedding page as fixture), zip import/export.
+- [ ] 4.3 Quotas and upload validation; guestbook moderation (owner deletes entries).
+- [ ] 4.4 Blocks and stickers interleaved in one z-order (today: blocks < stickers < text layers).
 
 ## Phase 5 — accounts
 
@@ -66,6 +72,7 @@ Phase 3 notes (2026-09-09): Paint runs in an `<iframe src="../index.html?desktop
 ## Status log
 
 - 2026-09-09 — Design agreed (DESIGN.md). Plan written.
+- 2026-09-09 (later) — **Everything inside Paint.** The desktop shell was removed the same day it landed; phase 3 rebuilt as toolbox tools + on-canvas blocks (see Phase 3 above). Gotchas found: `prevent_selection` (app.js) listens to `selectstart` and wiped selections inside contenteditable; the sanitizer stripped `class`/`style` from `<x-*>` elements (positions lost) — now keeps layout attributes; deselect-on-click handlers must be capture-phase or a layer the Text tool creates on that click is deselected by the bubbling handler; the Font toolbar reports a `null` family until its font list loads; `Home` doesn't move the caret on macOS (tests arrow-select instead). Both Workers deployed with guestbook + music.
 - 2026-09-09 — Jack's additions before Phase 2: **sticker rotation** (Image › Rotate Sticker Right/Left/By Angle…; `Ctrl+.`/`Ctrl+,` rotate a selected sticker instead of the picture; rotation is on the `<img>` so handles stay axis-aligned; exported as a CSS `rotate()` transform, composited in GIF export), **links on any element** (Edit › Add Link to Element… for the selected sticker or text layer; stickers serialize as `<a class="sticker" href><img></a>`; 🔗 badge on canvas), and **Image › Make Sticker from Selection** so any pasted image (PNG/JPEG, not just animated GIFs) becomes a layer that can be rotated/linked. Sticker sources now carry a sniffed MIME type; non-GIF sources export as a single frame. Known: resizing a rotated sticker uses the un-rotated box.
 - 2026-09-09 — 1.10 + 1.11 landed: `test/site-builder/` harness (helpers build GIF fixtures in-page with gif.js — no binaries; six test files, all passing in ~18s) with `npm run test:site-builder`. GIF picker: `src/gif-picker.js` window (search GifCities, click or drag a tile onto the canvas → sticker, More for paging, attribution), opened by a **GIFs button under the tools** in the toolbox or View › GIF Picker; drops carry `application/x-jspaint-gif-url` (app.js drop handler). Proxy for now in agent-server (`/api/gifcities/search`, `/api/gifcities/gif/:id`, 1h cache, CORS) — Phase 2 moves it into the editor Worker. Paint's server URL setting (Agent window) doubles as the proxy base until then.
 - 2026-09-09 — 1.6 + 1.9 landed: `src/layers-window.js` (View › Layers: rows for text layers, stickers, and the picture; click selects on the canvas; ▲▼ reorder, ⤓ flatten one, ✕ delete — all undoable) with explicit z-order APIs in stickers.js/text-layers.js (`reorder_*`, `flatten_*`, `delete_*`; selecting no longer auto-raises). Known limitation: text layers always stack above stickers (two lists), reordering is within a kind. `src/layer-storage.js`: the `layers#<session>` localStorage sidecar (stickers as data URLs, cached per source) saved with every autosave and restored on session load; Manage Storage removes it with the image. Verified: reload restores both layer kinds into the root history state.

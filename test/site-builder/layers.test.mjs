@@ -11,7 +11,7 @@ await page.waitForSelector(".text-layer", { timeout: 5000 });
 await click_menu_item(page, "Layers");
 await page.waitForSelector(".layers-window", { timeout: 5000 });
 const rows = () => page.evaluate(() => [...document.querySelectorAll(".layer-row")].map((r) => `${r.classList.contains("selected") ? "*" : ""}${r.querySelector(".layer-name").textContent}`));
-assert.deepEqual(await rows(), ["Layer text", "Sticker 2 (20×20)", "Sticker 1 (40×30)", "*Picture (pixels)"]);
+assert.deepEqual(await rows(), ["*Layer text", "Sticker 2 (20×20)", "Sticker 1 (40×30)", "Picture (pixels)"]); // the new text layer stays selected
 
 // Lower the top sticker: model and DOM order follow
 await page.evaluate(() => document.querySelector(".layer-row-sticker").querySelector('button[title="Lower"]').click());

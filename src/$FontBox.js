@@ -166,6 +166,17 @@ function $FontBox() {
 
 	$family.on("change", update_font);
 	$size.on("change", update_font);
+	// Blocks being edited in place report the formatting at the caret (blocks.js) — reflect it without re-triggering.
+	$G.on("text-tool-font-changed", () => {
+		$size.val(text_tool_font.size);
+		if (text_tool_font.family && $family.find(`option[value='${text_tool_font.family.replace(/'/g, "\\'")}']`).length) {
+			$family.val(text_tool_font.family);
+		}
+		$button_group.find(".toggle[data-font-prop]").each((_i, button) => {
+			const on = !!text_tool_font[/** @type {HTMLElement} */ (button).dataset.fontProp];
+			$(button).toggleClass("selected", on).attr("aria-pressed", String(on));
+		});
+	});
 
 	const $w = $ToolWindow();
 	$w.title(localize("Fonts"));
@@ -194,6 +205,7 @@ function $FontBox() {
 			"aria-pressed": false,
 			"aria-label": label,
 			"aria-description": description,
+			"data-font-prop": thing,
 		});
 		const $icon = $(E("span")).addClass("icon").appendTo($button);
 		$button.css({

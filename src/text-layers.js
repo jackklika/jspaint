@@ -13,6 +13,7 @@ import { OnCanvasObject } from "./OnCanvasObject.js";
 import { OnCanvasTextBox } from "./OnCanvasTextBox.js";
 import { get_tool_by_id, make_or_update_undoable, select_tool, undoable } from "./functions.js";
 import { $G, E, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, make_canvas, make_css_cursor, to_canvas_coords } from "./helpers.js";
+import { deselect_block } from "./blocks.js";
 import { deselect_sticker } from "./stickers.js";
 import { TOOL_TEXT } from "./tools.js";
 
@@ -310,6 +311,7 @@ function select_text_layer(layer) {
 	selected_text_layer = layer;
 	if (layer) {
 		deselect_sticker();
+		deselect_block();
 		layer.set_selected(true);
 	}
 	$G.triggerHandler("layers-changed");
@@ -456,11 +458,12 @@ function flatten_text_layers() {
 
 /** Call once the canvas area exists (app.js). */
 function init_text_layers() {
-	$canvas_area.on("pointerdown", (e) => {
+	// Capture phase: runs before the Text tool finishes a textbox on this click, so the new layer stays selected.
+	$canvas_area[0].addEventListener("pointerdown", (e) => {
 		if (!$(e.target).closest(".text-layer").length) {
 			deselect_text_layer();
 		}
-	});
+	}, { capture: true });
 	$("<style>").text(`
 		.text-layer {
 			z-index: 3;

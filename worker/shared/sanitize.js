@@ -1,13 +1,15 @@
 // @ts-check
 // Sanitizes user pages on save (editor Worker) and again at serve time (sites Worker, defense in depth).
 // Pages are the HTML dialect (docs/DESIGN.md §3): no scripts, no frames, no event handlers, no javascript: URLs.
-// Custom <x-*> elements may only carry the attributes their registry entry declares.
+// Custom <x-*> elements may only carry the attributes their registry entry declares (plus class/style/id/title/data-*).
 import { x_elements } from "./x-elements/index.js";
 
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "applet", "base", "form", "input", "button", "textarea", "select", "meta", "link", "noscript"]);
 const ALLOWED_META = new Set(["charset", "viewport", "generator", "description", "author"]);
 const URL_ATTRIBUTES = new Set(["href", "src", "action", "formaction", "background", "usemap", "poster", "data", "xlink:href"]);
 const DANGEROUS_URL = /^\s*(?:javascript|vbscript|data:text\/html|data:application)/i;
+/** Attributes any element may carry, including <x-*> ones: how the page positions and labels it, not inputs to the renderer. */
+const LAYOUT_ATTRIBUTES = /^(?:class|style|id|title|data-[a-z0-9-]+)$/;
 
 /**
  * @param {string} html
@@ -45,7 +47,7 @@ function sanitize_html(html) {
 					element.removeAttribute(name);
 				} else if (URL_ATTRIBUTES.has(lower) && DANGEROUS_URL.test(value)) {
 					element.removeAttribute(name);
-				} else if (definition && !definition.attrs.includes(lower)) {
+				} else if (definition && !definition.attrs.includes(lower) && !LAYOUT_ATTRIBUTES.test(lower)) {
 					element.removeAttribute(name);
 				}
 			}

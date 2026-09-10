@@ -1,10 +1,10 @@
 # Win98 Site Builder — design (working title)
 
-*Status: design for review, no code yet. Decisions below were made with Jack on 2026-09-09; open items are marked.*
+*Status: living design. Decisions below were made with Jack on 2026-09-09 (revised the same day: everything lives inside the Paint view — see §5); open items are marked.*
 
 ## 1. Vision
 
-A hosted, Windows-98-styled site builder for web 1.0 pages. `sitename/~jack/` is a small multi-page personal site; the same URL in edit mode opens a fake Win98 desktop with three main windows: **Paint** (this jspaint fork, extended with animated GIF stickers and editable text layers — the Blingee/PicMix half), a **Page Editor** (stacked blocks: headings, marquees, dividers, collages, guestbook, counter…), and a **GifCities** browser you drag stickers and dividers from. One document, two first-class exports: the page is a real HTML file you can host anywhere, and any collage — or the whole page — renders to a looping animated GIF you can paste into a chat.
+A hosted, Windows-98-styled site builder for web 1.0 pages. `sitename/~jack/` is a small multi-page personal site. The editor **is JS Paint** (this fork): the page is the Paint document — an 800px canvas you paint on — and the toolbox has, below the paint tools, a **Pointer** and one tool per page element (heading, paragraph, marquee, divider, animated GIF, image, table, colored box, guestbook, counter, music, raw HTML). Elements are placed like Paint's own text boxes (click or drag a box), float over the bitmap like stickers, edit in place, and stay real HTML. One document, two first-class exports: the page is a real HTML file you can host anywhere, and the page renders to a looping animated GIF you can paste into a chat.
 
 Reference vibe: <https://renaandjack.com/wedding> — centered flow, `<marquee>`, MP3 with a play button, GeoCities GIFs as dividers, pastel `bgcolor`.
 
@@ -13,14 +13,14 @@ Reference vibe: <https://renaandjack.com/wedding> — centered flow, `<marquee>`
 | Question | Decision |
 | --- | --- |
 | Primary artifact | Both first-class: HTML page + animated GIF render |
-| Page model | Flowing centered document of blocks; collages and floating text inside; a doodle layer over the whole page |
-| Page width | Fixed **800px centered**, one constant (`PAGE_WIDTH`), user-choosable later |
+| Page model | **The page is the Paint document** (revised 2026-09-09): one 800px-wide canvas is the page's background; every element (headings, marquees, GIFs, text, guestbook…) floats over it at a position and size, like Paint's text boxes and selections. No flow layout. |
+| Page width | Fixed **800px centered**, one constant (`PAGE_WIDTH`), user-choosable later; new documents are 800×600 |
 | Users / hosting | Hosted for non-technical users eventually; **Cloudflare** all the way; `*.workers.dev` for now (no domain) |
 | Accounts | Later. Now: single shared secret for Jack |
-| App shell | Fake Win98 desktop (os-gui): Paint + Page Editor + GifCities + a "My Site" folder window |
-| Blocks v1 | Headings/paragraphs/links, marquee, GIF dividers & stickers, tables/colored boxes, image maps, background music + tiled wallpaper, guestbook, visitor counter, raw HTML |
-| Painting | Collage blocks are Paint canvases; plus a transparent doodle layer over the page |
-| GIF export | Per collage block, and the whole page |
+| App shell | **Just JS Paint** (revised 2026-09-09; the fake-desktop shell was built and then removed). Page elements are toolbox tools; site management is in the File menu; page settings in a Page menu. |
+| Blocks v1 | Headings/paragraphs/links, marquee, GIF dividers & stickers, images, tables/colored boxes, background music, tiled wallpaper, guestbook, visitor counter, last-updated, raw HTML (image maps: later) |
+| Painting | The bitmap is the page's background layer; paint tools paint under the elements (elements are click-through unless selected, or when the Pointer tool is active). Flatten draws an element into the bitmap. |
+| GIF export | The page (bitmap + elements + stickers + text) as one looping GIF |
 | GIF source | GifCities for now; users upload their own GIFs/MP3s/wallpapers |
 | Text | Classic web-safe fonts rendered by the browser (Comic Sans MS, Times, Arial, Impact, Courier…), editable, linkable |
 | AI | Optional assist later; the document must stay agent-editable; nothing AI-facing in v1 |
@@ -69,39 +69,46 @@ Rules that make it parseable:
 - Editor-only metadata goes in `data-*` attributes; never in scripts or comments. A page must render correctly with no JavaScript.
 - Unknown block-level elements are preserved verbatim as a **raw HTML block** — this is also how import works.
 
-### 3.2 Block vocabulary
+### 3.2 Element vocabulary (blocks)
 
-| Block | Markup |
+Every element is a positioned child of the page's `div.collage` with `class="block"` and its box as inline CSS (`left/top/width/height`). The element **is** the semantic tag; `data-kind` disambiguates where the tag alone can't (a colored box is a one-cell table). Registry: `src/block-kinds.js`.
+
+| Element | Markup |
 | --- | --- |
-| Heading / paragraph | `<h1><font face="Comic Sans MS" color="#ff1493">…</font></h1>`, `<p>…<a href="about.html">…</a></p>` |
-| Marquee | `<marquee behavior="scroll" scrollamount="4">…</marquee>` |
-| Divider / image | `<img src="gifs/divider.gif" alt="">` |
-| Link list | `<ul class="links"><li><a href>…` |
-| Table / colored box | `<table class="box" bgcolor="#fff" border="3" bordercolor="#ff69b4"><tr><td>…` |
-| Image map | `<img src usemap="#m1"><map name="m1"><area shape coords href>` |
-| Music | `<x-music src="midi/song.mp3" autoplay="no">` → Worker renders `<audio>` + a play button |
-| Guestbook | `<x-guestbook>` → Worker renders entries + a POST form (CGI-style) |
-| Counter | `<x-counter>` → Worker renders the number, DO increments |
-| Collage | see 3.3 |
-| Raw HTML | anything else, kept verbatim |
+| Heading / paragraph | `<h1 class="block" style="…"><font face="Comic Sans MS" color="#ff1493">…</font></h1>`, `<p class="block" style="…">…<a href="about.html">…</a></p>` (inline `<font>`, `<b>`, `<i>`, `<u>`, `<a>` from in-place editing) |
+| Marquee | `<marquee behavior="scroll" scrollamount="4" class="block" style="…">…</marquee>` |
+| Divider | `<hr size="3" color="#ff69b4" class="block" style="…">` |
+| Table / colored box | `<table border="1" cellpadding="4" bgcolor="#fff" class="block" style="…"><tr><td>…`, `<table data-kind="box" border="2" bordercolor="#ff69b4" …>` |
+| GIF / image | a **sticker** (§3.3): `<img class="sticker" src="gifs/divider.gif" style="…">`, or `<a class="sticker" href><img></a>` |
+| Music | `<x-music src="midi/song.mp3" loop="yes" class="block" style="…">♫ <i>music</i></x-music>` → Worker renders `<audio controls>` |
+| Guestbook | `<x-guestbook class="block" style="…">fallback</x-guestbook>` → Worker renders entries + a POST form to `/~name/x/guestbook` |
+| Counter | `<x-counter class="block" style="…">You are visitor number <b>?????</b></x-counter>` → Worker renders the number, DO increments |
+| Last updated | `<x-updated class="block" style="…">…</x-updated>` |
+| Raw HTML | `<div data-kind="raw" class="block" style="…">anything (sanitized)</div>` |
 
-### 3.3 Collage (the Blingee)
+### 3.3 The page (the Blingee)
 
 ```html
-<div class="collage" style="width:600px;height:400px">
-  <img class="bitmap" src="collages/hero.png">                                   <!-- the Paint bitmap -->
+<body bgcolor="#ffffd9" background="gifs/stars.gif">
+<center>
+<div class="collage" style="width:800px;height:600px">
+  <img class="bitmap" src="collages/index.png">                                  <!-- the Paint bitmap -->
+  <h1 class="block" style="left:40px;top:30px;width:420px;height:48px"><font face="Comic Sans MS">hi</font></h1>
+  <x-counter class="block" style="left:60px;top:500px;width:300px;height:28px">You are visitor number <b>?????</b></x-counter>
   <img class="sticker" src="gifs/sparkle.gif" style="left:20px;top:30px;width:64px;height:64px">
   <img class="sticker" src="gifs/frog.gif" style="left:400px;top:200px;width:120px;height:90px;transform:scaleX(-1)">
   <a class="text" href="about.html" style="left:200px;top:300px;font:bold 24px Impact;color:#ff1493">about me</a>
   <span class="text" style="left:40px;top:340px;font:16px 'Comic Sans MS';color:#000">~ est. 1999 ~</span>
 </div>
+</center>
+</body>
 ```
 
-Layers are children in z-order: one bitmap, any number of stickers (animated GIFs, left as GIFs so the browser animates them), any number of text layers (real text, optionally links). Position/size/font are plain inline CSS — the export *is* the document, and an agent can edit it.
+Layers are children in z-order: one bitmap, then the blocks, then stickers (animated GIFs, left as GIFs so the browser animates them), then text layers (the Text tool's "Web" text: real text, optionally links). Position/size/font are plain inline CSS — the export *is* the document, and an agent can edit it. The whole page is one collage; `body` carries `bgcolor`/`text`/`background` (Page › Page Properties…).
 
 ### 3.4 Doodle layer
 
-`<img class="doodle">` is a page-sized transparent PNG positioned over the 800px column (`pointer-events: none`). Painting on the page in the editor writes this file. Requires the fixed width to stay aligned.
+Not needed in the revised model: the bitmap *is* the page-sized paint layer (under the elements). A transparent paint layer *over* the elements (`<img class="doodle">`, `pointer-events: none`) remains a possible later addition.
 
 ### 3.5 Extensibility: `<x-*>` elements are the plugin system
 
@@ -136,15 +143,16 @@ Planned tags: `x-guestbook`, `x-counter`, `x-music`, `x-updated` (last-modified 
 - **Storage**: R2 for files (free tier 10 GB; per-site quota), one DO per site for coordination (guestbook, counter, live presence), reusing today's `Room` pattern.
 - **Publish = save.** No wrangler, no deploy step: the editor PUTs the file into R2 and the page is live. Today's preview-alias machinery is no longer needed for users.
 
-## 5. The editor (fake Win98 desktop)
+## 5. The editor is JS Paint
 
-os-gui already provides windows with minimize/taskbar targets; 98.js.org (same author as jspaint) is the reference for a desktop shell. Windows:
+Revised 2026-09-09 (Jack: "I want this to ALL be within the jspaint view… add each element via buttons with icons alongside the other ones on the left side"). The fake-desktop shell (`desktop/`, phase 3.1) was built, then removed. In Paint:
 
-- **Paint** — jspaint, for collage blocks and the doodle layer. Opens a collage in place; *Save* writes bitmap + layers back into the page.
-- **Page Editor** — the page at 800px with block handles (select, move up/down, delete, properties); double-click a collage → Paint; text blocks edit inline with a classic-font `<font>` toolbar.
-- **GifCities** — search box, results grid; drag onto a collage → sticker, onto the page → divider. The Worker proxies `gifcities.org/search?q=…` (server-rendered HTML, no API, no CORS) and copies chosen GIFs into the site's `gifs/` (so pages never depend on GifCities uptime).
-- **My Site** — the folder view (GeoCities File Manager energy): pages, gifs, midi; upload, rename, delete; "Export site as .zip"; "Import HTML".
-- Taskbar with the open windows; Start-menu-style New Page / Save / Preview.
+- **Toolbox** — the 16 paint tools, a groove, then the page tools (`src/page-tools.js`, 16×16 pixel icons inlined as SVG): **Pointer** (select, move, resize, double-click to edit), Heading, Paragraph, Marquee, Divider, GIF Picker (one-shot: opens the GifCities window), Image (one-shot: file → sticker), Table, Colored Box, Guestbook, Visitor Counter, Music, HTML. Element tools work like the Text tool: click, or drag a box. Adding any element switches to the Pointer tool (like Paste switches to Select).
+- **Interaction rule** — elements (stickers, text layers, blocks) are click-through while a paint tool is active, except the selected one; with the Pointer tool they're all live. So you can always paint under things, and always arrange them.
+- **In-place text** — text blocks are `contenteditable`; the Font toolbar (family/size/B/I/U) and the color box apply to the selected words as `<font>`/`<b>`/`<i>`/`<u>` (execCommand with `styleWithCSS=false`, on purpose); the toolbar reflects the formatting at the caret. Links via Edit › Add Link to Element (selected words, or the whole element).
+- **Menus** — File: Sign In to My Site…, My Site… (the folder: open/new page/upload/delete/view), Save to My Site…, Save as Web Page, Save as Animated GIF. Page: Page Properties…, Insert ▸ (every kind), Edit Element Text (Enter), Element Properties…, Edit Element HTML…, Add Link, Bring Forward / Send Backward, Flatten, Delete. View: Layers (text, stickers, blocks, picture), GIF Picker, Live Page.
+- **Save** — a page opened from My Site (or saved to it) has `system_file_handle = { site_page }`, so Ctrl+S publishes back to the site; other documents save as files.
+- **GifCities** — the GIF picker window (search, grid, click or drag onto the page → sticker); the editor Worker proxies `gifcities.org` (no API, no CORS) and chosen GIFs are copied into the site's `gifs/` on save.
 
 ## 6. Paint extensions (the Blingee half — phase 1)
 
@@ -160,7 +168,7 @@ Reuse jspaint's primitives rather than replacing them:
 ## 7. GIF export
 
 - **Collage → .gif**: decode each sticker's frames (`ImageDecoder` where available, `gifuct-js` fallback), build a common timeline (LCM of frame periods, capped — e.g. ≤ 10 s / ≤ 100 frames, with a note when capped), composite bitmap + stickers + text per frame onto a canvas, encode with the `gif.js` already in `lib/`. Same compositor draws stickers in a static frame for PNG export.
-- **Whole page → .gif**: render the page column with the existing `<foreignObject>` renderer (`src/agent-drive.js`) for the static parts, composite stickers/marquee frames per tick, encode. Big files at 800px × page height — cap duration/frame rate and warn.
+- **Page → .gif**: the same compositor: bitmap, then each block's rasterized copy (an SVG `<foreignObject>` render of its markup — marquees show their first frame), then sticker frames, then text layers. 800px × page height — cap duration/frame rate and warn.
 
 ## 8. Import
 
@@ -185,8 +193,8 @@ User pages are user-authored HTML. They are served by a **separate, deliberately
 | 0 | Repo layout: `desktop/` (shell + editor windows), `worker/` (sites + editor Workers), jspaint stays at root as the Paint app; `PAGE_WIDTH` constant; this doc | ½ day |
 | 1 | **Blingee**: sticker + text layers in Paint, layers window, history, collage ⇄ dialect I/O, collage GIF export, local .html/.gif save | 3–4 days |
 | 2 | **Hosting skeleton**: `sites` Worker (R2 serve, `~name`), `editor` Worker (save/upload/list, shared secret), My Site window, publish = save | 2 days |
-| 3 | **Page Editor + desktop**: blocks (§3.2), 800px page view, inline text editing with classic fonts, doodle layer, GifCities window + proxy, taskbar | 4–5 days |
-| 4 | **Dynamic blocks + import**: guestbook, counter, music, wallpaper, image maps, whole-page GIF, HTML import (wedding page as fixture), zip export | 3 days |
+| 3 | **Page elements inside Paint** (revised): the page tools in the toolbox, blocks on the canvas, in-place editing, Page menu, My Site in the File menu, guestbook + music `<x-*>` elements | 4–5 days |
+| 4 | **Media + import**: wallpaper upload flow, image maps, HTML import (wedding page as fixture), zip export/import, quotas | 3 days |
 | 5 | **Accounts** (magic link or passkeys), quotas, moderation basics | later |
 
 ## 11. What carries over from the agent-drive work

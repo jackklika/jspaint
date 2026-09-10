@@ -4,6 +4,8 @@
 // and what the editor shows for it. Fallback content lives inside the tag in the page file and is what a
 // browser shows when the page is served raw (an exported zip, another host).
 import counter from "./counter.js";
+import guestbook from "./guestbook.js";
+import music from "./music.js";
 import updated from "./updated.js";
 
 /**
@@ -21,10 +23,14 @@ import updated from "./updated.js";
  * @property {string[]} attrs - allowed attribute names
  * @property {{ label: string, description: string, fallback: string }} editor - how the editor presents it, and the default fallback content
  * @property {(input: { attrs: Record<string, string>, context: XElementContext }) => Promise<string> | string} render - inner HTML (must be dialect-safe)
+ * @property {(input: { form: FormData, context: XElementContext }) => Promise<XElementActionResult> | XElementActionResult} [action] - handles POST /~name/x/<name>
+ */
+/**
+ * @typedef {{ status: number, location?: string, error?: string }} XElementActionResult - a redirect (303 + location) or an error page
  */
 
 /** @type {Map<string, XElementDefinition>} */
-const x_elements = new Map([counter, updated].map((definition) => [definition.tag, definition]));
+const x_elements = new Map([counter, updated, guestbook, music].map((definition) => [definition.tag, definition]));
 
 /**
  * Renders every registered <x-*> element in a page. The tag stays (so the page re-imports), its content is replaced.

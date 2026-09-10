@@ -286,6 +286,14 @@ function get_help_folder_icon(file_name) {
  * @returns {HTMLImageElement}  an image element representing the tool
  */
 function get_icon_for_tool(tool) {
+	if (tool.icon_svg) {
+		// Page tools (page-tools.js) carry their own inline icon rather than one from the help folder.
+		const img = new Image();
+		img.src = tool.icon_svg;
+		img.width = 16;
+		img.height = 16;
+		return img;
+	}
 	return get_help_folder_icon(tool.help_icon);
 }
 
@@ -315,7 +323,7 @@ function get_icon_for_tools(tools) {
 	}
 	const icon_canvas = make_canvas(16, 16);
 
-	Promise.all(tools.map((tool) => load_image_simple(`help/${tool.help_icon}`)))
+	Promise.all(tools.map((tool) => load_image_simple(tool.icon_svg || `help/${tool.help_icon}`)))
 		.then((icons) => {
 			icons.forEach((icon, i) => {
 				const w = icon_canvas.width / icons.length;

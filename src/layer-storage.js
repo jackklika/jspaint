@@ -1,8 +1,9 @@
 // @ts-check
 /* global current_history_node:writable */
 // Autosave for the layers. JS Paint keeps a local backup of the bitmap (sessions.js: `image#<id>`);
-// stickers and text layers live in a sidecar entry, `layers#<id>`, so a reload brings them back too.
+// stickers, text layers, and page elements live in a sidecar entry, `layers#<id>`, so a reload brings them back too.
 // The sidecar is a convenience copy only — the document format is the collage web page (collage-format.js).
+import { restore_blocks, snapshot_blocks } from "./blocks.js";
 import { localStore } from "./storage.js";
 import { get_sticker_source, register_sticker_source, restore_stickers, snapshot_stickers } from "./stickers.js";
 import { restore_text_layers, snapshot_text_layers } from "./text-layers.js";
@@ -34,7 +35,8 @@ const sidecar_key = (session_id) => `layers#${session_id}`;
 async function save_layers_sidecar(session_id, callback = () => {}) {
 	const stickers = snapshot_stickers();
 	const text_layers = snapshot_text_layers();
-	if (stickers.length === 0 && text_layers.length === 0) {
+	const blocks = snapshot_blocks();
+	if (stickers.length === 0 && text_layers.length === 0 && blocks.length === 0) {
 		try {
 			localStorage.removeItem(sidecar_key(session_id));
 		} catch (_error) { /* ignore */ }
@@ -51,7 +53,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
 			}
 			sticker_records.push({ ...snapshot, data_url: await data_url_cache.get(source.id) });
 		}
-		const json = JSON.stringify({ version: 1, stickers: sticker_records, text_layers });
+		const json = JSON.stringify({ version: 2, stickers: sticker_records, text_layers, blocks });
 		localStore.set(sidecar_key(session_id), json, (error) => callback(error));
 	} catch (error) {
 		callback(error);
@@ -82,8 +84,10 @@ function restore_layers_sidecar(session_id) {
 					delete snapshot.data_url;
 					sticker_snapshots.push(snapshot);
 				}
+				restore_blocks(data.blocks || []);
 				restore_stickers(sticker_snapshots);
 				restore_text_layers(data.text_layers || []);
+				current_history_node.blocks = snapshot_blocks();
 				current_history_node.stickers = snapshot_stickers();
 				current_history_node.text_layers = snapshot_text_layers();
 			} catch (error) {

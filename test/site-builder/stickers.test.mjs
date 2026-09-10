@@ -1,4 +1,4 @@
-import { assert, canvas_box, click_menu_item, drop_file, make_gif, open_paint, paste_file } from "./helpers.mjs";
+import { assert, canvas_box, click_menu_item, drop_file, make_gif, open_paint, paste_file, select_tool } from "./helpers.mjs";
 
 const { page, close } = await open_paint();
 const state = () => page.evaluate(() => ({
@@ -13,6 +13,7 @@ await paste_file(page, await make_gif(page, { width: 40, height: 30 }));
 await page.waitForSelector(".sticker", { timeout: 5000 });
 assert.deepEqual((await state()).stickers, ["s1@0,0 40x30"]);
 assert.equal((await state()).history, "Add Sticker");
+assert.equal(await page.evaluate(() => selected_tool.id), "TOOL_POINTER", "adding an element switches to the Pointer tool");
 
 // Undo removes it, redo brings it back
 await page.keyboard.press("Control+z");
@@ -62,7 +63,9 @@ assert.equal(await page.evaluate(() => document.querySelector(".sticker").classL
 await page.keyboard.press("Control+z");
 assert.equal(await page.evaluate(() => current_history_node.stickers[0].href), "");
 
-// Painting on the canvas away from the sticker still works and deselects it
+// Painting on the canvas away from the sticker still works and deselects it (pick a paint tool first: adding
+// the sticker switched to the Pointer tool)
+await select_tool(page, "Pencil");
 const c = await canvas_box(page);
 const before = await page.evaluate(() => main_ctx.getImageData(400, 300, 1, 1).data.join(","));
 await page.mouse.move(c.x + 380, c.y + 300);

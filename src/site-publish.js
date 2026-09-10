@@ -1,11 +1,14 @@
 // @ts-check
-/* global localize, file_name */
-// File > Save to My Site…: publishes the collage as a page on the hosted site builder (worker/editor).
-// Assets are uploaded content-addressed (gifs/<hash>.gif, collages/<page>.png), then the page itself,
-// through the editor Worker's API with the shared edit secret. The page appears at <sites>/~<name>/.
+// eslint-disable-next-line no-unused-vars
+/* global file_format:writable, file_name:writable, saved:writable, system_file_handle:writable */
+/* global localize */
+// File > Save to My Site…: publishes the page (bitmap + elements + stickers + text) on the hosted site
+// builder (worker/editor). Assets are uploaded content-addressed (gifs/<hash>.gif, collages/<page>.png),
+// then the page itself, through the editor Worker's API with the shared edit secret. The page appears at
+// <sites>/~<name>/. Sign-in and the file browser live in my-site.js; the settings are shared from here.
 import { $DialogWindow } from "./$ToolWindow.js";
-import { serialize_collage_html } from "./collage-format.js";
-import { show_error_message } from "./functions.js";
+import { HTML_FORMAT_ID, serialize_collage_html } from "./collage-format.js";
+import { show_error_message, update_title } from "./functions.js";
 import { E } from "./helpers.js";
 import { DEFAULT_EDITOR_URL } from "./site-constants.js";
 
@@ -39,6 +42,18 @@ function save_settings(settings) {
 /** The editor Worker URL, for other modules (the GIF picker uses its proxy). */
 function get_site_editor_url() {
 	return load_settings().editor_url.replace(/\/+$/, "");
+}
+
+/** Where the signed-in site's files can be read (public reads on the editor API), with a trailing slash; "" if no site. */
+function get_site_files_base() {
+	const { site } = load_settings();
+	return site ? `${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/` : "";
+}
+
+/** Whether a site name and secret are on file (my-site.js validates them against the server). */
+function is_signed_in() {
+	const { site, secret } = load_settings();
+	return !!(site && secret);
 }
 
 /**
@@ -104,25 +119,43 @@ async function publish_collage(settings, log) {
 	});
 	const result = await upload(`${page_base}.html`, html, "text/html");
 	log(`Saved ${page_base}.html — ${uploaded} asset${uploaded === 1 ? "" : "s"} uploaded, ${reused} reused.`);
+	// The document now lives on the site: Ctrl+S saves it back there (functions.js file_save).
+	system_file_handle = { site_page: `${page_base}.html` };
+	file_name = `${page_base}.html`;
+	file_format = HTML_FORMAT_ID;
+	saved = true;
+	update_title();
 	return result.url;
 }
 
-function show_publish_dialog() {
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.auto] - start saving right away (Ctrl+S on a page that came from the site)
+ * @param {string} [options.page] - page file to save as
+ * @returns {Promise<boolean>} whether the page was saved
+ */
+function show_publish_dialog({ auto = false, page } = {}) {
 	const settings = load_settings();
+	if (page) { settings.page = page; } else if (system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page) { settings.page = system_file_handle.site_page; }
 	const $w = $DialogWindow(localize("Save to My Site"));
 	$w.addClass("site-publish-window squish");
 	const $main = $w.$main;
+	/** @type {(saved: boolean) => void} */
+	let resolve_result = () => {};
+	/** @type {Promise<boolean>} */
+	const result_promise = new Promise((resolve) => { resolve_result = resolve; });
+	$w.on("close", () => { resolve_result(false); });
 
 	/** @param {string} label @param {string} key @param {object} [attrs] */
 	const field = (label, key, attrs = {}) => {
 		const $row = $(E("div")).addClass("site-publish-row").appendTo($main);
 		const $label = $(E("label")).text(label).appendTo($row);
-		const $input = $(E("input")).attr({ type: "text", spellcheck: "false", ...attrs }).val(settings[key]).appendTo($label);
+		const $input = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", ...attrs }).val(settings[key]).appendTo($label);
 		return $input;
 	};
-	const $site = field(localize("Site name (~name): "), "site", { placeholder: "jack", autocapitalize: "off" });
-	const $page = field(localize("Page file: "), "page", { placeholder: "index.html" });
-	const $secret = field(localize("Edit secret: "), "secret", { type: "password" });
+	const $site = field(localize("Site name (~name): "), "site", { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
+	const $page = field(localize("Page file: "), "page", { placeholder: "index.html", name: "page-file" });
+	const $secret = field(localize("Edit secret: "), "secret", { type: "password", autocomplete: "new-password", name: "edit-secret" });
 	const $remember_row = $(E("div")).addClass("site-publish-row").appendTo($main);
 	const $remember = $(E("input")).attr({ type: "checkbox", id: "site-publish-remember" }).prop("checked", settings.remember_secret).appendTo($remember_row);
 	$(E("label")).attr({ for: "site-publish-remember" }).text(` ${localize("Remember the secret on this computer")}`).appendTo($remember_row);
@@ -141,6 +174,16 @@ function show_publish_dialog() {
 			secret: String($secret.val()),
 			remember_secret: $remember.prop("checked"),
 		};
+		if (!current.site) {
+			log("Enter a site name — it becomes your address: …/~name/");
+			$site.focus();
+			return;
+		}
+		if (/^https?:|\//.test(current.site)) {
+			log("The site name is just the name (like \"jack\"), not a URL.");
+			$site.focus();
+			return;
+		}
 		if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(current.site)) {
 			log("Site names are 1–32 lowercase letters, digits, or hyphens.");
 			$site.focus();
@@ -164,6 +207,7 @@ function show_publish_dialog() {
 			const url = await publish_collage(current, log);
 			log("Done!");
 			$(E("div")).append($(E("a")).attr({ href: url, target: "_blank", rel: "noopener" }).text(url)).appendTo($log);
+			resolve_result(true);
 			$w.$Button(localize("Open Page"), () => { window.open(url, "_blank", "noopener"); }).focus();
 		} catch (error) {
 			log(String(error.message || error));
@@ -176,7 +220,10 @@ function show_publish_dialog() {
 	$w.$content.css({ width: "min(460px, 90vw)" });
 	$w.center();
 	($site.val() ? $secret : $site).focus();
-	void file_name;
+	if (auto && settings.site && settings.secret) {
+		$save.trigger("click");
+	}
+	return result_promise;
 }
 
 $("<style>").text(`
@@ -205,4 +252,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { get_site_editor_url, publish_collage, show_publish_dialog };
+export { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog };

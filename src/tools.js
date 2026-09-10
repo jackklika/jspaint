@@ -8,6 +8,7 @@ import { deselect, get_tool_by_id, meld_selection_into_canvas, meld_textbox_into
 import { $G, E, get_icon_for_tool, get_icon_for_tools, get_rgba_from_color, make_canvas, make_css_cursor } from "./helpers.js";
 import { bresenham_dense_line, bresenham_line, copy_contents_within_polygon, draw_bezier_curve, draw_ellipse, draw_fill, draw_line, draw_line_strip, draw_noncontiguous_fill, draw_polygon, draw_quadratic_curve, draw_rounded_rectangle, draw_selection_box, get_circumference_points_for_brush, replace_colors_with_swatch, stamp_brush_canvas, update_brush_for_drawing_lines } from "./image-manipulation.js";
 import { $ChooseShapeStyle, $choose_airbrush_size, $choose_brush, $choose_eraser_size, $choose_magnification, $choose_stroke_size, $choose_transparent_mode } from "./tool-options.js";
+import { TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_POINTER, block_tool_id, page_tools } from "./page-tools.js";
 
 // This is for linting stuff at the bottom.
 // It has to be defined per file, so I'm defining it up top and immediately disabling it.
@@ -1280,6 +1281,9 @@ const tools = [{
 	$options: $ChooseShapeStyle(),
 }];
 
+// The page tools (Pointer, and one tool per kind of page element) follow the paint tools in the toolbox.
+tools.push(...page_tools);
+
 /* eslint-enable no-restricted-syntax */
 
 tools.forEach((tool) => {
@@ -1593,9 +1597,9 @@ tools.forEach((tool) => {
 
 export {
 	TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER,
-	TOOL_FILL, TOOL_FREE_FORM_SELECT, TOOL_LINE, TOOL_MAGNIFIER,
-	TOOL_PENCIL, TOOL_PICK_COLOR, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, TOOL_TEXT,
-	tools
+	TOOL_FILL, TOOL_FREE_FORM_SELECT, TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_LINE, TOOL_MAGNIFIER,
+	TOOL_PENCIL, TOOL_PICK_COLOR, TOOL_POINTER, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, TOOL_TEXT,
+	block_tool_id, tools
 };
 // Temporary globals until all dependent code is converted to ES Modules
 window.TOOL_PENCIL = TOOL_PENCIL; // used by app-state.js

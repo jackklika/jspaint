@@ -4,7 +4,7 @@ import { $Component } from "./$Component.js";
 // import { get_direction, localize } from "./app-localization.js";
 import { select_tool, select_tools } from "./functions.js";
 import { $G, E, make_css_cursor } from "./helpers.js";
-import { toggle_gif_picker } from "./gif-picker.js";
+import { TOOL_POINTER } from "./page-tools.js";
 import { get_theme } from "./theme.js";
 
 
@@ -18,9 +18,6 @@ let theme_dev_blob_url;
 function $ToolBox(tools, is_extras) {
 	const $tools = $(E("div")).addClass("tools");
 	const $tool_options = $(E("div")).addClass("tool-options");
-	// Opens the GIF picker (GifCities search) to add animated stickers. See gif-picker.js.
-	const $gif_button = $(E("button")).addClass("gif-picker-button").attr({ type: "button", title: localize("Find animated GIFs to add as stickers") }).text("GIFs");
-	$gif_button.on("click", () => { toggle_gif_picker(); });
 
 	let showing_tooltips = false;
 	$tools.on("pointerleave", () => {
@@ -28,7 +25,13 @@ function $ToolBox(tools, is_extras) {
 		$status_text.default();
 	});
 
+	let divider_added = false;
 	const $buttons = $($.map(tools, (tool, i) => {
+		if (tool.page_tool && !divider_added) {
+			// The page tools (Pointer, headings, GIFs, guestbook…) sit below the paint tools, behind a groove.
+			$(E("div")).addClass("tool-divider").attr({ role: "separator", title: localize("Page elements") }).appendTo($tools);
+			divider_added = true;
+		}
 		const $b = $(E("div")).addClass("tool");
 		$b.appendTo($tools);
 		tool.$button = $b;
@@ -37,6 +40,9 @@ function $ToolBox(tools, is_extras) {
 
 		const $icon = $(E("span")).addClass("tool-icon");
 		$icon.appendTo($b);
+		if (tool.icon_svg) {
+			$icon.addClass("custom-tool-icon").css("--custom-icon", `url("${tool.icon_svg}")`);
+		}
 		const update_css = () => {
 			const use_svg = !theme_dev_blob_url && (
 				(
@@ -64,6 +70,11 @@ function $ToolBox(tools, is_extras) {
 		$G.on("theme-load resize", update_css);
 
 		$b.on("click", (e) => {
+			if (tool.action) {
+				// A one-shot tool (GIF picker, image file): does its thing, doesn't stay selected.
+				tool.action();
+				return;
+			}
 			if (e.shiftKey || e.ctrlKey) {
 				select_tool(tool, true);
 				return;
@@ -102,7 +113,7 @@ function $ToolBox(tools, is_extras) {
 		is_extras ? "Extra Tools" : localize("Tools"),
 		is_extras ? "tools-component extra-tools-component" : "tools-component",
 		"tall",
-		$tools.add($tool_options).add($gif_button)
+		$tools.add($tool_options)
 	));
 	$c.appendTo(get_direction() === "rtl" ? $right : $left); // opposite ColorBox by default
 	$c.update_selected_tool = () => {
@@ -116,6 +127,8 @@ function $ToolBox(tools, is_extras) {
 		$canvas.css({
 			cursor: make_css_cursor(...selected_tool.cursor),
 		});
+		// With the Pointer tool every element on the page is live; otherwise only the selected one is (blocks.js CSS).
+		$("body").toggleClass("pointer-tool", selected_tools.some((tool) => tool.id === TOOL_POINTER));
 	};
 	$c.update_selected_tool();
 
@@ -146,6 +159,35 @@ if (dev_theme_tool_icons) {
 		});
 	});
 }
+
+$("<style>").text(`
+	/* The toolbox grows to fit the page tools (the classic theme fixes .tools at 8 rows). */
+	.tools-component {
+		height: auto !important;
+		padding-bottom: 3px;
+	}
+	.tools {
+		height: auto !important;
+	}
+	.tool-divider {
+		width: 100%;
+		height: 2px;
+		margin: 3px 0;
+		border-top: 1px solid var(--ButtonShadow, #808080);
+		border-bottom: 1px solid var(--ButtonHilight, #fff);
+		box-sizing: border-box;
+	}
+	.tool-icon.custom-tool-icon,
+	.tool-icon.custom-tool-icon.use-svg,
+	.enlarge-ui .tool-icon.custom-tool-icon.use-svg {
+		background-image: var(--custom-icon) !important;
+		background-position: 0 0 !important;
+		background-size: 16px 16px !important;
+		background-repeat: no-repeat !important;
+		-webkit-mask-image: none !important;
+		mask-image: none !important;
+	}
+`).appendTo(document.head);
 
 export { $ToolBox };
 

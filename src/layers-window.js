@@ -1,9 +1,10 @@
 // @ts-check
 /* global localize */
-// The Layers window (View > Layers): stickers and web text layers above the bitmap, top to bottom.
+// The Layers window (View > Layers): text layers, stickers, and page elements (blocks) above the bitmap, top to bottom.
 // Click a row to select that layer on the canvas; raise/lower, flatten, or delete it with the row's buttons.
-// Text layers always stack above stickers (they're separate lists), so reordering is within each kind.
+// Text layers stack above stickers, which stack above blocks (separate lists), so reordering is within each kind.
 import { $DialogWindow } from "./$ToolWindow.js";
+import { delete_block, deselect_block, flatten_block, get_blocks, get_selected_block, reorder_block, select_block } from "./blocks.js";
 import { $G, E } from "./helpers.js";
 import { delete_sticker, deselect_sticker, flatten_sticker, get_selected_sticker, get_sticker_source, get_stickers, reorder_sticker, select_sticker } from "./stickers.js";
 import { delete_text_layer, deselect_text_layer, flatten_text_layer, get_selected_text_layer, get_text_layers, reorder_text_layer, select_text_layer } from "./text-layers.js";
@@ -64,12 +65,30 @@ function rebuild() {
 		$row.on("click", () => { select_sticker(sticker); });
 	});
 
-	const $bitmap = $(E("li")).addClass("layer-row layer-row-bitmap").toggleClass("selected", !selected_text && !selected_sticker).appendTo($list);
+	const selected_block = get_selected_block();
+	const blocks = get_blocks();
+	[...blocks].reverse().forEach((block, i) => {
+		const index = blocks.length - 1 - i;
+		const $row = $(E("li")).addClass("layer-row layer-row-block").toggleClass("selected", block === selected_block).appendTo($list);
+		$row.append($(E("span")).addClass("layer-icon").text(block.kind.icon || "▭").css({ font: "bold 12px sans-serif" }));
+		const text = block.el.textContent.replace(/\s+/g, " ").trim().slice(0, 24);
+		$row.append($(E("span")).addClass("layer-name").text(text ? `${block.kind.label}: ${text}` : block.kind.label));
+		$row.append($(E("span")).addClass("layer-buttons").append(
+			$row_button("▲", localize("Raise"), () => { reorder_block(block, 1); }, index === blocks.length - 1),
+			$row_button("▼", localize("Lower"), () => { reorder_block(block, -1); }, index === 0),
+			$row_button("⤓", localize("Flatten into the picture"), () => { flatten_block(block); }),
+			$row_button("✕", localize("Delete"), () => { delete_block(block); }),
+		));
+		$row.on("click", () => { select_block(block); });
+	});
+
+	const $bitmap = $(E("li")).addClass("layer-row layer-row-bitmap").toggleClass("selected", !selected_text && !selected_sticker && !selected_block).appendTo($list);
 	$bitmap.append($(E("span")).addClass("layer-icon").text("▦"));
 	$bitmap.append($(E("span")).addClass("layer-name").text(localize("Picture (pixels)")));
 	$bitmap.on("click", () => {
 		deselect_sticker();
 		deselect_text_layer();
+		deselect_block();
 	});
 }
 

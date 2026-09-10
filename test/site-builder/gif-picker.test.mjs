@@ -8,7 +8,7 @@ if (!proxy) {
 }
 const { page, close } = await open_paint({ init: (proxy) => { localStorage.setItem("jspaint agent-drive server url", proxy); }, init_arg: proxy.replace(/\/+$/, "") });
 
-await page.click(".gif-picker-button");
+await page.evaluate(() => { [...document.querySelectorAll(".tool")].find((el) => el.getAttribute("title") === "GIF Picker").click(); });
 await page.waitForSelector(".gif-picker-window", { timeout: 5000 });
 await page.fill(".gif-picker-window input[type=search]", "sparkle");
 await page.keyboard.press("Enter");

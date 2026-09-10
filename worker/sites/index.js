@@ -2,10 +2,11 @@
 // jspaint-sites: serves user sites at /~name/<path> from the `sites/<name>/<path>` keys of the R2 bucket.
 // Pages (.html) are sanitized again and have their <x-*> elements rendered server-side; everything else
 // streams through with a fixed content type. Strict CSP on every response: pages can't run scripts.
+// POST /~name/x/<element> runs an <x-*> element's action (the guestbook form), also in this sandbox.
 import { DurableObject } from "cloudflare:workers";
 import { content_type_for, extension_of, is_html_path, valid_path, valid_site_name } from "../shared/names.js";
 import { sanitize_html } from "../shared/sanitize.js";
-import { render_x_elements } from "../shared/x-elements/index.js";
+import { render_x_elements, x_elements } from "../shared/x-elements/index.js";
 
 const PAGE_HEADERS = {
 	"Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -15,14 +16,41 @@ const PAGE_HEADERS = {
 	"Cache-Control": "no-cache",
 };
 
-/** Per-site state for <x-*> elements: visitor counters now, guestbook entries later. */
+const GUESTBOOK_MIN_INTERVAL_MS = 30 * 1000; // per visitor
+const GUESTBOOK_MAX_PER_DAY = 20; // per visitor
+const GUESTBOOK_MAX_ENTRIES = 2000; // per site
+
+/** Per-site state for <x-*> elements: visitor counters and guestbook entries. */
 export class SiteState extends DurableObject {
 	constructor(ctx, env) {
 		super(ctx, env);
 		this.ctx.blockConcurrencyWhile(() => {
 			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (page TEXT PRIMARY KEY, hits INTEGER NOT NULL DEFAULT 0)");
+			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS guestbook (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, message TEXT NOT NULL, ip_hash TEXT NOT NULL, created INTEGER NOT NULL)");
 			return Promise.resolve();
 		});
+	}
+	/**
+	 * Newest first.
+	 * @param {number} limit
+	 * @returns {{ id: number, name: string, message: string, created: number }[]}
+	 */
+	get_guestbook_entries(limit) {
+		return this.ctx.storage.sql.exec("SELECT id, name, message, created FROM guestbook ORDER BY id DESC LIMIT ?", limit).toArray();
+	}
+	/**
+	 * Adds an entry unless this visitor is posting too often. Returns whether it was added.
+	 * @param {{ name: string, message: string, ip_hash: string }} entry
+	 */
+	add_guestbook_entry({ name, message, ip_hash }) {
+		const now = Date.now();
+		const recent = this.ctx.storage.sql.exec("SELECT MAX(created) AS last, COUNT(*) AS today FROM guestbook WHERE ip_hash = ? AND created > ?", ip_hash, now - 24 * 60 * 60 * 1000).one();
+		if ((recent.last && now - recent.last < GUESTBOOK_MIN_INTERVAL_MS) || recent.today >= GUESTBOOK_MAX_PER_DAY) {
+			return false;
+		}
+		this.ctx.storage.sql.exec("INSERT INTO guestbook (name, message, ip_hash, created) VALUES (?, ?, ?, ?)", name, message, ip_hash, now);
+		this.ctx.storage.sql.exec("DELETE FROM guestbook WHERE id NOT IN (SELECT id FROM guestbook ORDER BY id DESC LIMIT ?)", GUESTBOOK_MAX_ENTRIES);
+		return true;
 	}
 	/**
 	 * Counts one visit to a page and returns the new total.
@@ -57,16 +85,57 @@ function not_found(message = "Not Found") {
 </body></html>`, 404);
 }
 
+/**
+ * POST /~name/x/<element>: the element's registry `action` (guestbook signing). Form posts only, same origin.
+ * @param {Request} request
+ * @param {URL} url
+ * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace }} env
+ */
+async function handle_action(request, url, env) {
+	const match = /^\/~([^/]+)\/x\/([a-z0-9-]+)$/.exec(url.pathname);
+	if (!match || !valid_site_name(match[1])) {
+		return not_found();
+	}
+	const definition = x_elements.get(`x-${match[2]}`);
+	if (!definition || !definition.action) {
+		return not_found();
+	}
+	const origin = request.headers.get("Origin");
+	if (origin && origin !== url.origin) {
+		return html_response("<p>Forms only work from the page itself.</p>", 403);
+	}
+	if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") || "")) {
+		return html_response("<p>Bad request.</p>", 400);
+	}
+	let form;
+	try {
+		form = await request.formData();
+	} catch (_error) {
+		return html_response("<p>Bad request.</p>", 400);
+	}
+	const result = await definition.action({
+		form,
+		context: { site: match[1], page: "", page_uploaded: null, state: env.SITE_STATE.getByName(match[1]), request },
+	});
+	if (result.location) {
+		return new Response(null, { status: result.status || 303, headers: { ...PAGE_HEADERS, Location: result.location } });
+	}
+	return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Oops</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>${result.error || "Something went wrong."}</p><p><a href="javascript:history.back()">Go back</a></p></body></html>`.replace('<a href="javascript:history.back()">Go back</a>', `<a href="/~${match[1]}/">Go back</a>`), result.status || 400);
+}
+
 export default {
 	/**
 	 * @param {Request} request
 	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string }} env
 	 */
 	async fetch(request, env) {
+		const url = new URL(request.url);
+		if (request.method === "POST") {
+			return handle_action(request, url, env);
+		}
 		if (request.method !== "GET" && request.method !== "HEAD") {
 			return new Response("Method Not Allowed", { status: 405, headers: PAGE_HEADERS });
 		}
-		const url = new URL(request.url);
 		if (url.pathname === "/") {
 			return html_response(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>jspaint sites</title></head>

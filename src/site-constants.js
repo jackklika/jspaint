@@ -15,3 +15,6 @@ export const DEFAULT_EDITOR_URL = "https://jspaint-editor.jklika2.workers.dev";
 
 /** Where published sites live: `${DEFAULT_SITES_URL}/~name/`. */
 export const DEFAULT_SITES_URL = "https://jspaint-sites.jklika2.workers.dev";
+
+// app-state.js (not a module) reads the page width for the default canvas size.
+/** @type {any} */ (window).PAGE_WIDTH = PAGE_WIDTH;

@@ -22,6 +22,7 @@ import { localStore } from "./storage.js";
 import { get_theme, set_theme } from "./theme.js";
 import { add_sticker_from_blob, delete_selected_sticker, deselect_sticker, get_selected_sticker, init_stickers, is_animated_gif, nudge_selected_sticker, rotate_selected_sticker } from "./stickers.js";
 import { delete_selected_text_layer, deselect_text_layer, get_selected_text_layer, init_text_layers, nudge_selected_text_layer } from "./text-layers.js";
+import { delete_selected_block, deselect_block, edit_selected_block, end_block_editing, get_selected_block, init_blocks, is_editing_block, nudge_selected_block } from "./blocks.js";
 import { GIF_DRAG_TYPE, add_gif_from_url } from "./gif-picker.js";
 import { TOOL_AIRBRUSH, TOOL_BRUSH, TOOL_CURVE, TOOL_ELLIPSE, TOOL_ERASER, TOOL_LINE, TOOL_PENCIL, TOOL_POLYGON, TOOL_RECTANGLE, TOOL_ROUNDED_RECTANGLE, TOOL_SELECT, tools } from "./tools.js";
 
@@ -500,6 +501,7 @@ const canvas_handles = new Handles({
 	size_only: true,
 });
 window.canvas_handles = canvas_handles;
+init_blocks();
 init_stickers();
 init_text_layers();
 
@@ -929,6 +931,15 @@ $G.on("keydown", (e) => {
 	if (e.isDefaultPrevented()) {
 		return;
 	}
+	if (target.isContentEditable || $(target).closest("[contenteditable=true]").length) {
+		// Typing into a page element (blocks.js): the browser handles the keys (including Ctrl+B/I/U and Ctrl+Z);
+		// Escape finishes editing.
+		if (e.key === "Escape" && is_editing_block()) {
+			end_block_editing();
+			e.preventDefault();
+		}
+		return;
+	}
 	if (e.key === "Escape") { // Note: Escape handled below too! (after input/textarea return condition)
 		if (textbox && textbox.$editor.is(target)) {
 			deselect();
@@ -980,6 +991,31 @@ $G.on("keydown", (e) => {
 	// also, ideally check that modifiers *aren't* pressed
 	// probably best to use a library at this point!
 
+	if (get_selected_block() && !textbox) {
+		const step = e.shiftKey ? 10 : 1;
+		switch (e.key) {
+			case "ArrowLeft": nudge_selected_block(-step, 0); e.preventDefault(); return;
+			case "ArrowRight": nudge_selected_block(+step, 0); e.preventDefault(); return;
+			case "ArrowUp": nudge_selected_block(0, -step); e.preventDefault(); return;
+			case "ArrowDown": nudge_selected_block(0, +step); e.preventDefault(); return;
+			case "Delete":
+			case "Backspace":
+				delete_selected_block();
+				e.preventDefault();
+				return;
+			case "Enter":
+			case "F2":
+				if (!e.ctrlKey && !e.metaKey && edit_selected_block()) {
+					e.preventDefault();
+					return;
+				}
+				break;
+			case "Escape":
+				deselect_block();
+				e.preventDefault();
+				return;
+		}
+	}
 	if (get_selected_text_layer() && !textbox) {
 		const step = e.shiftKey ? 10 : 1;
 		switch (e.key) {
@@ -1302,9 +1338,10 @@ $G.on("cut copy paste", (e) => {
 	if (
 		document.activeElement instanceof HTMLInputElement ||
 		document.activeElement instanceof HTMLTextAreaElement ||
+		/** @type {HTMLElement} */ (document.activeElement)?.isContentEditable ||
 		!window.getSelection().isCollapsed
 	) {
-		// Don't prevent cutting/copying/pasting within inputs or textareas, or if there's a selection
+		// Don't prevent cutting/copying/pasting within inputs, textareas, or page elements being edited, or if there's a selection
 		return;
 	}
 
@@ -1832,7 +1869,8 @@ function prevent_selection($el) {
 			e.target instanceof HTMLSelectElement ||
 			e.target instanceof HTMLTextAreaElement ||
 			(e.target instanceof HTMLLabelElement && e.type !== "contextmenu") ||
-			(e.target instanceof HTMLInputElement && e.target.type !== "color")
+			(e.target instanceof HTMLInputElement && e.target.type !== "color") ||
+			/** @type {HTMLElement} */ (e.target).isContentEditable // a page element being edited in place (blocks.js)
 		) {
 			return;
 		}

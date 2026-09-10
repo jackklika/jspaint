@@ -13,7 +13,10 @@ import { image_formats } from "./file-format-data.js";
 import { $G, E, TAU, debounce, from_canvas_coords, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, is_discord_embed, is_pride_month, make_canvas, render_access_key, to_canvas_coords } from "./helpers.js";
 import { apply_image_transformation, draw_grid, draw_selection_box, flip_horizontal, flip_vertical, invert_monochrome, invert_rgb, rotate, stretch_and_skew, threshold_black_and_white } from "./image-manipulation.js";
 import { show_imgur_uploader } from "./imgur.js";
+import { clear_blocks, restore_blocks, snapshot_blocks } from "./blocks.js";
 import { HTML_FORMAT_ID, open_collage_from_file, serialize_collage_html } from "./collage-format.js";
+import { save_page_to_site } from "./my-site.js";
+import { reset_page_properties } from "./page-properties.js";
 import { add_sticker_from_blob, clear_stickers, is_animated_gif, restore_stickers, snapshot_stickers } from "./stickers.js";
 import { clear_text_layers, create_text_layer_from_textbox, is_web_text_mode, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
 import { showMessageBox } from "./msgbox.js";
@@ -658,6 +661,8 @@ function reset_canvas_and_history() {
 	redos.length = 0;
 	clear_stickers();
 	clear_text_layers();
+	clear_blocks();
+	reset_page_properties();
 	current_history_node = root_history_node = make_history_node({
 		name: localize("New"),
 		icon: get_help_folder_icon("p_blank.png"),
@@ -695,6 +700,7 @@ function reset_canvas_and_history() {
  * @param {TextToolFontOptions | null=} options.text_tool_font - the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox)
  * @param {StickerSnapshot[] | null=} options.stickers - the animated GIF sticker layer (see stickers.js)
  * @param {TextLayerSnapshot[] | null=} options.text_layers - the web text layers (see text-layers.js)
+ * @param {BlockSnapshot[] | null=} options.blocks - the page elements (see blocks.js)
  * @param {boolean=} options.tool_transparent_mode - whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
  * @param {string | CanvasPattern=} options.foreground_color - selected foreground color (left click)
  * @param {string | CanvasPattern=} options.background_color - selected background color (right click)
@@ -720,6 +726,7 @@ function make_history_node({
 	text_tool_font = null, // the font of the Text tool (important to restore a textbox-containing state, but persists without a textbox)
 	stickers = null, // the animated GIF sticker layer, if any (see stickers.js)
 	text_layers = null, // the web text layers, if any (see text-layers.js)
+	blocks = null, // the page elements, if any (see blocks.js)
 	tool_transparent_mode = false, // whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
 	foreground_color, // selected foreground color (left click)
 	background_color, // selected background color (right click)
@@ -744,6 +751,7 @@ function make_history_node({
 		text_tool_font,
 		stickers,
 		text_layers,
+		blocks,
 		tool_transparent_mode,
 		foreground_color,
 		background_color,
@@ -1207,6 +1215,11 @@ function file_save(maybe_saved_callback = () => { }, update_from_saved = true) {
 	deselect();
 	// store and use file handle at this point in time, to avoid race conditions
 	const save_file_handle = system_file_handle;
+	if (save_file_handle && typeof save_file_handle === "object" && typeof save_file_handle.site_page === "string") {
+		// A page opened from (or saved to) My Site: Save puts it back on the site (my-site.js).
+		save_page_to_site(save_file_handle.site_page).then((ok) => { if (ok) { maybe_saved_callback(); } });
+		return;
+	}
 	if (!save_file_handle || file_name.match(/\.(svg|pdf)$/i)) {
 		return file_save_as(maybe_saved_callback, update_from_saved);
 	}
@@ -2058,6 +2071,7 @@ function go_to_history_node(target_history_node, canceling) {
 	update_title();
 
 	main_ctx.copy(target_history_node.image_data);
+	restore_blocks(target_history_node.blocks);
 	restore_stickers(target_history_node.stickers);
 	restore_text_layers(target_history_node.text_layers);
 	if (target_history_node.selection_image_data) {
@@ -2189,6 +2203,7 @@ function undoable({ name, icon, use_loose_canvas_changes, soft, assume_saved }, 
 		text_tool_font: JSON.parse(JSON.stringify(text_tool_font)),
 		stickers: snapshot_stickers(),
 		text_layers: snapshot_text_layers(),
+		blocks: snapshot_blocks(),
 		tool_transparent_mode,
 		foreground_color: selected_colors.foreground,
 		background_color: selected_colors.background,
@@ -2218,6 +2233,7 @@ function make_or_update_undoable(undoable_meta, undoable_action) {
 		current_history_node.selection_y = selection && selection.y;
 		current_history_node.stickers = snapshot_stickers();
 		current_history_node.text_layers = snapshot_text_layers();
+		current_history_node.blocks = snapshot_blocks();
 		if (undoable_meta.update_name) {
 			current_history_node.name = undoable_meta.name;
 		}

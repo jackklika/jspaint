@@ -6,6 +6,7 @@
 // laid on one timeline (least common multiple of their loop lengths, capped), and a frame is emitted whenever
 // any sticker changes frame. Frames are composited on a canvas and encoded with gif.js (lib/gif.js).
 import { $DialogWindow } from "./$ToolWindow.js";
+import { draw_blocks, ensure_blocks_rendered } from "./blocks.js";
 import { sanity_check_blob, show_error_message } from "./functions.js";
 import { E, make_canvas } from "./helpers.js";
 import { GIF_EXPORT_MAX_DURATION_MS, GIF_EXPORT_MAX_FRAMES } from "./site-constants.js";
@@ -144,6 +145,7 @@ function frame_at(gif, t) {
 function composite_frame(ctx, t, decoded) {
 	ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 	ctx.drawImage(main_canvas, 0, 0);
+	draw_blocks(ctx); // page elements sit under the stickers (rasterized; marquees show their first frame)
 	for (const sticker of get_stickers()) {
 		const gif = decoded.get(sticker.source_id);
 		if (!gif || !gif.frames.length) { continue; }
@@ -168,6 +170,7 @@ function composite_frame(ctx, t, decoded) {
 async function render_collage_gif(on_progress = () => {}, abort_signal = {}) {
 	const width = main_canvas.width;
 	const height = main_canvas.height;
+	await ensure_blocks_rendered();
 	/** @type {Map<string, DecodedGif>} */
 	const decoded = new Map();
 	for (const sticker of get_stickers()) {

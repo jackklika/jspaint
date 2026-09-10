@@ -10,11 +10,14 @@ import { are_you_sure, change_url_param, choose_file_to_paste, clear, delete_sel
 import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
-import { is_in_desktop, send_collage_to_desktop } from "./desktop-bridge.js";
 import { show_publish_dialog } from "./site-publish.js";
 import { export_collage_gif } from "./gif-export.js";
 import { is_gif_picker_open, toggle_gif_picker } from "./gif-picker.js";
 import { is_layers_window_open, toggle_layers_window } from "./layers-window.js";
+import { open_live_page, show_my_site_dialog, show_sign_in_dialog } from "./my-site.js";
+import { BLOCK_KINDS, add_block, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, reorder_block, show_block_html_dialog, show_block_properties_dialog } from "./blocks.js";
+import { show_page_properties_dialog } from "./page-properties.js";
+import { get_tool_by_id } from "./functions.js";
 import { manage_storage } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
 import { simulateRandomGesturesPeriodically, simulatingGestures, stopSimulatingGestures } from "./simulate-random-gestures.js";
@@ -106,18 +109,24 @@ const menus = {
 			action: () => { save_collage_as_web_page(); },
 			description: localize("Saves the picture and its stickers as a web page, with the stickers still animating."),
 		},
+		MENU_DIVIDER,
 		{
-			label: localize("Send to Page &Editor"),
-			speech_recognition: ["send to page editor", "send to the page editor", "put this on the page", "add to page"],
-			enabled: () => is_in_desktop(),
-			action: () => { send_collage_to_desktop(); },
-			description: localize("Puts this collage on the page you're editing in the site builder."),
+			label: localize("Sign In to My Sit&e..."),
+			speech_recognition: ["sign in", "sign in to my site", "log in", "log in to my site", "sign into my site"],
+			action: () => { show_sign_in_dialog(); },
+			description: localize("Signs in to your site with its name and edit secret."),
+		},
+		{
+			label: localize("M&y Site..."),
+			speech_recognition: ["my site", "open my site", "show my site", "my files", "site files", "open from my site", "open a page from my site", "manage my site"],
+			action: () => { show_my_site_dialog(); },
+			description: localize("Shows the pages and files on your site: open a page, make a new one, upload, delete."),
 		},
 		{
 			label: localize("Save to &My Site..."),
 			speech_recognition: ["save to my site", "publish to my site", "put this on my site", "upload to my site", "save to the web", "publish page"],
 			action: () => { show_publish_dialog(); },
-			description: localize("Publishes the picture and its stickers as a page on your site."),
+			description: localize("Publishes this page (picture, elements, GIFs, text) on your site."),
 		},
 		MENU_DIVIDER,
 		{
@@ -541,6 +550,12 @@ const menus = {
 			},
 			description: localize("Shows or hides the GIF picker: search GifCities and add animated stickers."),
 		},
+		{
+			label: localize("Live &Page"),
+			speech_recognition: ["live page", "view live page", "open live page", "preview", "preview page", "view my page", "open my page", "show the published page"],
+			action: () => { open_live_page(); },
+			description: localize("Opens the published page of your site in a new tab."),
+		},
 		MENU_DIVIDER,
 		{
 			label: localize("&Zoom"),
@@ -846,6 +861,111 @@ const menus = {
 				check: () => !tool_transparent_mode,
 			},
 			description: localize("Makes the current selection either opaque or transparent."),
+		},
+	],
+	[localize("&Page")]: [
+		{
+			label: localize("Page &Properties..."),
+			speech_recognition: ["page properties", "page settings", "page background", "background color of the page", "wallpaper", "set wallpaper", "page color"],
+			action: () => { show_page_properties_dialog(); },
+			description: localize("Sets the page's background color, text color, and tiled wallpaper."),
+		},
+		{
+			label: localize("&Insert"),
+			submenu: [
+				...BLOCK_KINDS.filter((kind) => kind.id !== "raw").map((kind) => ({
+					label: kind.label,
+					speech_recognition: [`insert ${kind.label.toLowerCase()}`, `add ${kind.label.toLowerCase()}`],
+					action: () => { add_block(kind.id, { x: 40, y: 40 }); },
+					description: kind.description,
+				})),
+				{
+					label: localize("Raw HTML"),
+					speech_recognition: ["insert html", "insert raw html", "add html"],
+					action: () => { show_block_html_dialog(add_block("raw", { x: 40, y: 40 })); },
+					description: localize("Places a box of raw HTML on the page and opens it for editing."),
+				},
+				MENU_DIVIDER,
+				{
+					label: localize("Animated &GIF..."),
+					speech_recognition: ["insert gif", "insert animated gif", "add animated gif"],
+					action: () => { toggle_gif_picker(); },
+					description: localize("Finds animated GIFs (GifCities) to put on the page."),
+				},
+				{
+					label: localize("Image from &File..."),
+					speech_recognition: ["insert image", "insert image from file", "add image from file"],
+					action: () => { get_tool_by_id("TOOL_IMAGE_UPLOAD").action(); },
+					description: localize("Puts an image file on the page as an element you can move and link."),
+				},
+			],
+			description: localize("Adds an element to the page."),
+		},
+		MENU_DIVIDER,
+		{
+			label: localize("Edit Element &Text"),
+			...shortcut("Enter"),
+			speech_recognition: ["edit text", "edit element text", "edit the text", "type in the element"],
+			enabled: () => !!get_selected_block()?.kind.editable,
+			action: () => { edit_selected_block(); },
+			description: localize("Edits the selected element's text in place."),
+		},
+		{
+			label: localize("Element P&roperties..."),
+			speech_recognition: ["element properties", "properties", "element settings", "block properties", "marquee settings", "counter settings"],
+			enabled: () => !!get_selected_block(),
+			action: () => { show_block_properties_dialog(); },
+			description: localize("Changes the selected element's settings (speed, colors, level…)."),
+		},
+		{
+			label: localize("Edit Element &HTML..."),
+			speech_recognition: ["edit html", "edit element html", "view source", "edit the html", "edit source"],
+			enabled: () => !!get_selected_block(),
+			action: () => { show_block_html_dialog(); },
+			description: localize("Edits the selected element's HTML directly."),
+		},
+		{
+			label: localize("Add &Link to Element..."),
+			speech_recognition: ["link element", "make element a link"],
+			enabled: () => has_linkable_element(),
+			action: () => { show_element_link_dialog(); },
+			description: localize("Makes the selected element a link, or removes its link."),
+		},
+		MENU_DIVIDER,
+		{
+			label: localize("&Bring Element Forward"),
+			speech_recognition: ["bring forward", "bring element forward", "raise element", "move element up"],
+			enabled: () => !!get_selected_block(),
+			action: () => { reorder_block(get_selected_block(), 1); },
+			description: localize("Moves the selected element up in the stacking order."),
+		},
+		{
+			label: localize("Send Element Bac&kward"),
+			speech_recognition: ["send backward", "send element backward", "lower element", "move element down"],
+			enabled: () => !!get_selected_block(),
+			action: () => { reorder_block(get_selected_block(), -1); },
+			description: localize("Moves the selected element down in the stacking order."),
+		},
+		{
+			label: localize("&Flatten Element"),
+			speech_recognition: ["flatten element", "flatten the element", "rasterize element", "merge element into the picture"],
+			enabled: () => !!get_selected_block(),
+			action: () => { flatten_block(get_selected_block()); },
+			description: localize("Draws the selected element into the picture as pixels and removes it."),
+		},
+		{
+			label: localize("Flatten &All Elements"),
+			speech_recognition: ["flatten all elements", "flatten elements", "rasterize all elements"],
+			enabled: () => get_blocks().length > 0,
+			action: () => { flatten_blocks(); },
+			description: localize("Draws every page element into the picture as pixels and removes them."),
+		},
+		{
+			label: localize("&Delete Element"),
+			speech_recognition: ["delete element", "remove element", "delete the element", "remove the element"],
+			enabled: () => !!get_selected_block(),
+			action: () => { delete_selected_block(); },
+			description: localize("Removes the selected element from the page."),
 		},
 	],
 	[localize("&Colors")]: [

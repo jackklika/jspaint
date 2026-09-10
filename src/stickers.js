@@ -11,7 +11,8 @@
 import { Handles } from "./Handles.js";
 import { $DialogWindow } from "./$ToolWindow.js";
 import { OnCanvasObject } from "./OnCanvasObject.js";
-import { make_or_update_undoable, undoable } from "./functions.js";
+import { deselect_block } from "./blocks.js";
+import { get_tool_by_id, make_or_update_undoable, select_tool, undoable } from "./functions.js";
 import { $G, E, get_help_folder_icon, make_css_cursor, to_canvas_coords } from "./helpers.js";
 import { deselect_text_layer } from "./text-layers.js";
 
@@ -265,6 +266,7 @@ async function add_sticker_from_blob(blob, { x, y } = {}) {
 		stickers.push(sticker);
 		select_sticker(sticker);
 	});
+	select_tool(get_tool_by_id("TOOL_POINTER")); // like Paste switches to Select: the new element is ready to arrange
 	return sticker;
 }
 
@@ -303,6 +305,7 @@ function select_sticker(sticker) {
 	selected_sticker = sticker;
 	if (sticker) {
 		deselect_text_layer();
+		deselect_block();
 		sticker.set_selected(true);
 	}
 	$G.triggerHandler("layers-changed");
@@ -488,6 +491,7 @@ async function make_sticker_from_selection() {
 		stickers.push(sticker);
 		select_sticker(sticker);
 	});
+	select_tool(get_tool_by_id("TOOL_POINTER"));
 	return true;
 }
 
@@ -580,16 +584,18 @@ function flatten_stickers() {
 /** Call once the canvas area exists (app.js). */
 function init_stickers() {
 	// Clicking anywhere that isn't a sticker deselects the sticker (painting continues to work normally).
-	$canvas_area.on("pointerdown", (e) => {
+	// Capture phase: runs before the tools, so an element created by this click stays selected (see blocks.js).
+	$canvas_area[0].addEventListener("pointerdown", (e) => {
 		if (!$(e.target).closest(".sticker").length) {
 			deselect_sticker();
 		}
-	});
+	}, { capture: true });
 	$("<style>").text(`
 		.sticker {
 			z-index: 3; /* same layer as the selection */
 			display: block !important;
 			box-sizing: border-box;
+			/* (pointer-events: none unless selected or the Pointer tool is active — see blocks.js) */
 		}
 		.sticker > img {
 			display: block;
