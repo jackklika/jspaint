@@ -12,7 +12,7 @@ import { refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
 import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
-import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, site_public_url } from "./site-constants.js";
+import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, is_hosted_editor, site_public_url } from "./site-constants.js";
 import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
 
 /** @type {string | null} learned from /api/whoami */
@@ -74,8 +74,9 @@ async function open_site_from_url() {
 			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); }
 			return;
 		}
-		// Nobody in particular: the domain's own front page, as a copy to play with (saving it means signing in)
-		await open_page_copy(ROOT_SITE, "index.html");
+		// Nobody in particular, on the hosted editor: the domain's own front page, as a copy to play with (saving it
+		// means signing in). A dev server or a plain jspaint starts blank.
+		if (is_hosted_editor()) { await open_page_copy(ROOT_SITE, "index.html"); }
 		return;
 	}
 	if (load_settings().site === entry.site && await check_sign_in()) {
@@ -130,9 +131,11 @@ async function open_page_copy(site, path) {
 	}
 	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: base, site_page: path });
 	if (opened) {
+		saved = true; // nothing of yours in it yet
 		if (site !== load_settings().site) {
 			system_file_handle = { site_page: path, copy_of: site };
 		}
+		update_title();
 		$G.triggerHandler("site-settings-changed"); // the globe's tooltip: whose page this is
 		$status_text.text(localize("Opened a copy of %1. Save to My Site puts it on your own site.", site_public_url(site, path)));
 	}
@@ -326,6 +329,8 @@ async function open_page_from_site(path) {
 	}
 	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: get_site_files_base(), site_page: path });
 	if (opened) {
+		saved = true; // it is what's on the site (restoring the layers after the bitmap had marked it changed)
+		update_title();
 		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: false }]); // live-session.js joins the page's room
 	}
 	return opened;

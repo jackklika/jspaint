@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-10 — Text blocks: Enter makes `<br>` (`defaultParagraphSeparator`), `normalize_block_lines` on commit, `repair_block_lines` on load — `<div>` line breaks inside `<p>` blocks broke published pages (browser closes the `<p>`). Live room: a tab ignores its own late-echoed messages (`client_id` match). Opening a page from the site counts as saved. Pages send `Cache-Control: no-cache, no-transform`, which stops Cloudflare from injecting its Web Analytics beacon into the sandbox (verified: no `cloudflareinsights` script in the served HTML).
+
 - 2026-09-10 — Jack (incognito): "People should be able to edit the page but not save it to the site" → a plain visit to `edit.coolpaint.world` while not signed in opens the root site's front page as a copy (same as `/~name/page` for strangers); signed in → your own front page.
 
 - 2026-09-10 — Jack: "edit.coolpaint.world/about or /about.html … automatically go to that page" → editor-host page addresses mirror the sites host: `/about`, `/about.html`, `/blog/post` → the root site's page; `/~jack/about` too (`.html` optional). `run_worker_first: true`; Paint's own files/dirs are excluded by name (`APP_FILES`/`APP_DIRECTORIES` in worker/editor/index.js).

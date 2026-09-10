@@ -19,8 +19,13 @@ export const DEFAULT_EDITOR_URL = "https://edit.coolpaint.world";
  * A fresh browser opening a share link on any hostname (old or new domain, localhost) thus joins the right room.
  */
 export function default_editor_url() {
+	return is_hosted_editor() ? location.origin : DEFAULT_EDITOR_URL;
+}
+
+/** Whether this copy of Paint is the one the editor Worker serves (edit.<domain>), as opposed to a dev server or a plain jspaint. */
+export function is_hosted_editor() {
 	const meta = document.querySelector('meta[name="jspaint-editor"]');
-	return meta && meta.getAttribute("content") === "self" ? location.origin : DEFAULT_EDITOR_URL;
+	return !!meta && meta.getAttribute("content") === "self";
 }
 
 /** Where published sites live: `${DEFAULT_SITES_URL}/~name/`, and the root site at `${DEFAULT_SITES_URL}/`. */

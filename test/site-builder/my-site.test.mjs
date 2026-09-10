@@ -120,6 +120,9 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	await page.waitForSelector(new_page_input, { timeout: 5000 });
 	assert.equal(await page.inputValue(new_page_input), "index.html");
 	await page.keyboard.press("Enter");
+	// (The visitor's save above reached this tab through the live room and may have marked the page changed: don't keep it.)
+	await page.waitForFunction(() => file_name === "index.html" || [...document.querySelectorAll(".window")].some((w) => /Save changes to/.test(w.textContent)), null, { timeout: 10000 });
+	await page.evaluate(() => { const prompt = [...document.querySelectorAll(".window")].find((w) => /Save changes to/.test(w.textContent)); [...(prompt?.querySelectorAll("button") || [])].find((b) => b.textContent.trim() === "No")?.click(); });
 	await page.waitForFunction(() => file_name === "index.html", null, { timeout: 10000 });
 	await page.keyboard.press("Escape");
 	await page.keyboard.press("Control+s");
@@ -155,7 +158,8 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	const headers = { Authorization: `Bearer ${secret}` };
 	await copy("collages/about.png", "collages/about.png");
 	await copy("about.html", "index.html");
-	const { page: visitor, close: close_visitor } = await open_paint({ init: (editor) => { localStorage.setItem("jspaint site publish settings", JSON.stringify({ editor_url: editor })); }, init_arg: editor });
+	// (Only the hosted editor does this — Paint from a dev server starts blank — so load it from the editor Worker.)
+	const { page: visitor, close: close_visitor } = await open_paint({ url: `${editor}/` });
 	await visitor.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
 	assert.deepEqual(await visitor.evaluate(() => system_file_handle), { site_page: "index.html", copy_of: "root" });
 	assert.equal(await visitor.evaluate(() => !!document.querySelector(".my-site-sign-in")), false);

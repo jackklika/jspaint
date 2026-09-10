@@ -282,7 +282,7 @@ class OnCanvasBlock extends OnCanvasObject {
 	}
 	/** Records the current in-place edit as (one coalesced) history step. */
 	record_edit() {
-		const html = this.el.innerHTML;
+		const html = normalize_block_lines(this.el.innerHTML);
 		if (html === this.html) { return; }
 		make_or_update_undoable({
 			match: (history_node) => history_node === edit_history_node,
@@ -908,7 +908,37 @@ function show_block_properties_dialog(block = selected_block) {
 }
 
 /** Call once the canvas area exists (app.js). */
+/**
+ * Line breaks as <br>, never <div>: contenteditable in Chrome/Safari wraps new lines in <div>s, which are not
+ * allowed inside <p>/<h1>… — a browser parsing the published page closes the block early and the rest of the text
+ * falls out of it. Top-level <div>s become <br>-separated lines (an all-<br> div is an empty line).
+ * @param {string} html
+ */
+function normalize_block_lines(html) {
+	if (!/<div[\s>]/i.test(html)) { return html; }
+	const template = document.createElement("template");
+	template.innerHTML = html;
+	const out = document.createElement("div");
+	const flatten = (/** @type {ParentNode} */ parent) => {
+		for (const node of [...parent.childNodes]) {
+			if (node.nodeType === Node.ELEMENT_NODE && /** @type {Element} */ (node).tagName === "DIV") {
+				const only_br = node.childNodes.length === 1 && node.firstChild?.nodeName === "BR";
+				if (out.childNodes.length > 0) { out.appendChild(document.createElement("br")); }
+				if (!only_br) { flatten(/** @type {Element} */ (node)); }
+			} else {
+				out.appendChild(node);
+			}
+		}
+	};
+	flatten(template.content);
+	return out.innerHTML;
+}
+
 function init_blocks() {
+	// Enter inside a block makes a <br>, not a <div> (Chrome/Safari default): see normalize_block_lines.
+	try {
+		document.execCommand("defaultParagraphSeparator", false, "br");
+	} catch (_error) { /* not supported: normalize_block_lines covers it */ }
 	// Clicking anywhere that isn't a block deselects it (and ends in-place editing). Capture phase, so it runs
 	// before the tools do: an element a tool creates on this very click (e.g. the Text tool finishing a web text
 	// layer) stays selected.

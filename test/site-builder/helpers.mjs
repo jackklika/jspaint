@@ -8,9 +8,9 @@ export { assert };
 
 /**
  * Opens JS Paint in a fresh headless Chromium page and waits for the canvas.
- * @param {{ init?: (arg?: any) => void, init_arg?: any, viewport?: { width: number, height: number }, query?: string }} [options] - `init` runs before the page's scripts (e.g. to seed localStorage), with `init_arg`; `query` is appended to the URL (e.g. "?site=jack")
+ * @param {{ init?: (arg?: any) => void, init_arg?: any, viewport?: { width: number, height: number }, query?: string, url?: string }} [options] - `init` runs before the page's scripts (e.g. to seed localStorage), with `init_arg`; `query` is appended to the URL (e.g. "?site=jack"); `url` loads Paint from somewhere other than BASE_URL (e.g. the editor Worker)
  */
-export async function open_paint({ init, init_arg, viewport = { width: 1280, height: 800 }, query = "" } = {}) {
+export async function open_paint({ init, init_arg, viewport = { width: 1280, height: 800 }, query = "", url = BASE_URL } = {}) {
 	const browser = await chromium.launch();
 	const page = await browser.newPage({ viewport });
 	const errors = [];
@@ -19,7 +19,7 @@ export async function open_paint({ init, init_arg, viewport = { width: 1280, hei
 		if (message.type() === "error") { errors.push(`console: ${message.text().slice(0, 300)}`); }
 	});
 	if (init) { await page.addInitScript(init, init_arg); }
-	await page.goto(BASE_URL + query, { waitUntil: "domcontentloaded", timeout: 60000 });
+	await page.goto(url + query, { waitUntil: "domcontentloaded", timeout: 60000 });
 	await page.waitForSelector(".main-canvas", { timeout: 60000 });
 	await page.waitForTimeout(800);
 	return {

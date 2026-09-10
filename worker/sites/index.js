@@ -14,7 +14,8 @@ const PAGE_HEADERS = {
 	"X-Content-Type-Options": "nosniff",
 	"X-Frame-Options": "DENY",
 	"Referrer-Policy": "strict-origin-when-cross-origin",
-	"Cache-Control": "no-cache",
+	// no-transform: Cloudflare then leaves the HTML alone — no Web Analytics beacon or other injected script on pages.
+	"Cache-Control": "no-cache, no-transform",
 };
 
 const GUESTBOOK_MIN_INTERVAL_MS = 30 * 1000; // per visitor

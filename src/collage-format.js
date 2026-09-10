@@ -154,11 +154,27 @@ ${[...block_tags, ...sticker_tags, ...text_tags].join("\n")}
  */
 
 /**
+ * Pages saved before blocks.js normalize_block_lines can have <div> line breaks inside <p>/<h*> blocks; an HTML
+ * parser would close the block at the first <div> and drop the rest of the text. Turn them into <br>s first.
+ * @param {string} html
+ */
+function repair_block_lines(html) {
+	return html.replace(/<(p|h[1-6])( class="block"[^>]*)>([\s\S]*?)<\/\1>/g, (_m, tag, attrs, inner) => {
+		if (!/<div[\s>]/i.test(inner)) { return `<${tag}${attrs}>${inner}</${tag}>`; }
+		const lines = inner
+			.replace(/<div>\s*<br\s*\/?>\s*<\/div>/gi, "<br>")
+			.replace(/<div>([\s\S]*?)<\/div>/gi, "<br>$1")
+			.replace(/^(<br>)+/, "");
+		return `<${tag}${attrs}>${lines}</${tag}>`;
+	});
+}
+
+/**
  * @param {string} html
  * @returns {ParsedCollage | null} null if this isn't a collage page
  */
 function parse_collage_html(html) {
-	const doc = new DOMParser().parseFromString(html, "text/html");
+	const doc = new DOMParser().parseFromString(repair_block_lines(html), "text/html");
 	const collage = doc.querySelector(".collage");
 	const bitmap = collage?.querySelector("img.bitmap");
 	if (!collage || !bitmap) {
@@ -352,4 +368,4 @@ async function open_collage_from_file(file, { base_url, site_page } = {}) {
 	}));
 }
 
-export { COLLAGE_CSS, HTML_FORMAT_ID, is_collage_html, open_collage_from_file, parse_collage_html, serialize_collage_html };
+export { COLLAGE_CSS, HTML_FORMAT_ID, is_collage_html, open_collage_from_file, parse_collage_html, repair_block_lines, serialize_collage_html };

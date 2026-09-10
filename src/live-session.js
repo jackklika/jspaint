@@ -259,18 +259,22 @@ function handle_message(message) {
 			version = message.version;
 			break;
 		case "replaced":
+			if (message.client_id === client_id()) { break; } // our own, from a previous socket of this tab
 			// Someone else declared their copy the document: fetch it.
 			send({ type: "hello", client_id: client_id(), name: my_name(), color: my_color() });
 			break;
 		case "ops":
 			version = message.version;
+			if (message.client_id === client_id()) { break; } // a late echo of our own change (e.g. after re-opening the page): already here
 			remote_queue = remote_queue.then(() => apply_remote_ops(message.ops)).catch((error) => { window.console?.warn("live sync: ops failed", error); });
 			break;
 		case "bitmap":
 			version = message.version;
+			if (message.client_id === client_id()) { break; }
 			remote_queue = remote_queue.then(() => apply_remote_bitmap(message)).then(() => { finish_remote_stroke(message.client_id); }).catch((error) => { window.console?.warn("live sync: bitmap failed", error); });
 			break;
 		case "stroke":
+			if (message.client_id === client_id()) { break; }
 			apply_remote_stroke(message);
 			break;
 		case "props":
@@ -278,9 +282,11 @@ function handle_message(message) {
 			remote_queue = remote_queue.then(() => apply_remote_props(message));
 			break;
 		case "presence":
+			if (message.client_id === client_id()) { break; }
 			update_remote_client(message);
 			break;
 		case "join":
+			if (message.client.client_id === client_id()) { break; } // our own previous socket, seen from the new one
 			remote_clients.set(message.client.client_id, { ...remote_clients.get(message.client.client_id), ...message.client });
 			set_status("live");
 			send_presence(true);

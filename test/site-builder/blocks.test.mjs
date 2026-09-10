@@ -168,5 +168,22 @@ await page.waitForFunction(() => document.querySelectorAll(".block-layer").lengt
 const ink = await page.evaluate(() => main_ctx.getImageData(130, 130, 401, 61).data.filter((v, i) => i % 4 === 0 && v !== 255).length);
 assert.ok(ink > 100, `text ink drawn: ${ink}`);
 
+// Multi-line text: Enter makes <br> lines, never <div>s (which a browser would push out of a <p> on the live page)
+await select_tool(page, "Text Box");
+await page.mouse.click(c.x + 60, c.y + 60);
+await page.waitForSelector(".block-layer.editing", { timeout: 5000 });
+await page.keyboard.type("one");
+await page.keyboard.press("Enter");
+await page.keyboard.type("two");
+await page.keyboard.press("Enter");
+await page.keyboard.press("Enter");
+await page.keyboard.type("four");
+await page.keyboard.press("Escape");
+const lines_html = await page.evaluate(() => current_history_node.blocks[current_history_node.blocks.length - 1].html);
+assert.equal(lines_html, "one<br>two<br><br>four", lines_html);
+// …and a page saved the old way (divs inside the block) reads back as lines
+const repaired = await page.evaluate(async () => (await import("/src/collage-format.js")).repair_block_lines('<p class="block" style="left:1px">first<div><br></div><div>second</div></p><h1 class="block">fine</h1><marquee class="block">a<div>b</div></marquee>'));
+assert.equal(repaired, '<p class="block" style="left:1px">first<br><br>second</p><h1 class="block">fine</h1><marquee class="block">a<div>b</div></marquee>');
+
 await close();
 console.log("blocks: ok");
