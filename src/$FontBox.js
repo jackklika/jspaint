@@ -146,8 +146,9 @@ function $FontBox() {
 			update_font();
 		}
 	}, () => {
-		// All fonts have been added to the list. Now we can select the default font.
-		$family.val(originalFamily);
+		// All fonts have been added to the list. Now we can select the font — the one in use right now, which may
+		// have changed since this box was created (a page element being edited reports the font at its caret).
+		$family.val(text_tool_font.family || originalFamily);
 		// Liberation Sans is designed to be metrically compatible with Arial,
 		// and is available in free operating systems like Ubuntu.
 		if (!$family.val()) {
@@ -169,7 +170,12 @@ function $FontBox() {
 	// Blocks being edited in place report the formatting at the caret (blocks.js) — reflect it without re-triggering.
 	$G.on("text-tool-font-changed", () => {
 		$size.val(text_tool_font.size);
-		if (text_tool_font.family && $family.find(`option[value='${text_tool_font.family.replace(/'/g, "\\'")}']`).length) {
+		if (text_tool_font.family) {
+			// The text's font may not be installed here (a page font like Comic Sans MS on a machine without it):
+			// list it anyway, so the box shows it and update_font() doesn't swap it for whatever was selected.
+			if (!$family.find(`option[value='${text_tool_font.family.replace(/'/g, "\\'")}']`).length) {
+				$family.prepend($(E("option")).val(text_tool_font.family).text(text_tool_font.family.replace(/^"|"$/g, "")).addClass("classic-font"));
+			}
 			$family.val(text_tool_font.family);
 		}
 		$button_group.find(".toggle[data-font-prop]").each((_i, button) => {

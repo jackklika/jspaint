@@ -265,8 +265,9 @@ class OnCanvasBlock extends OnCanvasObject {
 			selection.addRange(range);
 		}
 		this.el.addEventListener("input", this._on_input = () => { this.record_edit(); });
+		editing_block = this;
+		sync_font_from_selection(); // before the toolbar shows, so it opens on this text's font
 		show_font_toolbar();
-		sync_font_from_selection();
 		$G.triggerHandler("block-editing-changed");
 	}
 	/** Records the current in-place edit as (one coalesced) history step. */

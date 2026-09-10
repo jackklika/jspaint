@@ -13,7 +13,15 @@ const snapshot = () => page.evaluate(() => ({
 	text: (current_history_node.text_layers || []).map((t) => `${t.text}@${t.x},${t.y}`),
 }));
 const before = await snapshot();
-assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("layers#")).length), 1);
+// The sidecar lives in IndexedDB (sticker blobs), not localStorage (quota).
+assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("layers#")).length), 0);
+assert.equal(await page.evaluate(() => new Promise((resolve) => {
+	const open = indexedDB.open("jspaint-site-builder");
+	open.onsuccess = () => {
+		const request = open.result.transaction("layers").objectStore("layers").getAllKeys();
+		request.onsuccess = () => resolve(request.result.filter((k) => String(k).startsWith("layers#")).length);
+	};
+})), 1);
 
 await page.reload({ waitUntil: "domcontentloaded" });
 await page.waitForSelector(".main-canvas", { timeout: 60000 });
