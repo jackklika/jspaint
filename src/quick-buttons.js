@@ -13,10 +13,42 @@ let $undo = null;
 /** @type {JQuery<HTMLButtonElement> | null} */
 let $redo = null;
 
-const svg = (/** @type {string} */ body) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">${body}</svg>`)}`;
-// Curved arrows in the toolbox's pixel style: undo bends left, redo bends right.
-const UNDO_ICON = svg('<path d="M3 7h1V6h1V5h1V4h1v3h1v1h1v1h1v1h1v1h1v1h1v2h-1v-1h-1v-1h-1v-1H9v-1H8V9H7v3H6v-1H5v-1H4v-1H3zM7 6h3v1h2v1h1v1h1v2h-1v-1h-1V9h-1V8H9V7H7z" fill="#000080"/><path d="M4 7h1V6h1V5h1v2h1v1h1v1h1v1h1v1h1v1h-1v-1h-1v-1H9V9H8V8H7v3H6v-1H5v-1H4z" fill="#fff"/>');
-const REDO_ICON = svg('<path d="M13 7h-1V6h-1V5h-1V4H9v3H8v1H7v1H6v1H5v1H4v1H3v2h1v-1h1v-1h1v-1h1v-1h1V9h1v3h1v-1h1v-1h1v-1h1zM9 6H6v1H4v1H3v1H2v2h1v-1h1V9h1V8h1V7h3z" fill="#000080"/><path d="M12 7h-1V6h-1V5H9v2H8v1H7v1H6v1H5v1H4v1h1v-1h1v-1h1V9h1V8h1v3h1v-1h1v-1h1v-1h1z" fill="#fff"/>');
+/**
+ * A 16×16 icon from rows of pixel art ("#" = ink), in one color. `etched` adds the Windows disabled look: a white
+ * copy one pixel down and right, under a grey glyph.
+ * @param {string[]} rows @param {string} color @param {boolean} [etched]
+ */
+function pixel_icon(rows, color, etched = false) {
+	const path = rows.flatMap((row, y) => [...row].map((ch, x) => (ch === "#" ? `M${x} ${y}h1v1h-1z` : "")).filter(Boolean)).join("");
+	const glyph = (/** @type {string} */ fill, /** @type {number} */ offset) => `<path d="${path}" fill="${fill}"${offset ? ` transform="translate(${offset} ${offset})"` : ""}/>`;
+	const body = etched ? glyph("#fff", 1) + glyph("#808080", 0) : glyph(color, 0);
+	return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">${body}</svg>`)}`;
+}
+
+// Bold curved arrows: a solid head and a 2px stroke, black on the button face (undo bends left, redo bends right).
+const UNDO_ROWS = [
+	"................",
+	"................",
+	"................",
+	".......#####....",
+	".....#########..",
+	"....###....####.",
+	"...###.......##.",
+	"..####.......##.",
+	".#####.......##.",
+	"..####.......##.",
+	"...###.......##.",
+	"....##..........",
+	"................",
+	"................",
+	"................",
+	"................",
+];
+const REDO_ROWS = UNDO_ROWS.map((row) => [...row].reverse().join(""));
+const UNDO_ICON = pixel_icon(UNDO_ROWS, "#000");
+const REDO_ICON = pixel_icon(REDO_ROWS, "#000");
+const UNDO_ICON_DISABLED = pixel_icon(UNDO_ROWS, "#000", true);
+const REDO_ICON_DISABLED = pixel_icon(REDO_ROWS, "#000", true);
 
 function update_enabled() {
 	$undo?.prop("disabled", undos.length < 1);
@@ -31,16 +63,16 @@ function get_quick_buttons_container() {
 /** Call once the bottom component area exists (app.js). */
 function init_quick_buttons() {
 	$container = $(E("div")).addClass("quick-buttons").appendTo($bottom);
-	/** @param {string} label @param {string} title @param {string} icon @param {() => void} action */
-	const button = (label, title, icon, action) => {
+	/** @param {string} label @param {string} title @param {string} icon @param {string} disabled_icon @param {() => void} action */
+	const button = (label, title, icon, disabled_icon, action) => {
 		const $b = /** @type {JQuery<HTMLButtonElement>} */ ($(E("button")).addClass("quick-button").attr({ type: "button", title, "aria-label": label }).appendTo($container));
-		$(E("span")).addClass("quick-button-icon").css({ backgroundImage: `url("${icon}")` }).appendTo($b);
+		$(E("span")).addClass("quick-button-icon").css({ "--icon": `url("${icon}")`, "--icon-disabled": `url("${disabled_icon}")` }).appendTo($b);
 		$b.on("mousedown", (e) => { e.preventDefault(); }); // don't take focus from a text box being edited
 		$b.on("click", () => { action(); });
 		return $b;
 	};
-	$undo = button(localize("Undo"), `${localize("Undo")} (Ctrl+Z)`, UNDO_ICON, () => { undo(); });
-	$redo = button(localize("Redo"), `${localize("Repeat")} (Ctrl+Y)`, REDO_ICON, () => { redo(); });
+	$undo = button(localize("Undo"), `${localize("Undo")} (Ctrl+Z)`, UNDO_ICON, UNDO_ICON_DISABLED, () => { undo(); });
+	$redo = button(localize("Redo"), `${localize("Repeat")} (Ctrl+Y)`, REDO_ICON, REDO_ICON_DISABLED, () => { redo(); });
 	$G.on("history-update", update_enabled);
 	update_enabled();
 
@@ -70,13 +102,13 @@ function init_quick_buttons() {
 			display: block;
 			width: 16px;
 			height: 16px;
+			background-image: var(--icon);
 			background-repeat: no-repeat;
 			background-size: 16px 16px;
 			image-rendering: pixelated;
 		}
 		.quick-button:disabled .quick-button-icon {
-			opacity: 0.4;
-			filter: grayscale(1);
+			background-image: var(--icon-disabled, var(--icon)); /* etched grey, like every disabled Windows glyph */
 		}
 	`).appendTo(document.head);
 }
