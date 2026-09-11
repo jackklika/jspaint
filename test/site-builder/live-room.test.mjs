@@ -61,7 +61,7 @@ let snapshot = await a.next("snapshot");
 assert.equal(snapshot.version, 0);
 assert.deepEqual(snapshot.clients, []);
 assert.equal(snapshot.you.name, "Alice");
-a.send({ type: "seed", width: 800, height: 600, page_properties: { bgcolor: "#ffffd9" }, layers: { blocks: [{ id: "b1", kind: "heading", tag: "h1", attrs: {}, html: "hi", x: 10, y: 10, width: 200, height: 40 }], stickers: [], text_layers: [] } });
+a.send({ type: "seed", width: 800, height: 600, page_properties: { bgcolor: "#ffffd9", column_left: 300, column_top: 40, column_width: 480, column_bogus: "x" }, layers: { blocks: [{ id: "b1", kind: "heading", tag: "h1", attrs: {}, html: "hi", x: 10, y: 10, width: 200, height: 40 }], stickers: [], text_layers: [] } });
 assert.equal((await a.next("seeded")).version, 1);
 a.send({ type: "bitmap", x: 0, y: 0, width: 2, height: 2, png: tiny_png, reset: true });
 assert.equal((await a.next("ack")).version, 2);
@@ -73,13 +73,18 @@ b.send({ type: "hello", client_id: "bbb", name: "Bob", color: "#3cb44b" });
 snapshot = await b.next("snapshot");
 assert.equal(snapshot.version, 2);
 assert.equal(snapshot.doc.width, 800);
-assert.deepEqual(snapshot.doc.page_properties, { bgcolor: "#ffffd9" });
+assert.deepEqual(snapshot.doc.page_properties, { bgcolor: "#ffffd9", column_left: 300, column_top: 40, column_width: 480 }, "the sections column is kept (unknown keys are not)");
 assert.equal(snapshot.doc.layers.blocks[0].html, "hi");
 assert.equal(snapshot.patches.length, 1);
 assert.equal(snapshot.patches[0].png, tiny_png);
 assert.equal(snapshot.patches[0].reset, true);
 assert.deepEqual(snapshot.clients.map((c) => c.name), ["Alice"]);
 assert.equal((await a.next("join")).client.name, "Bob");
+
+// Moving the column alone is a change: acked, stored, and told to the others
+a.send({ type: "props", page_properties: { bgcolor: "#ffffd9", column_left: 120, column_top: 40, column_width: 480 }, client_op_id: "move-column" });
+assert.equal((await a.next("ack")).client_op_id, "move-column");
+assert.equal((await b.next("props")).page_properties.column_left, 120);
 
 // Ops relay and merge: A moves the heading and adds a marquee; B sees both; a third joiner gets the merged doc
 a.send({ type: "ops",
@@ -91,8 +96,8 @@ a.send({ type: "ops",
 const relayed = await b.next("ops");
 assert.equal(relayed.client_id, "aaa");
 assert.equal(relayed.ops.length, 3);
-assert.equal(relayed.version, 3);
-assert.equal((await a.next("ack")).version, 3);
+assert.equal(relayed.version, 4);
+assert.equal((await a.next("ack")).version, 4);
 // B removes the marquee; A sees it
 b.send({ type: "ops", ops: [{ kind: "blocks", op: "remove", id: "b2" }] });
 assert.deepEqual((await a.next("ops")).ops, [{ kind: "blocks", op: "remove", id: "b2" }]);
@@ -107,21 +112,21 @@ const presence = await a.next("presence");
 assert.deepEqual(presence.cursor, { x: 1, y: 2 });
 assert.equal(presence.editing, "b1");
 a.send({ type: "ping" });
-assert.equal((await a.next("pong")).version, 5);
+assert.equal((await a.next("pong")).version, 6);
 
 // A third client sees the merged state: heading moved to 50,60, marquee gone, two patches in order
 const c = connect(room_url());
 await c.opened;
 c.send({ type: "hello", client_id: "ccc", name: "Cid", color: "#0082c8" });
 snapshot = await c.next("snapshot");
-assert.equal(snapshot.version, 5);
+assert.equal(snapshot.version, 6);
 assert.deepEqual(snapshot.doc.layers.blocks.map((block) => `${block.id}@${block.x},${block.y}`), ["b1@50,60"]);
 assert.deepEqual(snapshot.patches.map((p) => `${p.x},${p.y}`), ["0,0", "4,6"]);
 assert.deepEqual(snapshot.clients.map((client) => client.name).sort(), ["Alice", "Bob"]);
 
 // Replace: C declares its copy the document; A and B are told to re-fetch; the patch log restarts
 c.send({ type: "replace", width: 640, height: 480, page_properties: {}, layers: { blocks: [], stickers: [], text_layers: [] } });
-assert.equal((await c.next("seeded")).version, 6);
+assert.equal((await c.next("seeded")).version, 7);
 assert.equal((await a.next("replaced")).client_id, "ccc");
 await b.next("replaced");
 c.send({ type: "bitmap", x: 0, y: 0, width: 2, height: 2, png: tiny_png, reset: true });

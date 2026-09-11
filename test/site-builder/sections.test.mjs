@@ -72,6 +72,32 @@ assert.equal(await page.evaluate(() => current_history_node.name), "Move Element
 	assert.ok(Math.abs(back[0] - 300) <= 1 && back[1] === back[0], `and back: ${JSON.stringify(back)}`);
 }
 
+// Undo takes the column back (the geometry rides on the history node), and a reload of the same #local: session
+// lays the sections out where they were (it's saved with the layers)
+{
+	const column = () => page.evaluate(async () => { const p = (await import("/src/page-properties.js")).get_page_properties(); return [p.column_left, p.column_top]; });
+	await page.waitForTimeout(500);
+	const top = await (await page.$(".block-layer.flow .block-content")).boundingBox(); // (the top section drags the column)
+	await page.mouse.move(top.x + 20, top.y + 10);
+	await page.mouse.down();
+	await page.mouse.move(top.x + 20 - 200, top.y + 10 - 200, { steps: 6 });
+	await page.mouse.up();
+	const near = (/** @type {number[]} */ pair, /** @type {number} */ value) => pair.every((n) => Math.abs(n - value) <= 1);
+	assert.ok(near(await column(), 100), `moved: ${await column()}`);
+	await page.keyboard.press("Control+z");
+	assert.ok(near(await column(), 300), `undone: ${await column()}`);
+	await page.keyboard.press("Control+y");
+	assert.ok(near(await column(), 100), `redone: ${await column()}`);
+	await page.waitForFunction(() => /#local:/.test(location.hash), null, { timeout: 5000 });
+	await page.waitForTimeout(1200); // the sidecar autosave is debounced
+	await page.reload({ waitUntil: "domcontentloaded" });
+	await page.waitForFunction(() => document.querySelectorAll(".block-layer.flow").length === 2 && (current_history_node.blocks || []).filter((b) => b.flow).length === 2, null, { timeout: 20000 });
+	assert.ok(near(await column(), 100), `after a reload: ${await column()}`);
+	const xs = await page.evaluate(() => (current_history_node.blocks || []).filter((b) => b.flow).map((b) => b.x));
+	assert.ok(Math.abs(xs[0] - 100) <= 1 && xs[1] === xs[0], `sections stayed in the column: ${JSON.stringify(xs)}`);
+	await select_tool(page, "Pointer"); // (a reload starts with a paint tool; elements take the pointer only under the Pointer tool)
+}
+
 // More text makes it taller and pushes the next one down
 const before = await sections();
 await edit_section(/^Second/);
@@ -123,13 +149,13 @@ assert.match(rich, /<ul><li>item one<\/li><li><a href="https:\/\/example.com\/">
 const html = await page.evaluate(async () => (await import("/src/collage-format.js")).serialize_collage_html());
 assert.match(html, /<div class="collage has-column"/);
 // (A new section starts as a heading line; typing over the placeholder keeps the <h2>, and Enter makes paragraphs.)
-assert.match(html, /<div class="column" style="left:300px;top:300px;width:480px">\s*<div data-kind="section" id="second-section" class="block section"><h2>Second section<\/h2>(<p>line<\/p>){6}<\/div>\s*<div data-kind="section" id="first-section" class="block section"><h2>First section<\/h2><h2>A heading<\/h2><ul>/);
+assert.match(html, /<div class="column" style="left:(?:99|100|101)px;top:(?:99|100|101)px;width:680px">\s*<div data-kind="section" id="second-section" class="block section"><h2>Second section<\/h2>(<p>line<\/p>){6}<\/div>\s*<div data-kind="section" id="first-section" class="block section"><h2>First section<\/h2><h2>A heading<\/h2><ul>/);
 const parsed = await page.evaluate(async (html) => {
 	const parsed = (await import("/src/collage-format.js")).parse_collage_html(html);
 	return { blocks: parsed.blocks.map((b) => [b.kind, !!b.flow, b.html.replace(/<[^>]+>/g, " ").trim().split(/\s+/).slice(0, 2).join(" ")]), column: [parsed.page_properties.column_left, parsed.page_properties.column_top, parsed.page_properties.column_width] };
 }, html);
 assert.deepEqual(parsed.blocks, [["section", true, "Second section"], ["section", true, "First section"]]);
-assert.deepEqual(parsed.column, [300, 300, 480]);
+assert.ok(Math.abs(parsed.column[0] - 100) <= 1 && Math.abs(parsed.column[1] - 100) <= 1 && parsed.column[2] === 680, JSON.stringify(parsed.column)); // (pointer rounding; the width is automatic: to the page's edge less a margin)
 
 await close();
 console.log("sections: ok");

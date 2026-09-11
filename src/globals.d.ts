@@ -23,7 +23,7 @@ declare const ImageTracer: any;
 declare const TrackyMouse: any;
 // The PostHog bootstrap injected into the app shell by the editor Worker (worker/shared/analytics.js);
 // undefined on dev servers / plain jspaint, where track_app_event() is a no-op.
-declare const posthog: { capture: (name: string, props?: Record<string, any>) => void } | undefined;
+declare const posthog: { capture: (name: string, props?: Record<string, any>) => void, captureException?: (error: Error | string, extraProps?: Record<string, any>) => void } | undefined;
 
 // Globals from scripts that are not converted to ESM yet,
 // and thus can't be imported. (I've been marking scripts as @ts-check as I convert them.)
@@ -196,7 +196,7 @@ declare function make_monochrome_palette(rgba1?: number[], rgba2?: number[]): (s
  * @param {HTMLImageElement |HTMLCanvasElement | null=} options.icon - a visual representation of the operation type, shown in the history window, e.g. get_help_folder_icon("p_blank.png")
  * @returns {HistoryNode}
  */
-declare function make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, stickers, text_layers, blocks, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
+declare function make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, stickers, text_layers, blocks, page_properties, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
 	parent?: (HistoryNode | null) | undefined;
 	futures?: HistoryNode[] | undefined;
 	timestamp?: number | undefined;
@@ -214,6 +214,7 @@ declare function make_history_node({ parent, futures, timestamp, soft, image_dat
 	stickers?: (StickerSnapshot[] | null) | undefined;
 	text_layers?: (TextLayerSnapshot[] | null) | undefined;
 	blocks?: (BlockSnapshot[] | null) | undefined;
+	page_properties?: (import("./page-properties.js").PageProperties | null) | undefined;
 	tool_transparent_mode?: boolean | undefined;
 	foreground_color?: (string | CanvasPattern) | undefined;
 	background_color?: (string | CanvasPattern) | undefined;
@@ -323,7 +324,7 @@ interface Window {
 	 * @param {HTMLImageElement |HTMLCanvasElement | null=} options.icon - a visual representation of the operation type, shown in the history window, e.g. get_help_folder_icon("p_blank.png")
 	 * @returns {HistoryNode}
 	 */
-	make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, stickers, text_layers, blocks, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
+	make_history_node({ parent, futures, timestamp, soft, image_data, selection_image_data, selection_x, selection_y, textbox_text, textbox_x, textbox_y, textbox_width, textbox_height, text_tool_font, stickers, text_layers, blocks, page_properties, tool_transparent_mode, foreground_color, background_color, ternary_color, name, icon, }: {
 		parent?: (HistoryNode | null) | undefined;
 		futures?: HistoryNode[] | undefined;
 		timestamp?: number | undefined;
@@ -833,6 +834,7 @@ interface HistoryNode {
 	text_layers: TextLayerSnapshot[] | null;
 	/** the page elements (blocks), if any (see blocks.js) */
 	blocks: BlockSnapshot[] | null;
+	page_properties: import("./page-properties.js").PageProperties | null;
 	/** whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque */
 	tool_transparent_mode: boolean;
 	/** selected foreground color (left click) */

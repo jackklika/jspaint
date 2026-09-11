@@ -16,7 +16,7 @@ import { show_imgur_uploader } from "./imgur.js";
 import { add_block, clear_blocks, legacy_size_for, restore_blocks, snapshot_blocks } from "./blocks.js";
 import { HTML_FORMAT_ID, open_collage_from_file, serialize_collage_html } from "./collage-format.js";
 import { save_page_to_site } from "./my-site.js";
-import { reset_page_properties } from "./page-properties.js";
+import { get_page_properties, reset_page_properties, set_page_properties } from "./page-properties.js";
 import { add_sticker_from_blob, clear_stickers, is_animated_gif, restore_stickers, snapshot_stickers } from "./stickers.js";
 import { clear_text_layers, create_text_layer_from_textbox, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
 import { showMessageBox } from "./msgbox.js";
@@ -707,6 +707,7 @@ function reset_canvas_and_history() {
  * @param {string | CanvasPattern=} options.ternary_color - selected ternary color (ctrl+click)
  * @param {string=} options.name - the name of the operation, shown in the history window, e.g. localize("Resize Canvas")
  * @param {HTMLImageElement |HTMLCanvasElement | null=} options.icon - a visual representation of the operation type, shown in the history window, e.g. get_help_folder_icon("p_blank.png")
+ * @param {PageProperties | null=} options.page_properties - the page's background and sections column (page-properties.js), so moving the column is undoable
  * @returns {HistoryNode}
  */
 function make_history_node({
@@ -727,6 +728,7 @@ function make_history_node({
 	stickers = null, // the animated GIF sticker layer, if any (see stickers.js)
 	text_layers = null, // the web text layers, if any (see text-layers.js)
 	blocks = null, // the page elements, if any (see blocks.js)
+	page_properties = null, // the page's background and sections column (see page-properties.js)
 	tool_transparent_mode = false, // whether transparent mode is on for Select/Free-Form Select/Text tools; otherwise box is opaque
 	foreground_color, // selected foreground color (left click)
 	background_color, // selected background color (right click)
@@ -752,6 +754,7 @@ function make_history_node({
 		stickers,
 		text_layers,
 		blocks,
+		page_properties,
 		tool_transparent_mode,
 		foreground_color,
 		background_color,
@@ -2071,6 +2074,7 @@ function go_to_history_node(target_history_node, canceling) {
 	update_title();
 
 	main_ctx.copy(target_history_node.image_data);
+	if (target_history_node.page_properties) { set_page_properties(target_history_node.page_properties, false); } // before the blocks: the sections stack in this column
 	restore_blocks(target_history_node.blocks);
 	restore_stickers(target_history_node.stickers);
 	restore_text_layers(target_history_node.text_layers);
@@ -2204,6 +2208,7 @@ function undoable({ name, icon, use_loose_canvas_changes, soft, assume_saved }, 
 		stickers: snapshot_stickers(),
 		text_layers: snapshot_text_layers(),
 		blocks: snapshot_blocks(),
+		page_properties: get_page_properties(),
 		tool_transparent_mode,
 		foreground_color: selected_colors.foreground,
 		background_color: selected_colors.background,
@@ -2234,6 +2239,7 @@ function make_or_update_undoable(undoable_meta, undoable_action) {
 		current_history_node.stickers = snapshot_stickers();
 		current_history_node.text_layers = snapshot_text_layers();
 		current_history_node.blocks = snapshot_blocks();
+		current_history_node.page_properties = get_page_properties();
 		if (undoable_meta.update_name) {
 			current_history_node.name = undoable_meta.name;
 		}

@@ -49,7 +49,7 @@ export class PageRoom extends DurableObject {
 	 */
 	constructor(ctx, env) {
 		super(ctx, env);
-		/** @type {{ version: number, width: number, height: number, page_properties: Record<string, string>, layers: { blocks: any[], stickers: any[], text_layers: any[] } }} */
+		/** @type {{ version: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] } }} */
 		this.doc = { version: 0, width: 0, height: 0, page_properties: {}, layers: { blocks: [], stickers: [], text_layers: [] } };
 		this.ctx.blockConcurrencyWhile(() => {
 			const sql = this.ctx.storage.sql;
@@ -244,10 +244,15 @@ export class PageRoom extends DurableObject {
 			}
 		}
 		if (message.page_properties && typeof message.page_properties === "object") {
-			/** @type {Record<string, string>} */
+			/** @type {Record<string, string | number>} */
 			const props = {};
 			for (const key of ["bgcolor", "text_color", "background"]) {
 				if (typeof message.page_properties[key] === "string") { props[key] = message.page_properties[key].slice(0, 500); }
+			}
+			// The sections column (where the writing stacks): kept too, so every tab lays the sections out the same way
+			for (const key of ["column_left", "column_top", "column_width"]) {
+				const value = message.page_properties[key];
+				if (Number.isInteger(value) && value >= 0 && value <= 20000) { props[key] = value; }
 			}
 			if (JSON.stringify(props) !== JSON.stringify(this.doc.page_properties)) {
 				this.doc.page_properties = props;
