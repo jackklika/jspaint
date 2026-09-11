@@ -26,16 +26,16 @@ await page.fill('.my-site-sign-in input[name="editor-url"]', editor);
 await page.click(".my-site-sign-in button[type=submit]");
 await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 15000 });
 
-// Signed in, the toolbox globe shows the site view: address, and Browse Files… opens the folder
+// Signed in, the toolbox globe shows the site view: address, and My Site… opens the window
 assert.match(await page.getAttribute(".site-globe-button", "title"), new RegExp(`~${site}`));
 await page.click(".site-globe-button");
 await page.waitForSelector(".site-view-window", { timeout: 5000 });
 assert.match(await page.$eval(".site-view-window", (el) => el.textContent), new RegExp(`~${site}`));
 assert.equal(await page.$eval(".site-view-window a[target=_blank]", (el) => el.getAttribute("href")), `${sites}/~${site}/`);
-await page.evaluate(() => [...document.querySelectorAll(".site-view-window button")].find((b) => b.textContent === "Browse Files…").click());
+await page.evaluate(() => [...document.querySelectorAll(".site-view-window button")].find((b) => b.textContent === "My Site…").click());
 await page.waitForSelector(".my-site-window", { timeout: 10000 });
 await page.waitForFunction(() => !document.querySelector(".site-view-window"), null, { timeout: 5000 });
-assert.equal(await page.getAttribute(".my-site-window .my-site-tab.selected", "data-tab"), "files", "Browse Files… lands on the Files tab");
+assert.equal(await page.getAttribute(".my-site-window .my-site-tab.selected", "data-tab"), "site", "My Site… opens on the Site tab");
 
 // My Site → New Page… → about.html
 await click_menu_item(page, "My Site...");
