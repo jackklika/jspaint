@@ -301,8 +301,8 @@ export default {
 		if (feed && valid_path(`${feed[1]}/index.html`)) {
 			return rss_feed(site_files(env.SITES, site), site, feed[1], url);
 		}
-		if (!valid_path(path)) {
-			return not_found();
+		if (!valid_path(path) || path.startsWith("versions/")) {
+			return not_found(); // (versions/: earlier saves, only reachable through the editor)
 		}
 		const object = await env.SITES.get(`sites/${site}/${path}`);
 		if (!object) {

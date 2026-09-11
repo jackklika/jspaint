@@ -17,7 +17,7 @@ import { get_tool_by_id, make_or_update_undoable, select_tool, undoable } from "
 import { $G, E, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, make_canvas, make_css_cursor, to_canvas_coords } from "./helpers.js";
 import { deselect_sticker } from "./stickers.js";
 import { deselect_text_layer } from "./text-layers.js";
-import { get_page_properties } from "./page-properties.js";
+import { get_page_properties, set_page_properties } from "./page-properties.js";
 import { ROOT_SITE, site_public_url } from "./site-constants.js";
 import { current_site, get_site_editor_url, get_site_files_base, load_settings } from "./site-publish.js";
 
@@ -160,6 +160,7 @@ class OnCanvasBlock extends OnCanvasObject {
 		this.handles.hide();
 
 		let mox = 0, moy = 0;
+		let moves_column = false; // decided when the drag starts: the first section drags the column, the others reorder
 		const pointermove = (/** @type {JQuery.TriggeredEvent} */ e) => {
 			make_or_update_undoable({
 				// XXX: Localization hazard: logic based on English action names
@@ -171,7 +172,11 @@ class OnCanvasBlock extends OnCanvasObject {
 			}, () => {
 				const m = to_canvas_coords(e);
 				if (this.flow) {
-					move_section_toward(this, m.y); // a section can only change its place in the column
+					if (moves_column) {
+						set_page_properties({ column_left: Math.max(0, Math.round(m.x - mox)), column_top: Math.max(0, Math.round(m.y - moy)) });
+					} else {
+						move_section_toward(this, m.y); // the others change their place in the column
+					}
 					return;
 				}
 				this.x = m.x - mox;
@@ -198,6 +203,7 @@ class OnCanvasBlock extends OnCanvasObject {
 			const m = to_canvas_coords(e);
 			mox = m.x - this.x;
 			moy = m.y - this.y;
+			moves_column = this.flow && blocks.find((other) => other.flow) === this; // the first section is the column
 			$G.on("pointermove", pointermove);
 			$G.one("pointerup pointercancel", () => { $G.off("pointermove", pointermove); });
 		});
@@ -750,6 +756,11 @@ function add_block(kind_id, rect, overrides = {}) {
 	const kind = get_block_kind(kind_id) || block_kind_for(kind_id, {});
 	/** @type {OnCanvasBlock} */
 	let block;
+	if (kind.flow && !blocks.some((other) => other.flow)) {
+		// The first section starts the column where you clicked (or dragged a box)
+		const dragged = (rect.width || 0) >= 8 && (rect.height || 0) >= 8;
+		set_page_properties({ column_left: Math.round(rect.x), column_top: Math.round(rect.y), ...(dragged ? { column_width: Math.round(/** @type {number} */ (rect.width)) } : {}) }, false);
+	}
 	undoable({ name: `Add ${kind.label}`, icon: kind_icon(kind.id) }, () => {
 		block = new OnCanvasBlock({
 			id: `b${next_block_id++}`,
@@ -930,7 +941,7 @@ function get_column_geometry() {
 	return {
 		left: props.column_left || 40,
 		top: props.column_top || 40,
-		width: props.column_width || Math.max(120, main_canvas.width - 80),
+		width: props.column_width || Math.max(120, Math.min(main_canvas.width - 80, main_canvas.width - (props.column_left || 40) - 20)),
 	};
 }
 

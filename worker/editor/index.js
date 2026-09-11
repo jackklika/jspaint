@@ -8,6 +8,8 @@
 //   GET    /api/sites/:name/files/<path>            read a file (HEAD to check existence; ?optional → 204 instead of 404)
 //   PUT    /api/sites/:name/files/<path>            write a file (HTML is sanitized; images/audio are sniffed)
 //   DELETE /api/sites/:name/files/<path>
+//   GET    /api/sites/:name/versions?page=<path>      earlier saves of a page (kept under versions/ when a page is written over)
+//   POST   /api/sites/:name/versions/restore {page, version}  put an earlier save back (the current one is archived first)
 //   (site.json: the site's settings — { "folders": { "posts": { "kind": "posts", "title": "…" } } }; site.css: its stylesheet)
 //   GET    /api/x-elements                          the <x-*> registry's editor metadata (no auth)
 //   GET    /api/gifcities/search?q=&offset=&page_size=   GifCities search scraped to JSON (no auth, cached)
@@ -309,6 +311,122 @@ async function share_landing(request, url, env) {
 	return new Response(injected ? injected.html : rewritten, { status: asset.status, headers });
 }
 
+// --- versions: nothing is lost when a page is written over ---
+// Saving over a page keeps the old copy at versions/<stamp>/<path>; a bitmap that's about to change is kept as
+// versions/bitmaps/<base>.<hash12>.png (the hash the page's src=…?v= carries), so a version restores with its picture.
+
+const VERSIONS_KEPT = 10;
+
+/** @param {Uint8Array} bytes @returns {Promise<string>} the first 12 hex digits of SHA-1 (what Paint puts in ?v=) */
+async function short_hash(bytes) {
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes));
+	return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 12);
+}
+
+/** @param {string} path */
+function is_bitmap_path(path) {
+	return /^collages\/.+\.png$/i.test(path);
+}
+
+/**
+ * @param {R2Bucket} bucket
+ * @param {string} prefix - sites/<name>/
+ * @param {string} path
+ * @param {string} key
+ * @param {Uint8Array} incoming - what's about to be written (a bitmap is archived only if it differs)
+ */
+async function archive_before_overwrite(bucket, prefix, path, key, incoming) {
+	if (path.startsWith("versions/")) { return; }
+	const old = await bucket.get(key);
+	if (!old) { return; }
+	if (is_html_path(path)) {
+		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+		await bucket.put(`${prefix}versions/${stamp}/${path}`, await old.arrayBuffer(), { httpMetadata: { contentType: content_type_for(path) } });
+		await prune_versions(bucket, prefix, path);
+	} else if (is_bitmap_path(path)) {
+		const bytes = new Uint8Array(await old.arrayBuffer());
+		const [old_hash, new_hash] = await Promise.all([short_hash(bytes), short_hash(incoming)]);
+		if (old_hash === new_hash) { return; }
+		const base = path.slice("collages/".length).replace(/\.png$/i, "");
+		await bucket.put(`${prefix}versions/bitmaps/${base}.${old_hash}.png`, bytes, { httpMetadata: { contentType: "image/png" } });
+	}
+}
+
+/**
+ * @param {R2Bucket} bucket
+ * @param {string} prefix
+ * @param {string} page
+ * @returns {Promise<{ version: string, key: string, uploaded: number, size: number }[]>} newest first
+ */
+async function list_versions(bucket, prefix, page) {
+	const versions = [];
+	let cursor;
+	do {
+		const listing = await bucket.list({ prefix: `${prefix}versions/`, cursor });
+		for (const object of listing.objects) {
+			const match = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}versions/([^/]+)/${page.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).exec(object.key);
+			if (match && match[1] !== "bitmaps") { versions.push({ version: match[1], key: object.key, uploaded: object.uploaded.getTime(), size: object.size }); }
+		}
+		cursor = listing.truncated ? listing.cursor : undefined;
+	} while (cursor);
+	return versions.sort((a, b) => b.version.localeCompare(a.version));
+}
+
+/** Keeps the newest VERSIONS_KEPT saves of a page, and the bitmaps they refer to. @param {R2Bucket} bucket @param {string} prefix @param {string} page */
+async function prune_versions(bucket, prefix, page) {
+	const versions = await list_versions(bucket, prefix, page);
+	const old = versions.slice(VERSIONS_KEPT);
+	for (const version of old) { await bucket.delete(version.key); }
+	if (!old.length) { return; }
+	// Bitmap copies no kept version refers to can go too
+	const base = page.replace(/\.html?$/i, "");
+	const referenced = new Set();
+	for (const version of versions.slice(0, VERSIONS_KEPT)) {
+		const html = await (await bucket.get(version.key))?.text();
+		for (const match of (html || "").matchAll(/\?v=([0-9a-f]{12})/g)) { referenced.add(match[1]); }
+	}
+	const listing = await bucket.list({ prefix: `${prefix}versions/bitmaps/${base}.` });
+	for (const object of listing.objects) {
+		const hash = /\.([0-9a-f]{12})\.png$/.exec(object.key)?.[1];
+		if (hash && !referenced.has(hash)) { await bucket.delete(object.key); }
+	}
+}
+
+/**
+ * Puts an earlier save back: its HTML over the page (archiving the current one first) and, if the version's picture
+ * was kept, that picture over the page's bitmap.
+ * @param {R2Bucket} bucket
+ * @param {string} prefix
+ * @param {string} page
+ * @param {string} version
+ */
+async function restore_version(bucket, prefix, page, version) {
+	const archived = await bucket.get(`${prefix}versions/${version}/${page}`);
+	if (!archived) { return { ok: false, error: "No such version" }; }
+	const html = await archived.text();
+	const base = page.replace(/\.html?$/i, "");
+	const hash = /collages\/[^"'?]*\?v=([0-9a-f]{12})/.exec(html)?.[1];
+	let bitmap_restored = false;
+	const bitmap_key = `${prefix}collages/${base}.png`;
+	if (hash) {
+		const kept = await bucket.get(`${prefix}versions/bitmaps/${base}.${hash}.png`);
+		if (kept) {
+			const kept_bytes = new Uint8Array(await kept.arrayBuffer());
+			await archive_before_overwrite(bucket, prefix, `collages/${base}.png`, bitmap_key, kept_bytes); // (keeps the current picture if it differs)
+			await bucket.put(bitmap_key, kept_bytes, { httpMetadata: { contentType: "image/png" } });
+			bitmap_restored = true;
+		} else {
+			const current = await bucket.get(bitmap_key);
+			if (current && await short_hash(new Uint8Array(await current.arrayBuffer())) === hash) {
+				bitmap_restored = true; // the page's current picture is already the one this version had
+			}
+		}
+	}
+	await archive_before_overwrite(bucket, prefix, page, `${prefix}${page}`, new TextEncoder().encode(html));
+	await bucket.put(`${prefix}${page}`, html, { httpMetadata: { contentType: content_type_for(page) } });
+	return { ok: true, page, version, bitmap_restored };
+}
+
 /**
  * @param {Request} request
  * @param {URL} url
@@ -395,6 +513,7 @@ async function handle_site_files(request, url, env, invite = null) {
 				return json({ error: `The file doesn't look like ${content_type}` }, 400);
 			}
 		}
+		await archive_before_overwrite(env.SITES, prefix, path, key, bytes);
 		const object = await env.SITES.put(key, body, { httpMetadata: { contentType: content_type } });
 		return json({ ok: true, path, size: object.size, etag: object.httpEtag, url: public_url(path) });
 	}
@@ -597,6 +716,25 @@ export default {
 					return json({ ok: true, site: name, removed });
 				}
 				return json({ error: "Method not allowed" }, 405);
+			}
+			const versions_match = /^\/api\/sites\/([^/]+)\/versions(\/restore)?$/.exec(url.pathname);
+			if (versions_match) {
+				const name = versions_match[1];
+				if (!valid_site_name(name)) { return json({ error: "Bad site name" }, 400); }
+				if (!await role_of(request, env, name)) { return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401); }
+				const prefix = `sites/${name}/`;
+				if (versions_match[2]) {
+					if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
+					const body = await request.json().catch(() => ({}));
+					const page = String(body.page || "");
+					const version = String(body.version || "");
+					if (!valid_path(page) || !is_html_path(page) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9-]+Z$/.test(version)) { return json({ error: "page (a .html path) and version (a stamp from the list) are needed" }, 400); }
+					const result = await restore_version(env.SITES, prefix, page, version);
+					return json(result, result.ok ? 200 : 404);
+				}
+				const page = url.searchParams.get("page") || "";
+				if (!valid_path(page) || !is_html_path(page)) { return json({ error: "?page=<path>.html" }, 400); }
+				return json({ page, versions: (await list_versions(env.SITES, prefix, page)).map(({ version, uploaded, size }) => ({ version, uploaded, size })) });
 			}
 			const files_match = /^\/api\/sites\/([^/]+)\/files(?:\/|$)/.exec(url.pathname);
 			if (files_match) {

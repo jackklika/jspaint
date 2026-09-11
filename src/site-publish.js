@@ -10,6 +10,7 @@ import { $DialogWindow } from "./$ToolWindow.js";
 import { HTML_FORMAT_ID, serialize_collage_html } from "./collage-format.js";
 import { show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
+import { showMessageBox } from "./msgbox.js";
 import { default_editor_url } from "./site-constants.js";
 import { preview_path, render_share_preview } from "./share-preview.js";
 
@@ -111,6 +112,19 @@ async function publish_collage(settings, log) {
 		throw new Error(`Couldn't reach the editor at ${base} (HTTP ${listing.status}).`);
 	}
 	const existing = new Set((await listing.json()).files.map((/** @type {{ path: string }} */ file) => file.path));
+	// A brand-new page (New Page…, New Post…) named like one already on the site: ask before replacing it.
+	const fresh = system_file_handle && typeof system_file_handle === "object" && system_file_handle.fresh;
+	if (fresh && existing.has(`${page_base}.html`)) {
+		const { promise } = showMessageBox({
+			message: localize("%1 is already on your site. Replace it with this new page? (Versions… in My Site can bring the old one back.)", `${page_base}.html`),
+			buttons: [{ label: localize("Replace"), value: "replace" }, { label: localize("Cancel"), value: "cancel", default: true }],
+		});
+		if (await promise !== "replace") {
+			throw new Error(`Not saved: ${page_base}.html was left as it is.`);
+		}
+	}
+	// Asset addresses are relative to the page: a page in a folder reaches up to the site's gifs/ and collages/.
+	const up = "../".repeat(page_base.split("/").length - 1);
 
 	let uploaded = 0, reused = 0;
 	const html = await serialize_collage_html({
@@ -122,13 +136,13 @@ async function publish_collage(settings, log) {
 				`gifs/${hash}.${extension_for_type(blob.type)}`;
 			if (kind === "sticker" && existing.has(path)) {
 				reused++;
-				return path;
+				return `${up}${path}`;
 			}
 			await upload(path, blob, blob.type || "application/octet-stream");
 			uploaded++;
 			log(`Uploaded ${path} (${Math.max(1, Math.round(blob.size / 1024))} KB)`);
 			// The bitmap keeps one path per page but changes with every save: a content hash in the URL beats browser caches.
-			return kind === "bitmap" ? `${path}?v=${hash.slice(0, 12)}` : path;
+			return kind === "bitmap" ? `${up}${path}?v=${hash.slice(0, 12)}` : `${up}${path}`;
 		},
 	});
 	const result = await upload(`${page_base}.html`, html, "text/html");

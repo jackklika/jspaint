@@ -129,7 +129,7 @@ async function open_page_copy(site, path) {
 		show_error_message(`${path} wasn't made with Paint (importing other pages comes later).`);
 		return false;
 	}
-	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: base, site_page: path });
+	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: base + page_folder(path), site_page: path });
 	if (opened) {
 		saved = true; // nothing of yours in it yet
 		if (site !== load_settings().site) {
@@ -327,7 +327,7 @@ async function open_page_from_site(path) {
 		show_error_message(`${path} wasn't made with Paint (importing other pages comes later).`);
 		return false;
 	}
-	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: get_site_files_base(), site_page: path });
+	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: get_site_files_base() + page_folder(path), site_page: path });
 	if (opened) {
 		saved = true; // it is what's on the site (restoring the layers after the bitmap had marked it changed)
 		update_title();
@@ -362,6 +362,11 @@ async function save_site_settings(patch) {
 	return merged;
 }
 
+/** The folder part of a page path, with its slash: "posts/x.html" → "posts/", "index.html" → "". @param {string} path */
+function page_folder(path) {
+	return path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+}
+
 /** A short lowercase file name from a title: "My trip to Ohio!" → "my-trip-to-ohio". @param {string} title */
 function slug_for(title) {
 	return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "post";
@@ -385,7 +390,7 @@ async function new_site_post(folder, title) {
 		set_magnification(1);
 		file_name = path;
 		file_format = HTML_FORMAT_ID;
-		system_file_handle = { site_page: path };
+		system_file_handle = { site_page: path, fresh: true }; // fresh: saving asks before replacing a page of that name
 		add_block("section", { x: 0, y: 0 }, { html: `<h1>${escape_html(title)}</h1><p><small>Posted <x-updated label="">today</x-updated></small></p>`, edit: false });
 		add_block("section", { x: 0, y: 0 }, { html: "Write your post here." });
 		saved = false;
@@ -408,7 +413,7 @@ function new_site_page(path) {
 		set_magnification(1);
 		file_name = path;
 		file_format = HTML_FORMAT_ID;
-		system_file_handle = { site_page: path };
+		system_file_handle = { site_page: path, fresh: true }; // fresh: saving asks before replacing a page of that name
 		add_block("heading", { x: 40, y: 30 }, { html: `<font face="Comic Sans MS" color="#ff1493">${path.replace(/\.html?$/i, "")}</font>` });
 		saved = false;
 		update_title();
@@ -453,6 +458,8 @@ async function show_my_site_dialog() {
 	const $file_input = $(E("input")).attr({ type: "file", multiple: "multiple", accept: "image/gif,image/png,image/jpeg,image/webp,audio/mpeg,audio/midi,audio/wav,audio/ogg,.mid,.midi" }).hide().appendTo($w.$main);
 	/** @type {{ path: string, size: number, uploaded: string } | null} */
 	let selected = null;
+	/** @type {{ path: string, size: number, uploaded: string }[] | null} what the site holds, once listed (null until then) */
+	let listed_files = null;
 
 	/** @param {string} label @param {() => void} action */
 	const button = (label, action) => $(E("button")).attr({ type: "button" }).text(label).on("click", action).appendTo($toolbar);
@@ -482,6 +489,7 @@ async function show_my_site_dialog() {
 		$confirm.center();
 	});
 	button(localize("Folder…"), () => { show_folder_dialog(selected && selected.path.includes("/") ? selected.path.slice(0, selected.path.lastIndexOf("/")) : "posts"); });
+	button(localize("Versions…"), () => { show_versions_dialog(selected && /\.html?$/i.test(selected.path) ? selected.path : (system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page) || "index.html"); });
 	button(localize("Site Style…"), () => { show_site_css_dialog(); });
 	button(localize("Refresh"), () => { refresh(); });
 	button(localize("Sign Out"), () => { sign_out(); $w.close(); });
@@ -506,7 +514,9 @@ async function show_my_site_dialog() {
 		selected = null;
 		update_buttons();
 		try {
-			const { files } = await list_files();
+			const all_files = (await list_files()).files;
+			const files = all_files.filter((/** @type {{ path: string }} */ file) => !file.path.startsWith("versions/")); // old copies live under Versions…
+			listed_files = files;
 			if (files.length === 0) {
 				$(E("li")).addClass("my-site-empty").text(localize("Nothing here yet. New Page… makes your front page (index.html); Save to My Site puts this picture up as it.")).appendTo($list);
 			}
@@ -551,8 +561,9 @@ async function show_my_site_dialog() {
 	const show_new_page_dialog = () => {
 		const $d = $DialogWindow(localize("New Page"));
 		const $label = $(E("label")).text(localize("Page file name: ")).appendTo($d.$main);
-		// The first page of a site is its front page.
-		const has_index = [...document.querySelectorAll(".my-site-window .my-site-name")].some((el) => el.textContent === "index.html");
+		// The first page of a site is its front page — but only once we know the site has none (the listing is async;
+		// suggesting index.html for a site that has one would overwrite the front page on save).
+		const has_index = !listed_files || listed_files.some((file) => /^index\.html?$/i.test(file.path));
 		const suggested = has_index ? "about.html" : "index.html";
 		const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", placeholder: suggested }).val(suggested).appendTo($label);
 		$(E("p")).addClass("my-site-note").text(localize("A fresh page opens in Paint; Save (Ctrl+S) puts it on the site.")).appendTo($d.$main);
@@ -618,6 +629,43 @@ async function show_my_site_dialog() {
 			}
 		}, { type: "submit" });
 		$d.$Button(localize("Cancel"), () => { $d.close(); });
+		$d.$content.css({ width: "min(520px, 92vw)" });
+		$d.center();
+	};
+
+	/** Earlier saves of a page, kept by the site (the editor Worker archives a page when it's overwritten); Restore brings one back. @param {string} path */
+	const show_versions_dialog = async (path) => {
+		const { site } = load_settings();
+		const $d = $DialogWindow(localize("Versions"));
+		$d.addClass("versions-window squish");
+		$(E("p")).addClass("my-site-note").text(localize("Earlier saves of %1, newest first. Restore puts one back on the site (the current one is kept as a version too).", path)).appendTo($d.$main);
+		const $list = $(E("ul")).addClass("my-site-files inset-deep versions-list").attr({ role: "listbox" }).appendTo($d.$main);
+		const $note = $(E("div")).addClass("my-site-status").text(localize("Loading…")).appendTo($d.$main);
+		try {
+			const versions = await (await api(`/api/sites/${encodeURIComponent(site)}/versions?page=${encodeURIComponent(path)}`)).json();
+			$note.text(versions.versions.length ? "" : localize("No earlier saves of this page yet — they're kept from now on, each time it's saved over."));
+			for (const version of versions.versions) {
+				const $row = $(E("li")).addClass("my-site-row").appendTo($list);
+				$(E("span")).addClass("my-site-name").text(new Date(version.uploaded).toLocaleString()).appendTo($row);
+				$(E("span")).addClass("my-site-meta").text(`${Math.max(1, Math.round(version.size / 1024))} KB`).appendTo($row);
+				$(E("button")).attr({ type: "button" }).text(localize("Restore")).appendTo($row).on("click", async () => {
+					$note.text(localize("Restoring…"));
+					try {
+						await api(`/api/sites/${encodeURIComponent(site)}/versions/restore`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page: path, version: version.version }) });
+						$note.text(localize("Restored. It's on the site now."));
+						refresh();
+						if (system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page === path) {
+							open_page_from_site(path); // the picture in Paint is the restored one too
+						}
+					} catch (error) {
+						$note.text(`Couldn't restore: ${error.message}`);
+					}
+				});
+			}
+		} catch (error) {
+			$note.text(`Couldn't list versions: ${error.message}`);
+		}
+		$d.$Button(localize("Close"), () => { $d.close(); });
 		$d.$content.css({ width: "min(520px, 92vw)" });
 		$d.center();
 	};

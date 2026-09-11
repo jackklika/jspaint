@@ -126,6 +126,8 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	const settings = await (await fetch(`${editor}/api/sites/${site}/files/site.json`)).json();
 	assert.equal(settings.folders.posts.kind, "posts", JSON.stringify(settings));
 	const published = await (await fetch(`${sites}/~${site}/posts/hello-world.html`)).text();
+	assert.match(published, /<img class="bitmap" src="\.\.\/collages\/posts\/hello-world\.png\?v=[0-9a-f]{12}"/, "a page in a folder reaches up to the site's collages/");
+	assert.equal((await fetch(`${sites}/~${site}/collages/posts/hello-world.png`)).status, 200, "and the bitmap is there");
 	assert.match(published, /<div class="column"[^>]*>\s*<div data-kind="section" id="hello-world" class="block section"><h1>Hello, World!<\/h1><p><small>Posted <x-updated label(?:="")?><i>\d{4}-\d{2}-\d{2}<\/i><\/x-updated>/, "the date renders on the live page");
 	const feed = await (await fetch(`${sites}/~${site}/posts/feed.xml`)).text();
 	assert.match(feed, /<item><title>hello-world<\/title>|<item><title>Hello, World!<\/title>/, feed.slice(0, 300));
@@ -143,6 +145,7 @@ assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "ab
 	// Make the front page (New Page suggests index.html now that the site has none)
 	await click_menu_item(page, "My Site...");
 	await page.waitForSelector(".my-site-window", { timeout: 10000 });
+	await page.waitForFunction(() => /\d+ files?/.test(document.querySelector(".my-site-window .my-site-status")?.textContent || ""), null, { timeout: 10000 }); // listed: only then does New Page know there's no index.html
 	await page.evaluate(() => [...document.querySelectorAll(".my-site-toolbar button")].find((b) => b.textContent === "New Page…").click());
 	await page.waitForSelector(new_page_input, { timeout: 5000 });
 	assert.equal(await page.inputValue(new_page_input), "index.html");
