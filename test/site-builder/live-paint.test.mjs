@@ -218,6 +218,20 @@ const published = await (await fetch(`${process.env.SITE_BUILDER_SITES_URL}/~${s
 assert.match(published, /edited live/, "the guest's save is live on the site");
 assert.match(published, /<p class="block"/, "with everyone's elements");
 
+// Alice makes the page 300px taller and drags the text box into the new part: no error (the sync's remembered pixels
+// grow with the picture — this threw a RangeError), and Bob gets the new size and the move
+const taller = await alice.evaluate(() => main_canvas.height + 300);
+await alice.evaluate(async (height) => { (await import("/src/functions.js")).resize_canvas_without_saving_dimensions(main_canvas.width, height, { name: "Attributes" }); }, taller);
+await bob.waitForFunction((height) => main_canvas.height === height, taller, { timeout: 15000 });
+await select_tool(alice, "Pointer");
+const text_box = await (await alice.$('.block-layer[data-tag="p"] .block-content')).boundingBox();
+await alice.mouse.move(text_box.x + 20, text_box.y + 10);
+await alice.mouse.down();
+await alice.mouse.move(text_box.x + 20, text_box.y + 10 + 250, { steps: 8 });
+await alice.mouse.up();
+const moved_y = await alice.evaluate(() => (current_history_node.blocks || []).find((b) => b.tag === "p").y);
+await bob.waitForFunction((y) => (current_history_node.blocks || []).find((b) => b.tag === "p")?.y === y, moved_y, { timeout: 15000 });
+
 // Clean up
 const headers = { Authorization: `Bearer ${secret}` };
 const listing = await (await fetch(`${editor}/api/sites/${site}/files`, { headers })).json();

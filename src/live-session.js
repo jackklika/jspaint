@@ -629,8 +629,10 @@ async function sync_local_changes() {
 	try {
 		// Size and page properties
 		if (main_canvas.width !== last.width || main_canvas.height !== last.height) {
+			// A new size: the remembered pixels must be the new size too, or the bands below overflow them (RangeError)
 			last.width = main_canvas.width;
 			last.height = main_canvas.height;
+			last.pixels = main_ctx.getImageData(0, 0, main_canvas.width, main_canvas.height).data.slice();
 			send({ type: "props", width: main_canvas.width, height: main_canvas.height });
 			await send_full_picture();
 		} else if (last.pixels) {

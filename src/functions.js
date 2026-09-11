@@ -2244,6 +2244,7 @@ function make_or_update_undoable(undoable_meta, undoable_action) {
 			current_history_node.name = undoable_meta.name;
 		}
 		$G.triggerHandler("history-update"); // update history view
+		$G.triggerHandler("session-update"); // autosave (a drag, a resize, typing: the step keeps changing after it's made)
 	} else {
 		undoable(undoable_meta, undoable_action);
 	}
