@@ -12,6 +12,7 @@ import { escape_html, refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
 import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
+import { is_index, is_page, kb, render_page_tiles } from "./page-tiles.js";
 import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, is_hosted_editor, site_public_url } from "./site-constants.js";
 import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
 
@@ -502,14 +503,11 @@ async function show_my_site_dialog({ tab = "site" } = {}) {
 	const $list = $(E("ul")).addClass("my-site-files inset-deep").attr({ role: "listbox" }).appendTo($files_panel);
 	const $status = $(E("div")).addClass("my-site-status").appendTo($w.$main);
 	const $file_input = $(E("input")).attr({ type: "file", multiple: "multiple", accept: "image/gif,image/png,image/jpeg,image/webp,audio/mpeg,audio/midi,audio/wav,audio/ogg,.mid,.midi" }).hide().appendTo($w.$main);
-	/** @typedef {{ path: string, size: number, uploaded: string }} SiteFile */
+	/** @typedef {import("./page-tiles.js").SiteFile} SiteFile */
 	/** @type {SiteFile | null} */
 	let selected = null;
 	/** @type {SiteFile[] | null} what the site holds, once listed (null until then) */
 	let listed_files = null;
-	const is_page = (/** @type {string} */ path) => /\.html?$/i.test(path);
-	const is_index = (/** @type {string} */ path) => /^index\.html?$/i.test(path);
-	const kb = (/** @type {number} */ bytes) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 	/** @param {JQuery} $bar @param {string} label @param {() => void} action */
 	const button = ($bar, label, action) => $(E("button")).attr({ type: "button" }).text(label).on("click", action).appendTo($bar);
@@ -609,33 +607,9 @@ async function show_my_site_dialog({ tab = "site" } = {}) {
 		$(E("p")).addClass("my-site-note").text(site === ROOT_SITE ? localize("The front page of the domain: its pages live at the root address, other sites at ~name.") : localize("Pages shows your pages as thumbnails; Files, everything on the site.")).appendTo($summary);
 	};
 
-	/** Pages: thumbnails, like a folder of pictures, with + at the end. @param {SiteFile[]} files */
+	/** Pages: thumbnails, like a folder of pictures, with + at the end (page-tiles.js). @param {SiteFile[]} files */
 	const render_pages = (files) => {
-		$tiles.empty();
-		const by_path = new Map(files.map((file) => [file.path, file]));
-		const pages = files.filter((file) => is_page(file.path)).sort((a, b) => (is_index(a.path) ? -1 : is_index(b.path) ? 1 : a.path.localeCompare(b.path)));
-		if (pages.length === 0) {
-			$(E("div")).addClass("my-site-empty my-site-pages-empty").text(localize("No pages yet. + makes your front page (index.html).")).appendTo($tiles);
-		}
-		for (const file of pages) {
-			const bitmap = by_path.get(`collages/${file.path.replace(/\.html?$/i, "")}.png`);
-			const $tile = $(E("div")).addClass("my-site-tile").attr({ role: "option", tabindex: "0", "data-path": file.path, title: `${file.path} · ${kb(file.size)} · ${new Date(file.uploaded).toLocaleString()}` }).appendTo($tiles);
-			const $thumb = $(E("div")).addClass("my-site-thumb").appendTo($tile);
-			if (bitmap) {
-				$(E("img")).attr({ src: `${public_url(bitmap.path)}?v=${Date.parse(bitmap.uploaded) || 0}`, alt: "", draggable: "false" }).appendTo($thumb); // (the site's copy; ?v= so a new save shows)
-			} else {
-				$thumb.addClass("my-site-thumb-blank").text("📄");
-			}
-			$(E("span")).addClass("my-site-tile-name").text(is_index(file.path) ? `${file.path} ★` : file.path).appendTo($tile);
-			$tile.on("click focus", () => { select_file(file); });
-			$tile.on("dblclick", () => { open_selected(file); });
-			$tile.on("keydown", (e) => { if (e.key === "Enter") { open_selected(file); } });
-		}
-		const $new = $(E("div")).addClass("my-site-tile my-site-new").attr({ role: "button", tabindex: "0", title: localize("New Page…") }).appendTo($tiles);
-		$(E("div")).addClass("my-site-thumb my-site-thumb-blank").text("+").appendTo($new);
-		$(E("span")).addClass("my-site-tile-name").text(localize("New Page")).appendTo($new);
-		$new.on("click", () => { show_new_page_dialog(); });
-		$new.on("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); show_new_page_dialog(); } });
+		render_page_tiles($tiles, files, { on_pick: (file) => { select_file(file); }, on_open: (file) => { open_selected(file); }, plus: { label: localize("New Page"), action: () => { show_new_page_dialog(); } }, empty: localize("No pages yet. + makes your front page (index.html).") });
 	};
 
 	/** Files: every file, one per line. @param {SiteFile[]} files */
@@ -892,10 +866,6 @@ $("<style>").text(`
 		opacity: 0.8;
 		white-space: nowrap;
 	}
-	.my-site-empty {
-		padding: 8px;
-		opacity: 0.7;
-	}
 	.my-site-status {
 		margin-top: 6px;
 		min-height: 1.2em;
@@ -979,84 +949,6 @@ $("<style>").text(`
 	}
 	.my-site-facts td {
 		padding: 1px 0;
-	}
-	/* Pages: large icons */
-	.my-site-pages {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, 104px);
-		justify-content: start;
-		align-content: start;
-		gap: 4px;
-		height: 240px;
-		overflow: auto;
-		padding: 6px;
-		background: var(--Window, #fff);
-		color: var(--WindowText, #222);
-	}
-	.my-site-tile {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 3px;
-		padding: 4px 2px;
-		cursor: default;
-		user-select: none;
-	}
-	.my-site-thumb {
-		width: 90px;
-		height: 68px;
-		padding: 2px;
-		box-sizing: border-box;
-		background: var(--ButtonFace, #c0c0c0);
-		border: 1px solid;
-		border-color: var(--ButtonHilight, #fff) var(--ButtonDkShadow, #000) var(--ButtonDkShadow, #000) var(--ButtonHilight, #fff);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		overflow: hidden;
-	}
-	.my-site-thumb img {
-		width: 100%;
-		height: 100%;
-		object-fit: contain;
-		background: #fff;
-		border: 1px solid #000;
-		box-sizing: border-box;
-		image-rendering: auto;
-	}
-	.my-site-thumb-blank {
-		font-size: 32px;
-		line-height: 1;
-	}
-	.my-site-new .my-site-thumb {
-		border-style: dashed;
-		border-color: var(--ButtonShadow, #808080);
-		background: transparent;
-		font-size: 36px;
-	}
-	.my-site-tile-name {
-		max-width: 100px;
-		padding: 0 2px;
-		font-size: 11px;
-		text-align: center;
-		overflow-wrap: anywhere;
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-	.my-site-tile.selected .my-site-tile-name {
-		background: var(--Hilight, #000080);
-		color: var(--HilightText, #fff);
-	}
-	.my-site-tile:focus-visible {
-		outline: none;
-	}
-	.my-site-tile:focus-visible .my-site-tile-name {
-		outline: 1px dotted currentColor;
-	}
-	.my-site-pages-empty {
-		grid-column: 1 / -1;
 	}
 `).appendTo(document.head);
 

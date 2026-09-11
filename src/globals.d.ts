@@ -689,6 +689,7 @@ type ToolID =
 	"TOOL_POINTER" |
 	"TOOL_GIF_PICKER" |
 	"TOOL_IMAGE_UPLOAD" |
+	"TOOL_LINK" |
 	`TOOL_BLOCK_${string}`;
 
 // This is very silly!
@@ -719,6 +720,7 @@ interface Tool {
 	paint_on_time_interval?: number,
 	/** Page tools (page-tools.js): shown below a divider in the toolbox */
 	page_tool?: boolean,
+	keep_focus?: boolean, // a one-shot tool that must not take focus from the text being edited (the Link tool)
 	/** An inline (data: URL) icon, for tools without one in the help folder */
 	icon_svg?: string,
 	/** A one-shot tool: clicking its button runs this instead of selecting the tool */

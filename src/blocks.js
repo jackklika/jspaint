@@ -18,8 +18,9 @@ import { $G, E, get_help_folder_icon, get_icon_for_tool, get_rgba_from_color, ma
 import { deselect_sticker } from "./stickers.js";
 import { deselect_text_layer } from "./text-layers.js";
 import { get_page_properties, set_page_properties } from "./page-properties.js";
-import { ROOT_SITE, site_public_url } from "./site-constants.js";
-import { current_site, get_site_editor_url, get_site_files_base, load_settings } from "./site-publish.js";
+import { site_public_url } from "./site-constants.js";
+import { show_link_dialog } from "./link-dialog.js";
+import { current_site, get_site_files_base } from "./site-publish.js";
 
 /** @type {OnCanvasBlock[]} bottom to top */
 let blocks = [];
@@ -628,8 +629,8 @@ function link_at_caret(block) {
 }
 
 /**
- * Ctrl+K / the Font toolbar's link button while editing: links the selected words — to a page of your site, a section
- * of it, or any address.
+ * Ctrl+K / the Font toolbar's link button / the Link tool while editing: links the selected words — to a page of
+ * your site, a section, or any address — through the link dialog (link-dialog.js).
  */
 function show_text_link_dialog() {
 	const block = editing_block;
@@ -638,108 +639,41 @@ function show_text_link_dialog() {
 	if (selection && selection.rangeCount && block.el.contains(selection.anchorNode)) { saved_range = selection.getRangeAt(0).cloneRange(); }
 	const range = saved_range ? saved_range.cloneRange() : null; // the words to link, as they were when the dialog opened
 	const existing = link_at_caret(block);
-	const $w = $DialogWindow(localize("Link"));
-	$w.addClass("link-window squish");
-	const $main = $w.$main;
-	/** @param {string} label @param {JQuery} $input */
-	const row = (label, $input) => {
-		const $row = $(E("label")).addClass("link-row").appendTo($main);
-		$(E("span")).addClass("link-label").text(label).appendTo($row);
-		$input.appendTo($row);
-	};
-	const $url = $(E("input")).attr({ type: "text", spellcheck: "false", placeholder: "https://…, /~name/page.html, or #section", name: "link-url" }).val(existing ? existing.getAttribute("href") || "" : "");
-	row(localize("Address:"), $url);
-	const $pages = /** @type {JQuery<HTMLSelectElement>} */ ($(E("select")).attr({ name: "link-page" }).append($(E("option")).val("").text(localize("(a page of your site…)"))));
-	const $sections = /** @type {JQuery<HTMLSelectElement>} */ ($(E("select")).attr({ name: "link-section" }).append($(E("option")).val("").text(localize("(a section of it…)"))).prop("disabled", true));
-	row(localize("Page:"), $pages);
-	row(localize("Section:"), $sections);
-	const site = current_site();
-	const page_path = (/** @type {string} */ path) => new URL(site_public_url(site || ROOT_SITE, path)).pathname;
-	// This page's own sections come first; the site's other pages once they're listed
-	for (const other of blocks) {
-		if (other.flow && other !== block) { $sections.append($(E("option")).val(`#${ensure_section_id(other)}`).text(other.el.textContent?.trim().slice(0, 40) || other.attrs.id)); }
-	}
-	$sections.prop("disabled", $sections.children().length <= 1);
-	if (site && load_settings().secret) {
-		fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files`, { headers: { Authorization: `Bearer ${load_settings().secret}` } })
-			.then((response) => (response.ok ? response.json() : null))
-			.then((listing) => {
-				if (!listing || $w.closed) { return; }
-				for (const file of listing.files) {
-					if (/\.html?$/i.test(file.path)) { $pages.append($(E("option")).val(file.path).text(file.path)); }
-				}
-			}).catch(() => { /* no listing: the address box still works */ });
-	}
-	$pages.on("change", async () => {
-		const path = String($pages.val());
-		$sections.children().not(":first").remove();
-		$sections.prop("disabled", true);
-		if (!path) { return; }
-		$url.val(page_path(path));
-		try {
-			const html = await (await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/${path}?optional`)).text();
-			for (const match of html.matchAll(/<(?:div|p|h[1-6])[^>]*class="block section"[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/(?:div|p|h[1-6])>/g)) {
-				const text = match[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
-				$sections.append($(E("option")).val(`#${match[1]}`).text(text || match[1]));
-			}
-		} catch (_error) { /* no sections to offer */ }
-		$sections.prop("disabled", $sections.children().length <= 1);
-	});
-	$sections.on("change", () => {
-		const hash = String($sections.val());
-		if (!hash) { return; }
-		const base = String($url.val()).replace(/#.*$/, "");
-		$url.val(`${base}${hash}`);
-	});
-	const apply = (/** @type {string} */ href) => {
-		with_selection_restored(block, () => {
-			const current = document.getSelection();
-			if (current && current.isCollapsed && !existing) {
-				// Nothing selected: the address itself becomes the link text (a plain node — insertHTML would add inline styles)
-				const a = document.createElement("a");
-				a.setAttribute("href", href);
-				a.textContent = href;
-				const at = current.getRangeAt(0);
-				at.insertNode(a);
-				at.setStartAfter(a);
-				at.collapse(true);
-				current.removeAllRanges();
-				current.addRange(at);
-			} else if (existing && current && current.isCollapsed) {
-				existing.setAttribute("href", href);
-			} else {
-				document.execCommand("createLink", false, href);
-			}
-		}, range);
-	};
-	$w.$Button(localize("OK"), () => {
-		const href = String($url.val()).trim();
-		if (!href) { $url.focus(); return; }
-		$w.close();
-		apply(href);
-	}, { type: "submit" });
-	if (existing) {
-		$w.$Button(localize("Remove Link"), () => {
-			$w.close();
+	// This page's other sections, for "#anchor" links
+	const sections = blocks.filter((other) => other.flow && other !== block).map((other) => ({ id: ensure_section_id(other), text: other.el.textContent?.trim().slice(0, 40) || "" }));
+	show_link_dialog({
+		href: existing ? existing.getAttribute("href") || "" : "",
+		prompt: range && !range.collapsed ? localize("Where should the selected words go?") : existing ? localize("Where should this link go?") : localize("Nothing is selected: the address itself goes in, as a link."),
+		sections,
+		apply: (href) => {
 			with_selection_restored(block, () => {
-				const whole_link = document.createRange();
-				whole_link.selectNodeContents(existing);
 				const current = document.getSelection();
-				current?.removeAllRanges();
-				current?.addRange(whole_link);
-				document.execCommand("unlink");
+				if (!href) {
+					if (!existing) { return; }
+					const whole_link = document.createRange();
+					whole_link.selectNodeContents(existing);
+					current?.removeAllRanges();
+					current?.addRange(whole_link);
+					document.execCommand("unlink");
+				} else if (current && current.isCollapsed && !existing) {
+					// Nothing selected: the address itself becomes the link text (a plain node — insertHTML would add inline styles)
+					const a = document.createElement("a");
+					a.setAttribute("href", href);
+					a.textContent = href;
+					const at = current.getRangeAt(0);
+					at.insertNode(a);
+					at.setStartAfter(a);
+					at.collapse(true);
+					current.removeAllRanges();
+					current.addRange(at);
+				} else if (existing && current && current.isCollapsed) {
+					existing.setAttribute("href", href);
+				} else {
+					document.execCommand("createLink", false, href);
+				}
 			}, range);
-		});
-	}
-	$w.$Button(localize("Cancel"), () => { $w.close(); });
-	$w.$content.css({ width: "min(460px, 92vw)" });
-	$w.center();
-	$url.focus();
-	$("<style>").text(`
-		.link-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-		.link-label { flex: 0 0 64px; }
-		.link-row input, .link-row select { flex: 1; min-width: 0; }
-	`).appendTo(document.head);
+		},
+	});
 }
 
 // ---- model operations ----

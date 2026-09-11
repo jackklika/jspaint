@@ -1,10 +1,12 @@
 // @ts-check
 /* global localize, systemHooks */
 // The page tools: the second half of the toolbox. A Pointer for selecting, moving, and editing elements,
-// and one tool per kind of page element (heading, paragraph, marquee, divider, GIF, image, table, box,
-// guestbook, counter, music, raw HTML). Element tools work like the Text tool: click, or drag out a box,
-// where the element should go. See blocks.js for what an element is and block-kinds.js for the kinds.
+// one tool per kind of page element (text box, section, divider, GIF, image, table, box, guestbook, counter,
+// music, folder view, contents, raw HTML), and Link, which links the selected element or words. Element tools
+// work like the Text tool: click, or drag out a box, where the element should go. See blocks.js for what an
+// element is and block-kinds.js for the kinds. Kept to an even count: the toolbox is two columns.
 import { add_block } from "./blocks.js";
+import { link_tool } from "./element-link.js";
 import { image_formats } from "./file-format-data.js";
 import { show_error_message } from "./functions.js";
 import { E } from "./helpers.js";
@@ -14,6 +16,7 @@ import { add_sticker_from_blob } from "./stickers.js";
 const TOOL_POINTER = "TOOL_POINTER";
 const TOOL_GIF_PICKER = "TOOL_GIF_PICKER";
 const TOOL_IMAGE_UPLOAD = "TOOL_IMAGE_UPLOAD";
+const TOOL_LINK = "TOOL_LINK";
 
 /** Element tools are `TOOL_BLOCK_<kind id>`. @param {string} kind_id */
 const block_tool_id = (kind_id) => /** @type {ToolID} */ (`TOOL_BLOCK_${kind_id}`);
@@ -49,6 +52,10 @@ const ICONS = {
 	counter: svg('<rect x="1" y="4" width="14" height="8" fill="#000" stroke="#808080"/><rect x="3" y="6" width="2" height="4" fill="#00ff00"/><rect x="7" y="6" width="2" height="4" fill="#00ff00"/><rect x="11" y="6" width="2" height="4" fill="#00ff00"/>'),
 	music: svg('<rect x="6" y="2" width="1" height="9" fill="#000"/><rect x="12" y="1" width="1" height="9" fill="#000"/><rect x="6" y="2" width="7" height="2" fill="#000"/><rect x="3" y="10" width="4" height="3" fill="#000"/><rect x="9" y="9" width="4" height="3" fill="#000"/>'),
 	html: svg('<path d="M5 4v1H4v1H3v1H2v2h1v1h1v1h1v1H4v-1H3v-1H2V9H1V7h1V6h1V5h1V4zM11 4v1h1v1h1v1h1v2h-1v1h-1v1h-1v1h1v-1h1v-1h1V9h1V7h-1V6h-1V5h-1V4z" fill="#000080"/><path d="M9 3h1L7 13H6z" fill="#000"/>'),
+	// two chain links (the Font toolbar's link button wears the same glyph)
+	link: svg('<path d="M6 4h5v1h1v1h1v3h-1v1h-1v1H9v-1h2V9h1V7h-1V6H9V5H6zM3 6h4v1H5v1H4v2h1v1h2v1H3v-1H2V7h1zM5 8h6v1H5z" fill="#000080"/>'),
+	// a contents list: a title line, then indented entries
+	toc: svg('<rect x="2" y="2" width="12" height="2" fill="#000"/><rect x="4" y="6" width="2" height="1" fill="#000080"/><rect x="7" y="6" width="7" height="1" fill="#000"/><rect x="4" y="9" width="2" height="1" fill="#000080"/><rect x="7" y="9" width="5" height="1" fill="#000"/><rect x="4" y="12" width="2" height="1" fill="#000080"/><rect x="7" y="12" width="7" height="1" fill="#000"/>'),
 };
 /** @param {string} markup */
 const data_url = (markup) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
@@ -101,6 +108,19 @@ const page_tools = [
 	element_tool("section", "section", localize("Section"), localize("Adds a section of writing. Sections stack in a column, grow with their text, and move with ↑/↓ or by dragging. Headings, lists, and links come from the Font toolbar."), ["section", "add section", "new section", "add a section", "paragraph section", "blog section", "post section"]),
 	element_tool("divider", "divider", localize("Divider"), localize("Places a horizontal rule on the page."), ["divider", "horizontal rule", "add divider", "separator", "add line break"]),
 	{
+		id: TOOL_LINK,
+		name: localize("Link"),
+		speech_recognition: ["link", "add link", "make link", "link this", "link to page", "hyperlink"],
+		help_icon: "",
+		icon_svg: data_url(ICONS.link),
+		description: localize("Links the selected picture, text, or element — or the selected words while editing — to a page of your site, a section, or an address."),
+		cursor: ["default", [1, 1], "default"],
+		page_tool: true,
+		keep_focus: true, // the words being edited stay selected
+		action() { link_tool(); },
+		$options: $(E("div")),
+	},
+	{
 		id: TOOL_GIF_PICKER,
 		name: localize("GIF Picker"),
 		speech_recognition: ["gif picker", "find gifs", "search gifs", "gifcities", "add gif", "add a gif", "animated gif"],
@@ -138,7 +158,8 @@ const page_tools = [
 	element_tool("x-counter", "counter", localize("Visitor Counter"), localize("Places a visitor counter that counts up on the published page."), ["counter", "visitor counter", "hit counter", "add counter"]),
 	element_tool("x-music", "music", localize("Music"), localize("Places background music with a play button on the published page."), ["music", "add music", "background music", "add song", "midi"]),
 	element_tool("x-folder", "folder", localize("Folder View"), localize("Lists the pages in a folder of your site (your posts, say) on the published page, newest first."), ["folder", "folder view", "list of pages", "posts list", "add posts list", "blog index", "add folder view"]),
+	element_tool("x-toc", "toc", localize("Contents"), localize("Lists the page's sections, each a link to it, on the published page."), ["contents", "table of contents", "add contents", "section list", "toc"]),
 	element_tool("raw", "html", localize("HTML"), localize("Places a box of raw HTML on the page. Anything goes (except scripts)."), ["html", "raw html", "add html", "custom html", "code"]),
 ];
 
-export { TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_POINTER, block_tool_id, page_tools };
+export { TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_LINK, TOOL_POINTER, block_tool_id, page_tools };

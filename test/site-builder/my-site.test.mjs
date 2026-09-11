@@ -105,6 +105,22 @@ await page.waitForFunction(() => document.querySelectorAll(".block-layer").lengt
 assert.equal(await page.evaluate(() => file_name), "about.html");
 assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "about.html" });
 
+// The Link tool offers your pages as tiles (signed in): pick one and its address goes in; the heading becomes a link to it
+await select_tool(page, "Pointer");
+const heading = await (await page.$(".block-layer .block-content")).boundingBox();
+await page.mouse.click(heading.x + 10, heading.y + 10);
+await page.waitForSelector(".block-layer.selected", { timeout: 5000 });
+await select_tool(page, "Link");
+await page.waitForSelector(".link-window .my-site-tile[data-path='about.html']", { timeout: 10000 });
+await page.click(".link-window .my-site-tile[data-path='about.html']");
+assert.equal(await page.inputValue('.link-window input[name="link-url"]'), `/~${site}/about.html`);
+assert.equal(await page.evaluate(() => document.querySelector(".link-window .my-site-tile.selected")?.dataset.path), "about.html");
+await page.click(".link-window button[type=submit]");
+await page.waitForFunction(() => !document.querySelector(".link-window"), null, { timeout: 5000 });
+assert.match(await page.evaluate(() => current_history_node.blocks[0].html), new RegExp(`^<a href="/~${site}/about.html">`));
+await page.keyboard.press("Control+z");
+assert.doesNotMatch(await page.evaluate(() => current_history_node.blocks[0].html), /^<a /);
+
 // edit.<domain>/~site/about.html → Paint with ?site=&page=: anyone gets a copy of the published page to play with —
 // no sign-in, no live room; saving it asks who you are, and it lands on the site you sign in to
 {

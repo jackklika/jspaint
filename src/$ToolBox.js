@@ -69,6 +69,11 @@ function $ToolBox(tools, is_extras) {
 		update_css();
 		$G.on("theme-load resize", update_css);
 
+		$b.on("mousedown", (e) => {
+			if (tool.keep_focus) {
+				e.preventDefault(); // the Link tool acts on the words selected in the text being edited: don't take focus
+			}
+		});
 		$b.on("click", (e) => {
 			if (tool.action) {
 				// A one-shot tool (GIF picker, image file): does its thing, doesn't stay selected.

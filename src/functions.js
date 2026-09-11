@@ -707,7 +707,7 @@ function reset_canvas_and_history() {
  * @param {string | CanvasPattern=} options.ternary_color - selected ternary color (ctrl+click)
  * @param {string=} options.name - the name of the operation, shown in the history window, e.g. localize("Resize Canvas")
  * @param {HTMLImageElement |HTMLCanvasElement | null=} options.icon - a visual representation of the operation type, shown in the history window, e.g. get_help_folder_icon("p_blank.png")
- * @param {PageProperties | null=} options.page_properties - the page's background and sections column (page-properties.js), so moving the column is undoable
+ * @param {import("./page-properties.js").PageProperties | null=} options.page_properties - the page's background and sections column (page-properties.js), so moving the column is undoable
  * @returns {HistoryNode}
  */
 function make_history_node({

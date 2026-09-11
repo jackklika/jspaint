@@ -94,7 +94,9 @@ for (const missing of ["/nope.html", "/~", "/.well-known/x.txt", "/favicon.ico",
 }
 
 // Signing the root guestbook goes back to the root page; anything else goes home (the honeypot path checks `back` too)
-const form = (/** @type {Record<string, string>} */ fields) => ({ method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields).toString() });
+// (Each run signs as a fresh visitor: the guestbook allows a visitor 20 entries a day, and local state persists between runs.)
+const visitor_ip = `10.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`;
+const form = (/** @type {Record<string, string>} */ fields) => ({ method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "CF-Connecting-IP": visitor_ip }, body: new URLSearchParams(fields).toString() });
 response = await get("/x/guestbook", form({ name: "a", message: "hi", back: "/about.html" }));
 assert.equal(`${response.status} ${response.headers.get("Location")}`, "303 /about.html#guestbook");
 assert.match(await (await get("/about.html")).text(), /<b>a<\/b>/, "the entry shows");

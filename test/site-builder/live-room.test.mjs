@@ -81,7 +81,7 @@ assert.equal(snapshot.patches[0].reset, true);
 assert.deepEqual(snapshot.clients.map((c) => c.name), ["Alice"]);
 assert.equal((await a.next("join")).client.name, "Bob");
 
-// Moving the column alone is a change: acked, stored, and told to the others
+// Moving the column alone is a change: acknowledged, stored, and told to the others
 a.send({ type: "props", page_properties: { bgcolor: "#ffffd9", column_left: 120, column_top: 40, column_width: 480 }, client_op_id: "move-column" });
 assert.equal((await a.next("ack")).client_op_id, "move-column");
 assert.equal((await b.next("props")).page_properties.column_left, 120);

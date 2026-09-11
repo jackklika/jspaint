@@ -26,6 +26,7 @@ import { get_site_editor_url } from "./site-publish.js";
  * @property {BlockProp[]} props
  * @property {string} [icon] - glyph for the Layers window
  * @property {boolean} [flow] - a section: stacks in the page's column and grows with its text (blocks.js reflow_sections)
+ * @property {boolean} [linkable] - the whole element can be a link (Add Link to Element); default: yes, except x-* elements
  */
 
 const CLASSIC_FONTS = ["Arial", "Comic Sans MS", "Courier New", "Georgia", "Impact", "Times New Roman", "Trebuchet MS", "Verdana"];
@@ -100,6 +101,7 @@ const BLOCK_KINDS = [
 	},
 	{
 		id: "divider",
+		linkable: false,
 		label: "Divider",
 		description: "Places a horizontal rule on the page.",
 		tag: "hr",
@@ -113,6 +115,7 @@ const BLOCK_KINDS = [
 	},
 	{
 		id: "table",
+		linkable: false,
 		label: "Table",
 		description: "Places a table on the page. Click into a cell to type.",
 		tag: "table",
@@ -223,6 +226,7 @@ const BLOCK_KINDS = [
 	},
 	{
 		id: "raw",
+		linkable: false,
 		label: "HTML",
 		description: "Places a box of raw HTML on the page. Anything goes (except scripts).",
 		tag: "div",
