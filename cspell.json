@@ -95,6 +95,8 @@
 		"domcontentloaded",
 		"noopener",
 		"listbox",
+		"tablist",
+		"tabpanel",
 		"dblclick",
 		"pointerdown",
 		"CSSOM",

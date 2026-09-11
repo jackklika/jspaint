@@ -58,8 +58,10 @@ await alice.evaluate(() => [...document.querySelectorAll(".site-publish-window b
 // Bob opens the same page from My Site and joins the room
 const bob = await open_signed_in("Bob");
 await click_menu_item(bob, "My Site...");
-await bob.waitForSelector(".my-site-window .my-site-row", { timeout: 15000 });
-await bob.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((row) => row.querySelector(".my-site-name").textContent === "about.html").dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+await bob.waitForSelector(".my-site-window", { timeout: 15000 });
+await bob.click(".my-site-window .my-site-tab[data-tab=pages]"); // the Pages tab: a tile per page
+await bob.waitForSelector(".my-site-window .my-site-tile[data-path='about.html']", { timeout: 15000 });
+await bob.dblclick(".my-site-window .my-site-tile[data-path='about.html']");
 await bob.waitForSelector(".block-layer", { timeout: 15000 });
 await wait_live(bob, 1);
 await wait_live(alice, 1);

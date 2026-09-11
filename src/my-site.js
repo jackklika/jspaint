@@ -19,6 +19,8 @@ import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, 
 let sites_url = null;
 /** @type {"master" | "site" | null} what the saved password is, learned from /api/whoami */
 let role = null;
+/** @type {number | null} when the site got its password (ms), from /api/whoami; null when unknown */
+let site_created = null;
 
 /** "master" (the edit secret: every site), "site" (this site's own password), or null when not checked yet. */
 function current_role() {
@@ -220,6 +222,7 @@ async function check_sign_in() {
 		const info = await (await api(`/api/whoami?site=${encodeURIComponent(load_settings().site)}`)).json();
 		sites_url = info.sites_url || sites_url;
 		role = info.role || null;
+		site_created = typeof info.created === "number" ? info.created : null;
 		refresh_x_element_kinds();
 		return true;
 	} catch (_error) {
@@ -442,33 +445,83 @@ function open_live_page() {
 
 /** @type {(OSGUI$Window & I$DialogWindow) | null} */
 let $folder = null;
+/** @type {((tab: string) => void) | null} the open folder's tab switcher */
+let switch_folder_tab = null;
 
-/** File > My Site…: the site's files, GeoCities File Manager energy. */
-async function show_my_site_dialog() {
+/**
+ * File > My Site…: your site in three tabs — Site (its name and address, when it was made, what's on it), Pages (every
+ * page as a thumbnail, and + for a new one), Files (everything on the site: GeoCities File Manager energy).
+ * @param {{ tab?: "site" | "pages" | "files" }} [options]
+ */
+async function show_my_site_dialog({ tab = "site" } = {}) {
 	if ($folder) {
 		$folder.bringToFront();
+		if (switch_folder_tab) { switch_folder_tab(tab); }
 		return;
 	}
 	if (!await ensure_signed_in()) { return; }
 	const $w = $folder = $DialogWindow(localize("My Site"));
 	$w.addClass("my-site-window squish");
-	const $toolbar = $(E("div")).addClass("my-site-toolbar").appendTo($w.$main);
-	const $list = $(E("ul")).addClass("my-site-files inset-deep").attr({ role: "listbox" }).appendTo($w.$main);
+	const $tabs = $(E("div")).addClass("my-site-tabs").attr({ role: "tablist" }).appendTo($w.$main);
+	const $panels = $(E("div")).addClass("my-site-panels").appendTo($w.$main);
+	/** @type {Record<string, { $tab: JQuery, $panel: JQuery }>} */
+	const tabs = {};
+	/** @param {string} id */
+	const show_tab = (id) => {
+		if (!tabs[id]) { return; }
+		for (const [key, entry] of Object.entries(tabs)) {
+			entry.$tab.toggleClass("selected", key === id).attr({ "aria-selected": String(key === id), tabindex: key === id ? "0" : "-1" });
+			entry.$panel.toggle(key === id);
+		}
+	};
+	/** A tab and its panel (a Windows 98 property sheet). @param {string} id @param {string} label */
+	const add_tab = (id, label) => {
+		const $tab = $(E("div")).addClass("my-site-tab").attr({ role: "tab", tabindex: "-1", "aria-selected": "false", "data-tab": id }).text(label).appendTo($tabs);
+		const $panel = $(E("div")).addClass("my-site-panel").attr({ role: "tabpanel", "data-tab": id }).hide().appendTo($panels);
+		$tab.on("click", () => { show_tab(id); });
+		$tab.on("keydown", (e) => {
+			if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") { return; }
+			const ids = Object.keys(tabs);
+			const next = ids[(ids.indexOf(id) + (e.key === "ArrowRight" ? 1 : ids.length - 1)) % ids.length];
+			show_tab(next);
+			tabs[next].$tab.trigger("focus");
+			e.preventDefault();
+		});
+		tabs[id] = { $tab, $panel };
+		return $panel;
+	};
+	switch_folder_tab = show_tab;
+	const $site_panel = add_tab("site", localize("Site"));
+	const $pages_panel = add_tab("pages", localize("Pages"));
+	const $files_panel = add_tab("files", localize("Files"));
+	const $summary = $(E("div")).addClass("my-site-summary").appendTo($site_panel);
+	const $site_tools = $(E("div")).addClass("my-site-toolbar my-site-site-tools").appendTo($site_panel);
+	const $tiles = $(E("div")).addClass("my-site-pages inset-deep").attr({ role: "listbox", "aria-label": localize("Pages") }).appendTo($pages_panel);
+	const $page_tools = $(E("div")).addClass("my-site-toolbar my-site-page-tools").appendTo($pages_panel);
+	const $toolbar = $(E("div")).addClass("my-site-toolbar").appendTo($files_panel);
+	const $list = $(E("ul")).addClass("my-site-files inset-deep").attr({ role: "listbox" }).appendTo($files_panel);
 	const $status = $(E("div")).addClass("my-site-status").appendTo($w.$main);
 	const $file_input = $(E("input")).attr({ type: "file", multiple: "multiple", accept: "image/gif,image/png,image/jpeg,image/webp,audio/mpeg,audio/midi,audio/wav,audio/ogg,.mid,.midi" }).hide().appendTo($w.$main);
-	/** @type {{ path: string, size: number, uploaded: string } | null} */
+	/** @typedef {{ path: string, size: number, uploaded: string }} SiteFile */
+	/** @type {SiteFile | null} */
 	let selected = null;
-	/** @type {{ path: string, size: number, uploaded: string }[] | null} what the site holds, once listed (null until then) */
+	/** @type {SiteFile[] | null} what the site holds, once listed (null until then) */
 	let listed_files = null;
+	const is_page = (/** @type {string} */ path) => /\.html?$/i.test(path);
+	const is_index = (/** @type {string} */ path) => /^index\.html?$/i.test(path);
+	const kb = (/** @type {number} */ bytes) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
-	/** @param {string} label @param {() => void} action */
-	const button = (label, action) => $(E("button")).attr({ type: "button" }).text(label).on("click", action).appendTo($toolbar);
-	const $open = button(localize("Open"), () => { if (selected) { open_selected(); } });
-	const $view = button(localize("View"), () => { if (selected) { window.open(public_url(selected.path), "_blank", "noopener"); } });
-	button(localize("New Page…"), () => { show_new_page_dialog(); });
-	button(localize("New Post…"), () => { show_new_post_dialog(); });
-	button(localize("Upload…"), () => { $file_input.trigger("click"); });
-	const $delete = button(localize("Delete"), () => {
+	/** @param {JQuery} $bar @param {string} label @param {() => void} action */
+	const button = ($bar, label, action) => $(E("button")).attr({ type: "button" }).text(label).on("click", action).appendTo($bar);
+	/** @param {{ path: string } | null} file */
+	const open_selected = async (file = selected) => {
+		if (!file) { return; }
+		if (await open_page_from_site(file.path)) {
+			$w.close();
+		}
+	};
+	const view_selected = () => { if (selected) { window.open(public_url(selected.path), "_blank", "noopener"); } };
+	const delete_selected = () => {
 		if (!selected) { return; }
 		const path = selected.path;
 		const $confirm = $DialogWindow(localize("Delete"));
@@ -487,58 +540,139 @@ async function show_my_site_dialog() {
 		}, { type: "submit" });
 		$confirm.$Button(localize("Cancel"), () => { $confirm.close(); });
 		$confirm.center();
-	});
-	button(localize("Folder…"), () => { show_folder_dialog(selected && selected.path.includes("/") ? selected.path.slice(0, selected.path.lastIndexOf("/")) : "posts"); });
-	button(localize("Versions…"), () => { show_versions_dialog(selected && /\.html?$/i.test(selected.path) ? selected.path : (system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page) || "index.html"); });
-	button(localize("Site Style…"), () => { show_site_css_dialog(); });
-	button(localize("Refresh"), () => { refresh(); });
-	button(localize("Sign Out"), () => { sign_out(); $w.close(); });
+	};
+	const versions_of_selected = () => { show_versions_dialog(selected && is_page(selected.path) ? selected.path : (system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page) || "index.html"); };
+
+	// Files: the whole toolbar
+	const $open = button($toolbar, localize("Open"), () => { open_selected(); });
+	const $view = button($toolbar, localize("View"), view_selected);
+	button($toolbar, localize("New Page…"), () => { show_new_page_dialog(); });
+	button($toolbar, localize("New Post…"), () => { show_new_post_dialog(); });
+	button($toolbar, localize("Upload…"), () => { $file_input.trigger("click"); });
+	const $delete = button($toolbar, localize("Delete"), delete_selected);
+	button($toolbar, localize("Folder…"), () => { show_folder_dialog(selected && selected.path.includes("/") ? selected.path.slice(0, selected.path.lastIndexOf("/")) : "posts"); });
+	button($toolbar, localize("Versions…"), versions_of_selected);
+	button($toolbar, localize("Refresh"), () => { refresh(); });
+	// Pages: what you do with a page (+ in the grid makes one)
+	const $open_page = button($page_tools, localize("Open"), () => { open_selected(); });
+	const $view_page = button($page_tools, localize("View"), view_selected);
+	button($page_tools, localize("New Post…"), () => { show_new_post_dialog(); });
+	const $versions_page = button($page_tools, localize("Versions…"), versions_of_selected);
+	const $delete_page = button($page_tools, localize("Delete"), delete_selected);
+	// Site: the site as a whole
+	button($site_tools, localize("View Site"), () => { window.open(public_url(""), "_blank", "noopener"); });
+	button($site_tools, localize("Site Style…"), () => { show_site_css_dialog(); });
+	button($site_tools, localize("Sign Out"), () => { sign_out(); $w.close(); });
 
 	const update_buttons = () => {
-		$open.prop("disabled", !selected || !/\.html?$/i.test(selected.path));
-		$view.prop("disabled", !selected);
-		$delete.prop("disabled", !selected);
+		const page_selected = !!selected && is_page(selected.path);
+		$open.add($open_page).add($versions_page).prop("disabled", !page_selected);
+		$view.add($view_page).add($delete).add($delete_page).prop("disabled", !selected);
 	};
-	/** @param {{ path: string } | null} file */
-	const open_selected = async (file = selected) => {
-		if (!file) { return; }
-		if (await open_page_from_site(file.path)) {
-			$w.close();
+	/** The same selection in both views. @param {SiteFile | null} file */
+	const select_file = (file) => {
+		selected = file;
+		$list.find(".my-site-row").add($tiles.find(".my-site-tile")).each((_i, el) => { $(el).toggleClass("selected", !!file && el.dataset.path === file.path); });
+		update_buttons();
+	};
+
+	/** Site: name, address, dates, what's on it. @param {SiteFile[]} files */
+	const render_summary = async (files) => {
+		const { site } = load_settings();
+		const stamps = files.map((file) => Date.parse(file.uploaded)).filter(Number.isFinite);
+		const first_upload = stamps.length ? Math.min(...stamps) : null;
+		const created = site_created || first_upload;
+		const updated = stamps.length ? Math.max(...stamps) : null;
+		const pages = files.filter((file) => is_page(file.path));
+		const bytes = files.reduce((sum, file) => sum + file.size, 0);
+		const settings = await site_settings();
+		const posts_folders = Object.entries(settings.folders || {}).filter(([, config]) => config && config.kind === "posts").map(([name]) => name);
+		$summary.empty();
+		const $head = $(E("div")).addClass("my-site-summary-head").appendTo($summary);
+		$(E("span")).addClass("site-globe site-globe-static").appendTo($head);
+		const $titles = $(E("div")).appendTo($head);
+		$(E("div")).addClass("my-site-summary-name").text(site === ROOT_SITE ? new URL(public_url("")).host : `~${site}`).appendTo($titles);
+		$(E("a")).addClass("my-site-summary-address").attr({ href: public_url(""), target: "_blank", rel: "noopener" }).text(public_url("")).appendTo($titles);
+		const $facts = $(E("table")).addClass("my-site-facts").appendTo($summary);
+		/** @param {string} label @param {string} value */
+		const fact = (label, value) => {
+			const $tr = $(E("tr")).appendTo($facts);
+			$(E("th")).text(label).appendTo($tr);
+			$(E("td")).text(value).appendTo($tr);
+		};
+		fact(localize("Created:"), created ? new Date(created).toLocaleDateString(undefined, { dateStyle: "long" }) : localize("not yet — nothing's been put up"));
+		fact(localize("Updated:"), updated ? new Date(updated).toLocaleString() : "—");
+		fact(localize("Pages:"), pages.length ? `${pages.length}${pages.some((file) => is_index(file.path)) ? "" : ` — ${localize("no front page (index.html) yet")}`}` : localize("none yet"));
+		fact(localize("Files:"), `${files.length} (${kb(bytes)})`);
+		if (posts_folders.length) { fact(localize("Posts:"), posts_folders.map((folder) => `${folder}/ (RSS: ${folder}/feed.xml)`).join(", ")); }
+		fact(localize("Signed in:"), role === "master" ? localize("with the master key") : localize("with this site's password"));
+		$(E("p")).addClass("my-site-note").text(site === ROOT_SITE ? localize("The front page of the domain: its pages live at the root address, other sites at ~name.") : localize("Pages shows your pages as thumbnails; Files, everything on the site.")).appendTo($summary);
+	};
+
+	/** Pages: thumbnails, like a folder of pictures, with + at the end. @param {SiteFile[]} files */
+	const render_pages = (files) => {
+		$tiles.empty();
+		const by_path = new Map(files.map((file) => [file.path, file]));
+		const pages = files.filter((file) => is_page(file.path)).sort((a, b) => (is_index(a.path) ? -1 : is_index(b.path) ? 1 : a.path.localeCompare(b.path)));
+		if (pages.length === 0) {
+			$(E("div")).addClass("my-site-empty my-site-pages-empty").text(localize("No pages yet. + makes your front page (index.html).")).appendTo($tiles);
+		}
+		for (const file of pages) {
+			const bitmap = by_path.get(`collages/${file.path.replace(/\.html?$/i, "")}.png`);
+			const $tile = $(E("div")).addClass("my-site-tile").attr({ role: "option", tabindex: "0", "data-path": file.path, title: `${file.path} · ${kb(file.size)} · ${new Date(file.uploaded).toLocaleString()}` }).appendTo($tiles);
+			const $thumb = $(E("div")).addClass("my-site-thumb").appendTo($tile);
+			if (bitmap) {
+				$(E("img")).attr({ src: `${public_url(bitmap.path)}?v=${Date.parse(bitmap.uploaded) || 0}`, alt: "", draggable: "false" }).appendTo($thumb); // (the site's copy; ?v= so a new save shows)
+			} else {
+				$thumb.addClass("my-site-thumb-blank").text("📄");
+			}
+			$(E("span")).addClass("my-site-tile-name").text(is_index(file.path) ? `${file.path} ★` : file.path).appendTo($tile);
+			$tile.on("click focus", () => { select_file(file); });
+			$tile.on("dblclick", () => { open_selected(file); });
+			$tile.on("keydown", (e) => { if (e.key === "Enter") { open_selected(file); } });
+		}
+		const $new = $(E("div")).addClass("my-site-tile my-site-new").attr({ role: "button", tabindex: "0", title: localize("New Page…") }).appendTo($tiles);
+		$(E("div")).addClass("my-site-thumb my-site-thumb-blank").text("+").appendTo($new);
+		$(E("span")).addClass("my-site-tile-name").text(localize("New Page")).appendTo($new);
+		$new.on("click", () => { show_new_page_dialog(); });
+		$new.on("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); show_new_page_dialog(); } });
+	};
+
+	/** Files: every file, one per line. @param {SiteFile[]} files */
+	const render_files = (files) => {
+		$list.empty();
+		if (files.length === 0) {
+			$(E("li")).addClass("my-site-empty").text(localize("Nothing here yet. New Page… makes your front page (index.html); Save to My Site puts this picture up as it.")).appendTo($list);
+		}
+		for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+			const $row = $(E("li")).addClass("my-site-row").attr({ role: "option", tabindex: "0", "data-path": file.path }).appendTo($list);
+			$(E("span")).addClass("my-site-icon").text(is_page(file.path) ? "📄" : /\.(gif|png|jpe?g|webp)$/i.test(file.path) ? "🖼" : /\.(mp3|mid|midi|wav|ogg)$/i.test(file.path) ? "♫" : "📎").appendTo($row);
+			$(E("span")).addClass("my-site-name").text(file.path).appendTo($row);
+			$(E("span")).addClass("my-site-meta").text(`${kb(file.size)} · ${new Date(file.uploaded).toLocaleDateString()}`).appendTo($row);
+			$row.on("click focus", () => { select_file(file); });
+			$row.on("dblclick", () => {
+				if (is_page(file.path)) { open_selected(file); } else { window.open(public_url(file.path), "_blank", "noopener"); }
+			});
+			$row.on("keydown", (e) => { if (e.key === "Enter") { $row.trigger("dblclick"); } });
 		}
 	};
+
 	const refresh = async () => {
 		const { site } = load_settings();
-		$w.title(`${localize("My Site")} — ~${site}`);
+		$w.title(`${localize("My Site")} — ${site === ROOT_SITE ? new URL(public_url("")).host : `~${site}`}`);
 		$status.text(localize("Loading…"));
 		$list.empty();
-		selected = null;
-		update_buttons();
+		$tiles.empty();
+		select_file(null);
 		try {
 			const all_files = (await list_files()).files;
 			const files = all_files.filter((/** @type {{ path: string }} */ file) => !file.path.startsWith("versions/")); // old copies live under Versions…
 			listed_files = files;
-			if (files.length === 0) {
-				$(E("li")).addClass("my-site-empty").text(localize("Nothing here yet. New Page… makes your front page (index.html); Save to My Site puts this picture up as it.")).appendTo($list);
-			}
-			for (const file of files.sort((a, b) => a.path.localeCompare(b.path))) {
-				const is_page = /\.html?$/i.test(file.path);
-				const $row = $(E("li")).addClass("my-site-row").attr({ role: "option", tabindex: "0" }).appendTo($list);
-				$(E("span")).addClass("my-site-icon").text(is_page ? "📄" : /\.(gif|png|jpe?g|webp)$/i.test(file.path) ? "🖼" : /\.(mp3|mid|midi|wav|ogg)$/i.test(file.path) ? "♫" : "📎").appendTo($row);
-				$(E("span")).addClass("my-site-name").text(file.path).appendTo($row);
-				$(E("span")).addClass("my-site-meta").text(`${Math.max(1, Math.round(file.size / 1024))} KB · ${new Date(file.uploaded).toLocaleDateString()}`).appendTo($row);
-				$row.on("click focus", () => {
-					$list.find(".my-site-row").removeClass("selected");
-					$row.addClass("selected");
-					selected = file;
-					update_buttons();
-				});
-				$row.on("dblclick", () => {
-					if (is_page) { open_selected(file); } else { window.open(public_url(file.path), "_blank", "noopener"); }
-				});
-				$row.on("keydown", (e) => { if (e.key === "Enter") { $row.trigger("dblclick"); } });
-			}
+			render_pages(files);
+			render_files(files);
 			const $link = $(E("a")).attr({ href: public_url(""), target: "_blank", rel: "noopener" }).text(public_url(""));
 			$status.empty().append(document.createTextNode(`${files.length} file${files.length === 1 ? "" : "s"} · `), $link);
+			await render_summary(files);
 		} catch (error) {
 			$status.text(`Couldn't list the files: ${error.message}`);
 		}
@@ -698,8 +832,9 @@ async function show_my_site_dialog() {
 	};
 
 	$w.$Button(localize("Close"), () => { $w.close(); });
-	$w.on("close", () => { $folder = null; });
-	$w.$content.css({ width: "min(520px, 92vw)" });
+	$w.on("close", () => { $folder = null; switch_folder_tab = null; });
+	$w.$content.css({ width: "min(560px, 94vw)" });
+	show_tab(tab);
 	$w.center();
 	refresh();
 }
@@ -772,6 +907,156 @@ $("<style>").text(`
 		opacity: 0.8;
 		max-width: 380px; /* wraps; the dialog's button column must still fit beside it */
 		white-space: normal;
+	}
+	/* Tabs: a Windows 98 property sheet */
+	.my-site-tabs {
+		display: flex;
+		align-items: flex-end;
+		padding: 0 2px;
+		position: relative;
+		z-index: 1;
+	}
+	.my-site-tab {
+		padding: 3px 10px 2px;
+		margin-right: -1px;
+		background: var(--ButtonFace, #c0c0c0);
+		color: var(--ButtonText, #000);
+		border: 1px solid;
+		border-color: var(--ButtonHilight, #fff) var(--ButtonDkShadow, #000) transparent var(--ButtonHilight, #fff);
+		box-shadow: inset -1px 0 var(--ButtonShadow, #808080);
+		border-radius: 3px 3px 0 0;
+		cursor: default;
+		user-select: none;
+		white-space: nowrap;
+	}
+	.my-site-tab.selected {
+		padding: 4px 12px 4px;
+		margin: -2px 0 -1px -2px;
+		position: relative;
+		z-index: 2;
+	}
+	.my-site-tab:focus-visible {
+		outline: 1px dotted currentColor;
+		outline-offset: -4px;
+	}
+	.my-site-panels {
+		background: var(--ButtonFace, #c0c0c0);
+		border: 1px solid;
+		border-color: var(--ButtonHilight, #fff) var(--ButtonDkShadow, #000) var(--ButtonDkShadow, #000) var(--ButtonHilight, #fff);
+		box-shadow: inset -1px -1px var(--ButtonShadow, #808080);
+		padding: 8px;
+	}
+	.my-site-panel > .my-site-toolbar:last-child {
+		margin: 6px 0 0;
+	}
+	/* Site */
+	.my-site-summary-head {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		margin-bottom: 8px;
+	}
+	.my-site-summary-name {
+		font-size: 16px;
+		font-weight: bold;
+	}
+	.my-site-summary-address {
+		font-size: 12px;
+		word-break: break-all;
+	}
+	.my-site-facts {
+		border-collapse: collapse;
+		font-size: 12px;
+		margin-bottom: 6px;
+	}
+	.my-site-facts th {
+		text-align: right;
+		font-weight: normal;
+		opacity: 0.8;
+		padding: 1px 8px 1px 0;
+		white-space: nowrap;
+		vertical-align: top;
+	}
+	.my-site-facts td {
+		padding: 1px 0;
+	}
+	/* Pages: large icons */
+	.my-site-pages {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, 104px);
+		justify-content: start;
+		align-content: start;
+		gap: 4px;
+		height: 240px;
+		overflow: auto;
+		padding: 6px;
+		background: var(--Window, #fff);
+		color: var(--WindowText, #222);
+	}
+	.my-site-tile {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 3px;
+		padding: 4px 2px;
+		cursor: default;
+		user-select: none;
+	}
+	.my-site-thumb {
+		width: 90px;
+		height: 68px;
+		padding: 2px;
+		box-sizing: border-box;
+		background: var(--ButtonFace, #c0c0c0);
+		border: 1px solid;
+		border-color: var(--ButtonHilight, #fff) var(--ButtonDkShadow, #000) var(--ButtonDkShadow, #000) var(--ButtonHilight, #fff);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+	}
+	.my-site-thumb img {
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
+		background: #fff;
+		border: 1px solid #000;
+		box-sizing: border-box;
+		image-rendering: auto;
+	}
+	.my-site-thumb-blank {
+		font-size: 32px;
+		line-height: 1;
+	}
+	.my-site-new .my-site-thumb {
+		border-style: dashed;
+		border-color: var(--ButtonShadow, #808080);
+		background: transparent;
+		font-size: 36px;
+	}
+	.my-site-tile-name {
+		max-width: 100px;
+		padding: 0 2px;
+		font-size: 11px;
+		text-align: center;
+		overflow-wrap: anywhere;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.my-site-tile.selected .my-site-tile-name {
+		background: var(--Hilight, #000080);
+		color: var(--HilightText, #fff);
+	}
+	.my-site-tile:focus-visible {
+		outline: none;
+	}
+	.my-site-tile:focus-visible .my-site-tile-name {
+		outline: 1px dotted currentColor;
+	}
+	.my-site-pages-empty {
+		grid-column: 1 / -1;
 	}
 `).appendTo(document.head);
 

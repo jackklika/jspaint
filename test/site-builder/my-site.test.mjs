@@ -35,11 +35,22 @@ assert.equal(await page.$eval(".site-view-window a[target=_blank]", (el) => el.g
 await page.evaluate(() => [...document.querySelectorAll(".site-view-window button")].find((b) => b.textContent === "Browse Files…").click());
 await page.waitForSelector(".my-site-window", { timeout: 10000 });
 await page.waitForFunction(() => !document.querySelector(".site-view-window"), null, { timeout: 5000 });
+assert.equal(await page.getAttribute(".my-site-window .my-site-tab.selected", "data-tab"), "files", "Browse Files… lands on the Files tab");
 
 // My Site → New Page… → about.html
 await click_menu_item(page, "My Site...");
 await page.waitForSelector(".my-site-window", { timeout: 10000 });
-await page.evaluate(() => [...document.querySelectorAll(".my-site-toolbar button")].find((b) => b.textContent === "New Page…").click());
+// Three tabs: Site (the summary), Pages (thumbnails, + at the end), Files (the folder). It opens on Site.
+assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".my-site-window .my-site-tab")].map((el) => el.textContent)), ["Site", "Pages", "Files"]);
+assert.equal(await page.getAttribute(".my-site-window .my-site-tab.selected", "data-tab"), "site");
+await page.waitForFunction(() => /\d+ files?/.test(document.querySelector(".my-site-window .my-site-status")?.textContent || ""), null, { timeout: 10000 });
+await page.waitForSelector(".my-site-window .my-site-facts", { timeout: 5000 });
+assert.match(await page.$eval(".my-site-window .my-site-summary", (el) => el.textContent), new RegExp(`~${site}`));
+assert.match(await page.$eval(".my-site-window .my-site-facts", (el) => el.textContent), /Pages:none yet/);
+assert.equal(await page.$eval(".my-site-window .my-site-summary-address", (el) => el.getAttribute("href")), `${sites}/~${site}/`);
+await page.click(".my-site-window .my-site-tab[data-tab=pages]");
+assert.equal(await page.evaluate(() => document.querySelectorAll(".my-site-window .my-site-tile:not(.my-site-new)").length), 0);
+await page.click(".my-site-window .my-site-tile.my-site-new"); // + : a new page
 const new_page_input = ".dialog-window:has(.window-title:text-is('New Page')) input[type=text]";
 await page.waitForSelector(new_page_input, { timeout: 5000 });
 assert.equal(await page.inputValue(new_page_input), "index.html", "an empty site's first page is its front page");
@@ -76,7 +87,17 @@ await page.evaluate(() => { saved = true; });
 await click_menu_item(page, "New");
 await page.waitForFunction(() => document.querySelectorAll(".block-layer").length === 0, null, { timeout: 5000 });
 await click_menu_item(page, "My Site...");
-await page.waitForSelector(".my-site-window .my-site-row", { timeout: 15000 });
+await page.waitForSelector(".my-site-window", { timeout: 10000 });
+await page.waitForFunction(() => /\d+ files?/.test(document.querySelector(".my-site-window .my-site-status")?.textContent || ""), null, { timeout: 15000 });
+// Pages: a tile per page, its thumbnail the bitmap the site holds for it; the summary counts it
+await page.click(".my-site-window .my-site-tab[data-tab=pages]");
+assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".my-site-window .my-site-tile")].map((el) => el.querySelector(".my-site-tile-name").textContent)), ["about.html", "New Page"]);
+assert.match(await page.getAttribute(".my-site-window .my-site-tile[data-path='about.html'] img", "src"), new RegExp(`^${sites}/~${site}/collages/about\\.png\\?v=\\d+$`));
+assert.equal(await page.evaluate(() => { const img = document.querySelector(".my-site-window .my-site-tile img"); return img.complete && img.naturalWidth > 0; }), true, "the thumbnail loaded");
+await page.click(".my-site-window .my-site-tab[data-tab=site]");
+assert.match(await page.$eval(".my-site-window .my-site-facts", (el) => el.textContent), /Pages:1 — no front page \(index\.html\) yet/);
+await page.click(".my-site-window .my-site-tab[data-tab=files]");
+await page.waitForSelector(".my-site-window .my-site-row", { timeout: 5000 });
 const names = await page.evaluate(() => [...document.querySelectorAll(".my-site-name")].map((el) => el.textContent));
 assert.ok(names.includes("about.html") && names.includes("collages/about.png"), names.join(","));
 await page.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((row) => row.querySelector(".my-site-name").textContent === "about.html").dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));

@@ -1,7 +1,7 @@
 // @ts-check
 // jspaint-editor: serves the Paint app (static assets) and the API Paint uses to publish to a site.
 //
-//   GET    /api/whoami[?site=name]                  checks the bearer (master key, or that site's password); returns role + URLs
+//   GET    /api/whoami[?site=name]                  checks the bearer (master key, or that site's password); returns role, created, URLs
 //   POST   /api/sites/:name/password                master key only: gives the site a new random password → { site, password, rotated }
 //   DELETE /api/sites/:name/password                master key only: removes the site's password
 //   GET    /api/sites/:name/files                   list a site's files
@@ -693,7 +693,9 @@ export default {
 				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
 				const role = await role_of(request, env, site);
 				if (!role) { return json({ error: "Unauthorized: the password was rejected" }, 401); }
-				return json({ ok: true, role, site: site || null, sites_url: env.SITES_URL, editor_url: url.origin });
+				// `created`: when the site got its password (My Site's summary); null for a site the master key alone edits
+				const created = site ? await /** @type {any} */ (env.ACCOUNTS.getByName("global")).get_created(site) : null;
+				return json({ ok: true, role, site: site || null, created, sites_url: env.SITES_URL, editor_url: url.origin });
 			}
 			const password_match = /^\/api\/sites\/([^/]+)\/password$/.exec(url.pathname);
 			if (password_match) {

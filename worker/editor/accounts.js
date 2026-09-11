@@ -22,6 +22,11 @@ export class Accounts extends DurableObject {
 		const row = this.ctx.storage.sql.exec("SELECT hash FROM sites WHERE name = ?", name).toArray()[0];
 		return row ? String(row.hash) : null;
 	}
+	/** @param {string} name @returns {number | null} when the site got its first password (ms), if it has one */
+	get_created(name) {
+		const row = this.ctx.storage.sql.exec("SELECT created FROM sites WHERE name = ?", name).toArray()[0];
+		return row ? Number(row.created) : null;
+	}
 	/** @param {string} name @param {string} hash @returns {{ rotated: boolean }} whether a password existed before */
 	set_hash(name, hash) {
 		const now = Date.now();

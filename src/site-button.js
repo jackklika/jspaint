@@ -131,7 +131,7 @@ async function show_site_view() {
 		row(localize("This page:"), copy_of ?
 			$(E("span")).text(localize("%1 — a copy of %2. Save to My Site puts it on your site.", page, site_public_url(copy_of, page || "index.html"))) :
 			page ? link(public_url(page), page) : $(E("span")).text(localize("not saved to the site yet")));
-		$w.$Button(localize("Browse Files…"), () => { $w.close(); show_my_site_dialog(); }, { type: "submit" });
+		$w.$Button(localize("Browse Files…"), () => { $w.close(); show_my_site_dialog({ tab: "files" }); }, { type: "submit" });
 		$w.$Button(page ? localize("Save Page…") : localize("Save to My Site…"), () => { $w.close(); show_publish_dialog(); });
 		if (page) { $w.$Button(localize("Share…"), () => { $w.close(); show_share_dialog(); }); }
 		$w.$Button(localize("Sign Out"), () => {
