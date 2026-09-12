@@ -237,6 +237,10 @@ class OnCanvasBlock extends OnCanvasObject {
 		}
 		el.style.width = `${this.width}px`;
 		el.style.height = this.flow ? "auto" : `${this.height}px`;
+		if (this.flow && section_resize_observer) {
+			section_resize_observer.unobserve(this.el);
+			section_resize_observer.observe(el);
+		}
 		this.el.replaceWith(el);
 		this.el = el;
 		this.$content.append(el);
@@ -368,6 +372,7 @@ class OnCanvasBlock extends OnCanvasObject {
 	}
 	destroy() {
 		if (this.editing) { this.end_edit(); }
+		section_resize_observer?.unobserve(this.el);
 		if (selected_block === this) { selected_block = null; }
 		this.handles.hide();
 		super.destroy();
@@ -902,6 +907,14 @@ function get_column_geometry() {
 }
 
 /** Lays the sections out: column position and width, measured heights, one under the other. */
+/** Sections re-stack when their contents change height (a picture loads, say) — heights are measured, so observed. */
+const section_resize_observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+	if (reflow_scheduled) { return; }
+	reflow_scheduled = true;
+	requestAnimationFrame(() => { reflow_scheduled = false; reflow_sections(); });
+}) : null;
+let reflow_scheduled = false;
+
 function reflow_sections() {
 	const sections = blocks.filter((block) => block.flow);
 	if (!sections.length) { return; }

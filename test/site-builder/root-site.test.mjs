@@ -61,12 +61,12 @@ await put("root", "posts/index.html", '<html><head><title>posts</title></head><b
 }
 
 // <x-toc> lists a page's sections by their anchors; site.css is linked into every page
-await put("root", "toc.html", '<html><head><title>toc</title></head><body><x-toc title="On this page">fallback</x-toc><div class="column"><div class="block section" id="alpha"><h2>Alpha</h2><p>a</p></div><div class="block section" id="beta">Just beta words here</div></div></body></html>');
+await put("root", "toc.html", '<html><head><title>toc</title></head><body><x-toc title="On this page">fallback</x-toc><div class="column"><div class="block section" id="alpha"><h2>Alpha</h2><p>a</p></div><div class="block section" id="beta">Just beta words here</div><div data-kind="section" id="gamma" class="block section"><div class="card" data-card="callout"><p>a nested card first</p></div><h2>Gamma</h2></div></div></body></html>');
 {
 	const response = await fetch(`${editor}/api/sites/root/files/site.css`, { method: "PUT", headers: { ...headers, "Content-Type": "text/css" }, body: ".toc { color: red; }" });
 	assert.equal(response.status, 200, "site.css saved");
 	const toc = await (await get("/toc.html")).text();
-	assert.match(toc, /<b class="toc-title">On this page<\/b><ul class="toc"><li class="toc-item"><a href="#alpha">Alpha<\/a><\/li><li class="toc-item"><a href="#beta">Just beta words here<\/a><\/li><\/ul>/);
+	assert.match(toc, /<b class="toc-title">On this page<\/b><ul class="toc"><li class="toc-item"><a href="#alpha">Alpha<\/a><\/li><li class="toc-item"><a href="#beta">Just beta words here<\/a><\/li><li class="toc-item"><a href="#gamma">Gamma<\/a><\/li><\/ul>/, "sections in Paint's attribute order, with nested cards, are found too");
 	assert.match(toc, /<link rel="stylesheet" href="\/site.css">/, "the site's stylesheet is linked in");
 	assert.match(await (await get("/site.css")).text(), /color: red/);
 }

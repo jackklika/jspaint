@@ -42,6 +42,7 @@ body > center { line-height: 0; }
 .collage.has-column { overflow: visible; }
 .collage > .column { position: absolute; }
 .column > .section { display: block; position: static; margin: 0 0 16px; box-sizing: border-box; line-height: normal; font: 16px "Times New Roman", Times, serif; color: #000; }
+.column > .section img { max-width: 100%; height: auto; }
 `.trim();
 
 /**

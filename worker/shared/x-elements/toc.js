@@ -2,6 +2,7 @@
 // <x-toc>: a table of contents — the page's sections (blocks.js sections carry an id), each linked by its #anchor,
 // named by its heading (or first words). Rendered from the page itself at serve time.
 import { escape_html } from "./index.js";
+import { find_sections, text_of } from "../sections.js";
 
 export default {
 	tag: "x-toc",
@@ -13,10 +14,11 @@ export default {
 	},
 	render({ attrs, context }) {
 		const items = [];
-		for (const match of (context.page_html || "").matchAll(/<(div|p|h[1-6])[^>]*class="block section"[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/\1>/g)) {
-			const heading = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(match[3]);
-			const text = (heading ? heading[1] : match[3]).replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
-			items.push(`<li class="toc-item"><a href="#${escape_html(match[2])}">${escape_html(text || match[2])}</a></li>`);
+		for (const section of find_sections(context.page_html || "")) {
+			if (!section.id) { continue; }
+			const heading = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(section.html);
+			const text = text_of(heading ? heading[1] : section.html, 80);
+			items.push(`<li class="toc-item"><a href="#${escape_html(section.id)}">${escape_html(text || section.id)}</a></li>`);
 		}
 		const heading = attrs.title ? `<b class="toc-title">${escape_html(attrs.title)}</b>` : "";
 		return heading + (items.length ? `<ul class="toc">${items.join("")}</ul>` : "<p class=\"toc-empty\"><i>No sections on this page yet.</i></p>");

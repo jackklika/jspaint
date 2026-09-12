@@ -6,6 +6,7 @@
 // POST /~name/x/<element> (or /x/<element> for root) runs an <x-*> element's action (the guestbook form), also here.
 import { DurableObject } from "cloudflare:workers";
 import { ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, valid_path, valid_site_name } from "../shared/names.js";
+import { find_sections, text_of } from "../shared/sections.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { render_x_elements, x_elements } from "../shared/x-elements/index.js";
 
@@ -194,10 +195,9 @@ function site_files(bucket, site) {
 			const object = await bucket.get(`${prefix}${path}`);
 			if (!object) { return ""; }
 			const html = await object.text();
-			const section = /<div[^>]*class="block section"[^>]*>([\s\S]*?)<\/div>/i.exec(html);
+			const [section] = find_sections(html);
 			const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html);
-			const text = (section ? section[1] : body ? body[1] : "").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
-			return text.slice(0, 300);
+			return text_of(section ? section.html : body ? body[1] : "", 300);
 		},
 		/** site.json — the site's settings (folders marked as posts, titles). @returns {Promise<any>} */
 		async settings() {
