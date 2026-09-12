@@ -1,5 +1,5 @@
 // @ts-check
-/* global localize, systemHooks */
+/* global localize */
 // The page tools: the second half of the toolbox. A Pointer for selecting, moving, and editing elements,
 // one tool per kind of page element (text box, section, divider, GIF, image, table, box, guestbook, counter,
 // music, folder view, contents, raw HTML), and Link, which links the selected element or words. Element tools
@@ -7,11 +7,9 @@
 // element is and block-kinds.js for the kinds. Kept to an even count: the toolbox is two columns.
 import { add_block } from "./blocks.js";
 import { link_tool } from "./element-link.js";
-import { image_formats } from "./file-format-data.js";
-import { show_error_message } from "./functions.js";
 import { E } from "./helpers.js";
 import { toggle_gif_picker } from "./gif-picker.js";
-import { add_sticker_from_blob } from "./stickers.js";
+import { show_pictures_window } from "./pictures.js";
 
 const TOOL_POINTER = "TOOL_POINTER";
 const TOOL_GIF_PICKER = "TOOL_GIF_PICKER";
@@ -134,22 +132,14 @@ const page_tools = [
 	},
 	{
 		id: TOOL_IMAGE_UPLOAD,
-		name: localize("Image"),
-		speech_recognition: ["image", "add image", "insert image", "upload image", "add picture", "insert picture", "image from file"],
+		name: localize("Pictures"),
+		speech_recognition: ["pictures", "picture", "photos", "photo", "image", "add image", "insert image", "upload image", "add picture", "insert picture", "image from file", "my pictures"],
 		help_icon: "",
 		icon_svg: data_url(ICONS.image),
-		description: localize("Puts an image file (GIF, PNG, JPEG) on the page as an element you can move and link."),
+		description: localize("Your site's pictures and photos: click one to put it on the page, or upload new ones. Big photos are shown at page size and open full-size."),
 		cursor: ["precise", [16, 16], "crosshair"],
 		page_tool: true,
-		async action() {
-			const { file } = await systemHooks.showOpenFileDialog({ formats: image_formats });
-			if (!file) { return; }
-			try {
-				await add_sticker_from_blob(file);
-			} catch (error) {
-				show_error_message(localize("Paint cannot read this file."), error);
-			}
-		},
+		action() { show_pictures_window(); },
 		$options: $(E("div")),
 	},
 	element_tool("table", "table", localize("Table"), localize("Places a table on the page. Click into a cell to type."), ["table", "add table", "insert table", "grid"]),

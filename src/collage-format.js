@@ -80,16 +80,16 @@ function canvas_to_png_blob(canvas) {
  * @param {object} [options]
  * @param {HTMLCanvasElement} [options.canvas] - defaults to the main canvas; another canvas (e.g. a selection) gets no layers
  * @param {string} [options.title]
- * @param {(blob: Blob, kind: "bitmap" | "sticker", index: number) => Promise<string>} [options.asset_url] - where assets go; defaults to data URLs
+ * @param {(blob: Blob, kind: "bitmap" | "sticker", index: number, path?: string) => Promise<string>} [options.asset_url] - where assets go; defaults to data URLs. `path`: where a sticker's picture already is on the site, if known
  * @returns {Promise<string>}
  */
 async function serialize_collage_html({ canvas = main_canvas, title = file_name, asset_url = (blob) => blob_to_data_url(blob) } = {}) {
 	const bitmap_src = await asset_url(await canvas_to_png_blob(canvas), "bitmap", 0);
 	if (canvas === main_canvas) { ensure_section_ids(); }
 	const all_blocks = canvas === main_canvas ? get_blocks() : [];
-	/** Pictures dropped into text are blob: URLs in the editor; they go to the site like stickers do. @param {BlockSnapshot} snapshot */
+	/** Pictures put into text while signed out are blob: or data: URLs; they go to the site like stickers do. @param {BlockSnapshot} snapshot */
 	const with_uploaded_pictures = async (snapshot) => {
-		const sources = [...snapshot.html.matchAll(/src="(blob:[^"]+)"/g)].map((match) => match[1]);
+		const sources = [...snapshot.html.matchAll(/src="((?:blob|data):[^"]+)"/g)].map((match) => match[1]);
 		if (!sources.length) { return snapshot; }
 		let html = snapshot.html;
 		for (const [index, source] of [...new Set(sources)].entries()) {
@@ -116,7 +116,7 @@ async function serialize_collage_html({ canvas = main_canvas, title = file_name,
 		for (const sticker of get_stickers()) {
 			const source = get_sticker_source(sticker.source_id);
 			if (!source) { continue; }
-			const src = await asset_url(source.blob, "sticker", index++);
+			const src = await asset_url(source.blob, "sticker", index++, source.path || "");
 			const transforms = [];
 			if (sticker.rotation) { transforms.push(`rotate(${sticker.rotation}deg)`); }
 			if (sticker.flip_x || sticker.flip_y) { transforms.push(`scale(${sticker.flip_x ? -1 : 1}, ${sticker.flip_y ? -1 : 1})`); }

@@ -614,6 +614,28 @@ function insert_html_at_caret(html) {
 	return true;
 }
 
+/**
+ * Puts a node at the caret (a picture, say), as a node: insertHTML would dress it in inline styles.
+ * @param {Node} node
+ */
+function insert_node_at_caret(node) {
+	const block = editing_block;
+	if (!block) { return false; }
+	with_selection_restored(block, () => {
+		const selection = document.getSelection();
+		if (!selection || !selection.rangeCount) { return; }
+		const range = selection.getRangeAt(0);
+		const last = node.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? node.lastChild : node; // (a fragment empties itself into the range)
+		range.deleteContents();
+		range.insertNode(node);
+		if (last) { range.setStartAfter(last); }
+		range.collapse(true);
+		selection.removeAllRanges();
+		selection.addRange(range);
+	});
+	return true;
+}
+
 /** Whether the text being edited can take headings, lists, and pictures (see is_container). */
 function is_editing_container() {
 	return !!editing_block && editing_block.is_container();
@@ -1441,6 +1463,7 @@ export {
 	get_column_geometry,
 	get_editing_block,
 	insert_html_at_caret,
+	insert_node_at_caret,
 	insert_rule,
 	get_selected_block,
 	init_blocks,

@@ -100,7 +100,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
 	for (const snapshot of stickers) {
 		const source = get_sticker_source(snapshot.source_id);
 		if (!source) { continue; }
-		sticker_records.push({ ...snapshot, blob: source.blob });
+		sticker_records.push({ ...snapshot, blob: source.blob, path: source.path || "" });
 	}
 	try {
 		await with_store("readwrite", (store) => store.put({ version: 4, saved: Date.now(), stickers: sticker_records, text_layers, blocks, site_page, page_properties }, key));
@@ -156,10 +156,11 @@ async function restore_layers_sidecar(session_id) {
 		const sticker_snapshots = [];
 		for (const record of data.stickers || []) {
 			const blob = record.blob instanceof Blob ? record.blob : await (await fetch(record.data_url)).blob();
-			const source = await register_sticker_source(blob);
+			const source = await register_sticker_source(blob, { path: typeof record.path === "string" ? record.path : "" });
 			const snapshot = { ...record, source_id: source.id };
 			delete snapshot.blob;
 			delete snapshot.data_url;
+			delete snapshot.path;
 			sticker_snapshots.push(snapshot);
 		}
 		if (data.page_properties && typeof data.page_properties === "object") {

@@ -129,7 +129,11 @@ async function publish_collage(settings, log) {
 	let uploaded = 0, reused = 0;
 	const html = await serialize_collage_html({
 		title: page_base,
-		asset_url: async (blob, kind) => {
+		asset_url: async (blob, kind, _index, known_path = "") => {
+			if (kind === "sticker" && known_path && existing.has(known_path)) {
+				reused++; // a picture from the site (the Pictures window): its copy is already there
+				return `${up}${known_path}`;
+			}
 			const hash = await hash_blob(blob);
 			const path = kind === "bitmap" ?
 				`collages/${page_base}.png` :

@@ -23,6 +23,7 @@ import { deselect_text_layer } from "./text-layers.js";
  * @property {string} url - object URL for the blob
  * @property {number} width - natural size
  * @property {number} height
+ * @property {string} path - where it lives on the site (gifs/<hash>.<ext>), "" when not (yet) uploaded
  */
 
 /** @type {Map<string, StickerSource>} */
@@ -78,7 +79,8 @@ function sniff_image_type(head) {
  * @param {Blob} blob
  * @returns {Promise<StickerSource>}
  */
-async function register_sticker_source(blob) {
+/** @param {Blob} blob @param {{ path?: string }} [options] - `path`: the site file this is (so saving and the live room don't upload it again) */
+async function register_sticker_source(blob, { path = "" } = {}) {
 	// Fetched images often arrive as application/octet-stream; the collage format relies on a real type.
 	const type = sniff_image_type(new Uint8Array(await blob.slice(0, 12).arrayBuffer())) || blob.type || "image/png";
 	if (blob.type !== type) {
@@ -88,7 +90,7 @@ async function register_sticker_source(blob) {
 	return new Promise((resolve, reject) => {
 		const img = new Image();
 		img.onload = () => {
-			const source = { id: `g${next_source_id++}`, blob, url, width: img.naturalWidth, height: img.naturalHeight };
+			const source = { id: `g${next_source_id++}`, blob, url, width: img.naturalWidth, height: img.naturalHeight, path };
 			sticker_sources.set(source.id, source);
 			resolve(source);
 		};
@@ -234,11 +236,11 @@ class OnCanvasSticker extends OnCanvasObject {
 /**
  * Adds a sticker for an animated GIF, as an undoable step, and selects it.
  * @param {Blob} blob
- * @param {{ x?: number, y?: number }} [position] - canvas coordinates; defaults to the visible top-left, like Paste
+ * @param {{ x?: number, y?: number, href?: string, path?: string }} [options] - canvas coordinates (default: the visible top-left, like Paste); `href`: a link to start with; `path`: the site file the picture is
  * @returns {Promise<OnCanvasSticker>}
  */
-async function add_sticker_from_blob(blob, { x, y } = {}) {
-	const source = await register_sticker_source(blob);
+async function add_sticker_from_blob(blob, { x, y, href = "", path = "" } = {}) {
+	const source = await register_sticker_source(blob, { path });
 	// Keep the natural size, but fit oversized GIFs within the canvas.
 	const scale = Math.min(1, main_canvas.width / source.width, main_canvas.height / source.height);
 	const width = Math.max(1, Math.round(source.width * scale));
@@ -261,7 +263,7 @@ async function add_sticker_from_blob(blob, { x, y } = {}) {
 			flip_x: false,
 			flip_y: false,
 			rotation: 0,
-			href: "",
+			href,
 		});
 		stickers.push(sticker);
 		select_sticker(sticker);

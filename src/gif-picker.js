@@ -5,10 +5,12 @@
 // it as an animated sticker (stickers.js). gifcities.org has no API or CORS, so requests go through
 // the editor Worker's proxy (worker/editor/index.js).
 import { $DialogWindow } from "./$ToolWindow.js";
+import { track_app_event } from "./app-analytics.js";
 import { current_site, get_site_editor_url } from "./site-publish.js";
 import { show_error_message } from "./functions.js";
 import { $G, E } from "./helpers.js";
-import { insert_html_at_caret, is_editing_container } from "./blocks.js";
+import { is_editing_container } from "./blocks.js";
+import { insert_picture_blob } from "./pictures.js";
 import { add_sticker_from_blob } from "./stickers.js";
 
 /** The GifCities proxy: the editor Worker. */
@@ -67,8 +69,8 @@ async function add_gif_from_url(url, position) {
 		}
 		const blob = await response.blob();
 		if (is_editing_container() && !position) {
-			// Writing a section: the GIF goes into the text at the caret (published as gifs/<hash>.gif with the page)
-			insert_html_at_caret(`<img src="${URL.createObjectURL(blob)}" alt="">`);
+			// Writing a section: the GIF goes into the text at the caret — on the site first when signed in (pictures.js)
+			await insert_picture_blob(blob);
 		} else {
 			await add_sticker_from_blob(blob, position);
 		}
@@ -81,9 +83,14 @@ async function add_gif_from_url(url, position) {
 /**
  * @param {string} query
  * @param {boolean} [append] - load the next page of the same query
+ * @param {{ starter?: boolean }} [options] - the automatic search when the picker opens isn't a user search
  */
-async function search(query, append = false) {
+async function search(query, append = false, { starter = false } = {}) {
 	if (!$results || !$status || searching) { return; }
+	if (!starter) {
+		// User searches only (Enter, the Search button, More) — the starter search on open is covered by gif_picker_opened.
+		track_app_event("gif_search", { query: query.slice(0, 100), append, site: current_site() || null });
+	}
 	if (!append) {
 		current_query = query;
 		next_offset = 0;
@@ -132,6 +139,7 @@ function show_gif_picker() {
 		$query?.focus();
 		return;
 	}
+	track_app_event("gif_picker_opened", { site: current_site() || null });
 	$picker = $DialogWindow(localize("GIFs"));
 	$picker.addClass("gif-picker-window squish");
 	const $main = $picker.$main;
@@ -169,7 +177,7 @@ function show_gif_picker() {
 	// Something to look at right away
 	const starter = STARTER_QUERIES[Math.floor(Math.random() * STARTER_QUERIES.length)];
 	$query.val(starter);
-	search(starter);
+	search(starter, false, { starter: true });
 	$query.select();
 }
 

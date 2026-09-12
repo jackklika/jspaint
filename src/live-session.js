@@ -539,8 +539,12 @@ async function sticker_to_wire(snapshot) {
 	if (!path) {
 		const source = get_sticker_source(snapshot.source_id);
 		if (!source) { return null; }
-		const ext = { "image/gif": "gif", "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[source.blob.type] || "png";
-		path = await upload_asset(new File([source.blob], `sticker.${ext}`, { type: source.blob.type || "image/png" }));
+		path = source.path; // a picture from the site (the Pictures window) is already there
+		if (!path) {
+			const ext = { "image/gif": "gif", "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[source.blob.type] || "png";
+			path = await upload_asset(new File([source.blob], `sticker.${ext}`, { type: source.blob.type || "image/png" }));
+			source.path = path;
+		}
 		source_paths.set(snapshot.source_id, path);
 		sources_by_path.set(path, snapshot.source_id);
 	}
@@ -559,7 +563,7 @@ async function sticker_from_wire(item) {
 	if (!source_id) {
 		const response = await fetch(`${get_site_files_base()}${item.src}`);
 		if (!response.ok) { return null; }
-		const source = await register_sticker_source(await response.blob());
+		const source = await register_sticker_source(await response.blob(), { path: item.src });
 		source_id = source.id;
 		sources_by_path.set(item.src, source_id);
 		source_paths.set(source_id, item.src);

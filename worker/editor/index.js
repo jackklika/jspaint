@@ -33,7 +33,7 @@ export { Accounts } from "./accounts.js";
 export { GifStats } from "./gif-stats.js";
 export { PageRoom } from "./page-room.js";
 
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_FILE_BYTES = 24 * 1024 * 1024; // a phone photo is 3–12 MB; the page shows a smaller copy (pictures.js)
 const CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*", // bearer auth, no cookies, so a permissive origin is fine
 	"Access-Control-Allow-Methods": "GET, HEAD, PUT, DELETE, OPTIONS",

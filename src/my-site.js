@@ -952,4 +952,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { check_sign_in, current_role, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_sign_in_dialog, sign_out, upload_asset };
+export { check_sign_in, current_role, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_sign_in_dialog, sign_out, upload_asset, write_file };
