@@ -149,7 +149,7 @@ assert.match(rich, /<ul><li>item one<\/li><li><a href="https:\/\/example.com\/">
 const html = await page.evaluate(async () => (await import("/src/collage-format.js")).serialize_collage_html());
 assert.match(html, /<div class="collage has-column"/);
 // (A new section starts as a heading line; typing over the placeholder keeps the <h2>, and Enter makes paragraphs.)
-assert.match(html, /<div class="column" style="left:(?:99|100|101)px;top:(?:99|100|101)px;width:680px">\s*<div data-kind="section" id="second-section" class="block section"><h2>Second section<\/h2>(<p>line<\/p>){6}<\/div>\s*<div data-kind="section" id="first-section" class="block section"><h2>First section<\/h2><h2>A heading<\/h2><ul>/);
+assert.match(html, /<div class="column" style="left:(?:99|100|101)px;top:(?:99|100|101)px;width:680px;--column-left:(?:99|100|101)px;--page-width:800px">\s*<div data-kind="section" id="second-section" class="block section"><h2>Second section<\/h2>(<p>line<\/p>){6}<\/div>\s*<div data-kind="section" id="first-section" class="block section"><h2>First section<\/h2><h2>A heading<\/h2><ul>/);
 const parsed = await page.evaluate(async (html) => {
 	const parsed = (await import("/src/collage-format.js")).parse_collage_html(html);
 	return { blocks: parsed.blocks.map((b) => [b.kind, !!b.flow, b.html.replace(/<[^>]+>/g, " ").trim().split(/\s+/).slice(0, 2).join(" ")]), column: [parsed.page_properties.column_left, parsed.page_properties.column_top, parsed.page_properties.column_width] };

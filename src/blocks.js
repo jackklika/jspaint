@@ -237,10 +237,15 @@ class OnCanvasBlock extends OnCanvasObject {
 		}
 		el.style.width = `${this.width}px`;
 		el.style.height = this.flow ? "auto" : `${this.height}px`;
+		if (this.flow && section_resize_observer) {
+			section_resize_observer.unobserve(this.el);
+			section_resize_observer.observe(el);
+		}
 		this.el.replaceWith(el);
 		this.el = el;
 		this.$content.append(el);
 		this.$el.attr("title", this.tag.startsWith("x-") ? `<${this.tag}> — rendered by your site when published` : null);
+		$G.triggerHandler("block-rendered", [this]); // (cards.js readies the cards in a section)
 		this.refresh_raster();
 		if (this.flow && blocks.includes(this)) { reflow_sections(); }
 	}
@@ -368,6 +373,7 @@ class OnCanvasBlock extends OnCanvasObject {
 	}
 	destroy() {
 		if (this.editing) { this.end_edit(); }
+		section_resize_observer?.unobserve(this.el);
 		if (selected_block === this) { selected_block = null; }
 		this.handles.hide();
 		super.destroy();
@@ -902,6 +908,14 @@ function get_column_geometry() {
 }
 
 /** Lays the sections out: column position and width, measured heights, one under the other. */
+/** Sections re-stack when their contents change height (a picture loads, a toggle opens) — measured, so observed. */
+const section_resize_observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+	if (reflow_scheduled) { return; }
+	reflow_scheduled = true;
+	requestAnimationFrame(() => { reflow_scheduled = false; reflow_sections(); });
+}) : null;
+let reflow_scheduled = false;
+
 function reflow_sections() {
 	const sections = blocks.filter((block) => block.flow);
 	if (!sections.length) { return; }
@@ -911,6 +925,8 @@ function reflow_sections() {
 		block.x = column.left;
 		block.width = column.width;
 		block.el.style.width = `${column.width}px`;
+		block.el.style.setProperty("--column-left", `${column.left}px`);
+		block.el.style.setProperty("--page-width", `${main_canvas.width}px`);
 		block.el.style.height = "auto";
 		block.height = Math.max(24, block.el.offsetHeight || 0);
 		block.y = y;
@@ -1302,11 +1318,14 @@ function normalize_block_lines(html) {
  * @param {string} html
  */
 function normalize_container_html(html) {
-	if (!/<p[\s>]/i.test(html)) { return html; }
+	if (!/<p[\s>]|contenteditable|<details/i.test(html)) { return html; }
 	const template = document.createElement("template");
 	template.innerHTML = html;
+	// Editing-time attributes (cards are atomic, their text regions typable, toggles open) stay out of the model
+	for (const el of template.content.querySelectorAll("[contenteditable]")) { el.removeAttribute("contenteditable"); }
+	for (const el of template.content.querySelectorAll("details[data-card][open]")) { el.removeAttribute("open"); }
 	for (const p of [...template.content.querySelectorAll("p")]) {
-		if (p.querySelector("ul, ol, h1, h2, h3, h4, h5, h6, pre, blockquote, div, hr, table, p")) {
+		if (p.querySelector("ul, ol, h1, h2, h3, h4, h5, h6, pre, blockquote, div, hr, table, p, figure, details")) {
 			p.replaceWith(...p.childNodes);
 		} else if (!p.childNodes.length) {
 			p.remove(); // an empty <p></p> the editing commands left behind shows as nothing anyway

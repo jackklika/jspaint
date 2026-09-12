@@ -21,6 +21,7 @@ import { block_kind_for, sanitize_html_fragment } from "./block-kinds.js";
 import { open_from_image_info, read_image_file, show_error_message, write_image_file } from "./functions.js";
 import { get_page_properties, set_page_properties } from "./page-properties.js";
 import { PAGE_WIDTH } from "./site-constants.js";
+import { card_css } from "./cards.js";
 import { get_sticker_source, get_stickers, register_sticker_source, restore_stickers, snapshot_stickers } from "./stickers.js";
 import { font_css, get_text_layers, restore_text_layers, snapshot_text_layers } from "./text-layers.js";
 
@@ -42,6 +43,8 @@ body > center { line-height: 0; }
 .collage.has-column { overflow: visible; }
 .collage > .column { position: absolute; }
 .column > .section { display: block; position: static; margin: 0 0 16px; box-sizing: border-box; line-height: normal; font: 16px "Times New Roman", Times, serif; color: #000; }
+.column > .section img { max-width: 100%; height: auto; }
+${card_css(".column > .section")}
 `.trim();
 
 /**
@@ -105,7 +108,7 @@ async function serialize_collage_html({ canvas = main_canvas, title = file_name,
 	const sections = all_blocks.filter((block) => block.flow);
 	const column = get_column_geometry();
 	const column_tags = sections.length ? [
-		`\t\t<div class="column" style="left:${column.left}px;top:${column.top}px;width:${column.width}px">`,
+		`\t\t<div class="column" style="left:${column.left}px;top:${column.top}px;width:${column.width}px;--column-left:${column.left}px;--page-width:${canvas.width}px">`,
 		...await Promise.all(sections.map(async (block) => `\t\t\t${block_markup(await with_uploaded_pictures(block.snapshot()), { positioned: false, column: true })}`)),
 		"\t\t</div>",
 	] : [];

@@ -7,11 +7,12 @@
 // site's pictures and uploads new ones.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { escape_html } from "./block-kinds.js";
-import { insert_node_at_caret, is_editing_container } from "./blocks.js";
+import { get_editing_block, insert_node_at_caret, is_editing_container } from "./blocks.js";
 import { E } from "./helpers.js";
 import { list_files, public_url, upload_asset, write_file } from "./my-site.js";
 import { get_site_files_base, is_signed_in } from "./site-publish.js";
 import { add_sticker_from_blob } from "./stickers.js";
+import { active_gallery, insert_card, register_card_kind } from "./cards.js";
 
 const DISPLAY_MAX = 1200; // the copy the page shows
 const THUMB_MAX = 240; // the copy the Pictures window shows
@@ -149,6 +150,19 @@ function insert_picture_html(html) {
  */
 async function place_site_picture(picture, position) {
 	if (is_editing_container() && !position) {
+		const gallery = active_gallery();
+		if (gallery) {
+			// The gallery card that's selected takes it (the Pictures window stays open for the next one)
+			const pictures = gallery.querySelector(".gallery-pictures") || gallery;
+			pictures.insertAdjacentHTML("beforeend", `<a href="${escape_html(public_url(picture.path))}">${`<img src="${escape_html(public_url(picture.display_path || picture.path))}" alt="">`}</a>`);
+			get_editing_block_for(gallery)?.record_edit();
+			return;
+		}
+		if (picture_card_wanted) {
+			picture_card_wanted = false;
+			insert_card(element_from(`<figure class="card picture" data-card="picture">${picture_html(picture)}<figcaption class="card-text">${localize("A caption")}</figcaption></figure>`));
+			return;
+		}
 		insert_picture_html(picture_html(picture));
 		return;
 	}
@@ -202,6 +216,43 @@ async function add_picture_file(file, position) {
 		await add_sticker_from_blob(file, position);
 	}
 }
+
+/** @type {boolean} the next picture picked while writing becomes a Picture card (a caption, a width) — the "/picture" item */
+let picture_card_wanted = false;
+/** @param {string} html */
+function element_from(html) {
+	const template = document.createElement("template");
+	template.innerHTML = html;
+	return /** @type {HTMLElement} */ (template.content.firstElementChild);
+}
+/** @param {Element} el */
+function get_editing_block_for(el) {
+	const block = get_editing_block();
+	return block && block.el.contains(el) ? block : null;
+}
+register_card_kind({
+	id: "picture",
+	label: localize("Picture"),
+	group: "cards",
+	keywords: ["photo", "image", "figure"],
+	hint: localize("with a caption"),
+	icon: '<rect x="1" y="3" width="14" height="10" fill="#fff" stroke="#000"/><path d="M2 12l3-4 2 2 2-3 4 5z" fill="#808080"/><circle cx="11" cy="6" r="1.5" fill="#000080"/>',
+	action: () => { picture_card_wanted = true; show_pictures_window(); $status_text.text(localize("Pick a picture (or Upload…): it goes in with a caption.")); },
+});
+register_card_kind({
+	id: "gallery",
+	label: localize("Gallery"),
+	group: "cards",
+	keywords: ["photos", "grid", "album"],
+	hint: localize("pick pictures"),
+	icon: '<rect x="1" y="2" width="6" height="5" fill="#fff" stroke="#000"/><rect x="9" y="2" width="6" height="5" fill="#fff" stroke="#000"/><rect x="1" y="9" width="6" height="5" fill="#fff" stroke="#000"/><rect x="9" y="9" width="6" height="5" fill="#fff" stroke="#000"/><path d="M2 6l2-2 1 1 1-2 1 3z" fill="#808080"/>',
+	action: () => {
+		if (insert_card(element_from(`<figure class="card gallery" data-card="gallery" data-width="wide"><div class="gallery-pictures"></div><figcaption class="card-text">${localize("A few pictures")}</figcaption></figure>`))) {
+			show_pictures_window();
+			$status_text.text(localize("Click pictures to add them to the gallery (the gallery stays selected while you do)."));
+		}
+	},
+});
 
 // ---- the Pictures window ----
 

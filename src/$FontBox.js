@@ -4,6 +4,7 @@ import { $ToolWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
 import { $G, E, supports_vertical_writing_mode } from "./helpers.js";
 import { apply_block_style, apply_list, current_block_style, insert_rule, is_editing_block, is_editing_block_marquee, is_editing_container, show_text_link_dialog, toggle_editing_block_marquee } from "./blocks.js";
+import { show_insert_menu } from "./cards.js";
 
 // The Marquee toggle's icon: a box of text with a scroll arrow (same size as the B/I/U sprites).
 const MARQUEE_ICON_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\"><rect x=\"1\" y=\"4\" width=\"14\" height=\"7\" fill=\"#fff\"/><path d=\"M0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM9 3h1v1h-1zM10 3h1v1h-1zM11 3h1v1h-1zM12 3h1v1h-1zM13 3h1v1h-1zM14 3h1v1h-1zM15 3h1v1h-1zM0 4h1v1h-1zM15 4h1v1h-1zM0 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM7 5h1v1h-1zM8 5h1v1h-1zM9 5h1v1h-1zM11 5h1v1h-1zM12 5h1v1h-1zM13 5h1v1h-1zM15 5h1v1h-1zM0 6h1v1h-1zM3 6h1v1h-1zM15 6h1v1h-1zM0 7h1v1h-1zM2 7h1v1h-1zM3 7h1v1h-1zM4 7h1v1h-1zM5 7h1v1h-1zM6 7h1v1h-1zM8 7h1v1h-1zM9 7h1v1h-1zM10 7h1v1h-1zM11 7h1v1h-1zM15 7h1v1h-1zM0 8h1v1h-1zM3 8h1v1h-1zM15 8h1v1h-1zM0 9h1v1h-1zM5 9h1v1h-1zM6 9h1v1h-1zM7 9h1v1h-1zM9 9h1v1h-1zM10 9h1v1h-1zM11 9h1v1h-1zM12 9h1v1h-1zM13 9h1v1h-1zM15 9h1v1h-1zM0 10h1v1h-1zM15 10h1v1h-1zM0 11h1v1h-1zM1 11h1v1h-1zM2 11h1v1h-1zM3 11h1v1h-1zM4 11h1v1h-1zM5 11h1v1h-1zM6 11h1v1h-1zM7 11h1v1h-1zM8 11h1v1h-1zM9 11h1v1h-1zM10 11h1v1h-1zM11 11h1v1h-1zM12 11h1v1h-1zM13 11h1v1h-1zM14 11h1v1h-1zM15 11h1v1h-1z\" fill=\"#000\"/></svg>";
@@ -139,7 +140,8 @@ function $FontBox() {
 	const $numbers = icon_button("Numbered List", localize("Numbered list"), svg16(px("M2 2h2v4H3V3H2zM6 3h8v2H6zM2 7h2v1H3v1h1v1H2v1h2V7zM6 7h8v2H6zM6 11h8v2H6zM2 11h2v1H2v1h2v1H2z")), () => { apply_list(true); });
 	const $rule = icon_button("Rule", localize("A line across (horizontal rule)"), svg16(px("M2 7h12v1H2z", "#808080") + px("M2 8h12v1H2z", "#fff")), () => { insert_rule(); });
 	const $link = icon_button("Link", localize("Link the selected words to a page, a section, or an address (Ctrl+K)"), svg16(px("M6 4h5v1h1v1h1v3h-1v1h-1v1H9v-1h2V9h1V7h-1V6H9V5H6zM3 6h4v1H5v1H4v2h1v1h2v1H3v-1H2V7h1zM5 8h6v1H5z", "#000080")), () => { show_text_link_dialog(); });
-	$block_group.append($style, $bullets, $numbers, $rule, $link);
+	const $insert = icon_button("Insert", localize("Insert a card: a callout, a button, a toggle, a picture, a gallery, one of your site's elements… (or type / on an empty line)"), svg16(px("M7 2h2v5h5v2H9v5H7V9H2V7h5z", "#000080")), () => { show_insert_menu(); });
+	$block_group.append($style, $bullets, $numbers, $rule, $link, $insert);
 	const update_block_tools = () => {
 		const container = is_editing_container();
 		$block_group.toggle(is_editing_block());
@@ -147,6 +149,7 @@ function $FontBox() {
 		$bullets.prop("disabled", !container);
 		$numbers.prop("disabled", !container);
 		$rule.prop("disabled", !container);
+		$insert.prop("disabled", !container);
 		if (container) { $style.val(current_block_style()); }
 	};
 	$G.on("block-editing-changed block-style-changed", update_block_tools);
