@@ -4,9 +4,11 @@
 // Internet Archive's collection of GeoCities GIFs — and click or drag a result onto the canvas to add
 // it as an animated sticker (stickers.js). gifcities.org has no API or CORS, so requests go through
 // the editor Worker's proxy (worker/editor/index.js). A ♥ on each GIF keeps it in the Favorites tab: in this
-// browser (localStorage, by GifCities id) and, signed in with an account, on the account too (GET/POST
-// /auth/favorites) — the two are merged whenever the picker opens or the sign-in changes, so favorites follow
-// the person between devices, and hearts made signed out come along when they sign in.
+// browser (localStorage) and, signed in with an account, on the account too (GET/POST /auth/favorites) — the two
+// are merged whenever the picker opens or the sign-in changes, so favorites follow the person between devices,
+// and hearts made signed out come along when they sign in. A favorite is `source:id` — GifCities today
+// (`gifcities:<ID>`); another store (our own library, say) is one more entry in GIF_SOURCES: how to tell its
+// URLs, and how to make a URL from an id.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { track_app_event as track_event } from "./app-analytics.js";
 import { authorized, current_site, get_site_editor_url, has_account } from "./site-publish.js";
@@ -57,13 +59,45 @@ const PAGE_SIZE = 40;
 const FAVORITES_KEY = "jspaint favorite gifs";
 const MAX_FAVORITES = 300;
 
-/** @typedef {{ id: string, width: number, height: number, at: number }} FavoriteGif - a GifCities id (the proxy serves it) */
+/**
+ * Where GIFs come from. A favorite names its source and the id within it (`gifcities:ABC…`), never a URL — URLs
+ * change with the editor's address, ids don't. To add a store: an entry here (`url` builds the address the picker
+ * shows and adds from; `id_of` recognizes that store's URLs), and its results go through `make_tile` like any other.
+ * @type {Record<string, { label: string, url: (id: string) => string, id_of: (url: string) => string }>}
+ */
+const GIF_SOURCES = {
+	gifcities: {
+		label: "GifCities",
+		url: (id) => `${proxy_base()}/api/gifcities/gif/${id}`,
+		id_of: (url) => /\/api\/gifcities\/gif\/([A-Z0-9]{20,40})(?:[?#]|$)/.exec(url)?.[1] || "",
+	},
+};
+/** @typedef {{ id: string, width: number, height: number, at: number }} FavoriteGif - `id` is `source:id-in-that-source` */
+
+/** A favorite's key for a URL the picker knows, or "" for one it doesn't. @param {string} url */
+function gif_key_of(url) {
+	for (const [source, store] of Object.entries(GIF_SOURCES)) {
+		const id = store.id_of(url);
+		if (id) { return `${source}:${id}`; }
+	}
+	return "";
+}
+/** The address of a favorite, or "" when its store isn't known here. @param {string} key */
+function gif_url_of(key) {
+	const colon = key.indexOf(":");
+	const store = colon === -1 ? null : GIF_SOURCES[key.slice(0, colon)];
+	return store ? store.url(key.slice(colon + 1)) : "";
+}
+/** Favorites from before stores were named are GifCities ids: `gifcities:` them. @param {string} id */
+function qualified(id) {
+	return id.includes(":") ? id : `gifcities:${id}`;
+}
 
 /** @returns {FavoriteGif[]} newest first */
 function load_favorites() {
 	try {
 		const list = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]");
-		return Array.isArray(list) ? list.filter((item) => item && typeof item.id === "string") : [];
+		return Array.isArray(list) ? list.filter((item) => item && typeof item.id === "string").map((item) => ({ ...item, id: qualified(item.id) })) : [];
 	} catch (_error) {
 		return [];
 	}
@@ -125,7 +159,7 @@ function sync_favorites() {
 			const response = await fetch(`${get_site_editor_url()}/auth/favorites`, authorized());
 			if (!response.ok) { return; }
 			/** @type {FavoriteGif[]} */
-			const cloud = (await response.json()).favorites || [];
+			const cloud = ((await response.json()).favorites || []).map((/** @type {FavoriteGif} */ item) => ({ ...item, id: qualified(item.id) }));
 			const local = load_favorites();
 			const cloud_ids = new Set(cloud.map((item) => item.id));
 			const only_here = local.filter((item) => !cloud_ids.has(item.id));
@@ -145,10 +179,6 @@ function sync_favorites() {
 	return syncing_favorites;
 }
 $G.on("site-settings-changed", () => { sync_favorites(); }); // (signing in: the hearts made signed out come along)
-/** The GifCities id in a proxy URL, if it is one. @param {string} url */
-function gif_id_of(url) {
-	return /\/api\/gifcities\/gif\/([A-Z0-9]{20,40})/.exec(url)?.[1] || "";
-}
 
 /** @type {(OSGUI$Window & I$DialogWindow) | null} */
 let $picker = null;
@@ -238,7 +268,7 @@ async function search(query, append = false, { starter = false } = {}) {
  * @param {{ url: string, width: number, height: number }} gif
  */
 function make_tile({ url, width, height }) {
-	const id = gif_id_of(url);
+	const id = gif_key_of(url);
 	const $tile = $(E("span")).addClass("gif-tile").attr({
 		role: "button",
 		tabindex: "0",
@@ -286,7 +316,8 @@ function render_favorites() {
 	const list = load_favorites();
 	$favorites.empty();
 	for (const item of list) {
-		make_tile({ url: `${proxy_base()}/api/gifcities/gif/${item.id}`, width: item.width, height: item.height }).appendTo($favorites);
+		const url = gif_url_of(item.id);
+		if (url) { make_tile({ url, width: item.width, height: item.height }).appendTo($favorites); }
 	}
 	if (!list.length) {
 		$(E("p")).addClass("gif-picker-empty").text(localize("No favorites yet. Click the ♥ on a GIF to keep it here.")).appendTo($favorites);

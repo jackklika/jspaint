@@ -204,10 +204,11 @@ try {
 	assert.equal((await call("/auth/favorites")).status, 401, "sign in first");
 	response = await call("/auth/favorites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ add: [{ id: gif(1), width: 40, height: 30, at: 1000 }, { id: gif(2), width: 50, height: 20, at: 2000 }] }) }, cookies);
 	assert.equal(response.status, 200);
-	assert.deepEqual((await response.json()).favorites.map((f) => [f.id, f.width, f.height, f.at]), [[gif(2), 50, 20, 2000], [gif(1), 40, 30, 1000]]);
-	response = await call("/auth/favorites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remove: [gif(2)], add: [{ id: gif(1), width: 40, height: 30, at: 500 }] }) }, cookies);
-	assert.deepEqual((await response.json()).favorites.map((f) => [f.id, f.at]), [[gif(1), 1000]], "an earlier time doesn't move a favorite back");
+	assert.deepEqual((await response.json()).favorites.map((f) => [f.id, f.width, f.height, f.at]), [[`gifcities:${gif(2)}`, 50, 20, 2000], [`gifcities:${gif(1)}`, 40, 30, 1000]], "a bare GifCities id is kept as gifcities:…");
+	response = await call("/auth/favorites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remove: [`gifcities:${gif(2)}`], add: [{ id: gif(1), width: 40, height: 30, at: 500 }, { id: "library:dividers/rainbow.gif", width: 400, height: 20, at: 3000 }] }) }, cookies);
+	assert.deepEqual((await response.json()).favorites.map((f) => [f.id, f.at]), [["library:dividers/rainbow.gif", 3000], [`gifcities:${gif(1)}`, 1000]], "another store's GIF is fine; an earlier time doesn't move a favorite back");
 	assert.equal((await call("/auth/favorites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ add: [{ id: "not a gif" }] }) }, cookies)).status, 400);
+	assert.equal((await call("/auth/favorites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remove: ["library:dividers/rainbow.gif"] }) }, cookies)).status, 200);
 
 	// Signing out ends the session
 	response = await call("/auth/sign-out", { method: "POST" }, cookies);
@@ -259,14 +260,14 @@ try {
 	await paint.route("**/api/gifcities/gif/*", (route) => route.fulfill({ status: 200, contentType: "image/gif", body: Buffer.from([71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0, 59]) }));
 	await paint.evaluate(() => { [...document.querySelectorAll(".tool")].find((el) => el.getAttribute("title") === "GIF Picker").click(); });
 	await paint.waitForFunction(() => document.querySelectorAll(".gif-picker-results .gif-tile").length === 2, null, { timeout: 15000 });
-	await paint.click(`.gif-tile[data-gif="${gif(7)}"] .gif-heart`);
+	await paint.click(`.gif-tile[data-gif="gifcities:${gif(7)}"] .gif-heart`);
 	await paint.waitForFunction(async () => (await (await fetch("/auth/favorites", { credentials: "include" })).json()).favorites.length === 1, null, { timeout: 10000 });
-	assert.deepEqual(await paint.evaluate(async () => (await (await fetch("/auth/favorites", { credentials: "include" })).json()).favorites.map((f) => f.id)), [gif(7)], "the heart went to the account");
+	assert.deepEqual(await paint.evaluate(async () => (await (await fetch("/auth/favorites", { credentials: "include" })).json()).favorites.map((f) => f.id)), [`gifcities:${gif(7)}`], "the heart went to the account");
 	await paint.evaluate(() => { [...document.querySelectorAll(".gif-picker-window button")].find((b) => b.textContent === "Close")?.click(); });
 	await paint.evaluate(() => { localStorage.removeItem("jspaint favorite gifs"); });
 	await paint.evaluate(() => { [...document.querySelectorAll(".tool")].find((el) => el.getAttribute("title") === "GIF Picker").click(); });
 	await paint.waitForFunction(() => /Favorites ♥ 1/.test(document.querySelector(".gif-picker-tab[data-tab=favorites]")?.textContent || ""), null, { timeout: 15000 });
-	assert.deepEqual(JSON.parse(await paint.evaluate(() => localStorage.getItem("jspaint favorite gifs"))).map((f) => f.id), [gif(7)], "…and came back down");
+	assert.deepEqual(JSON.parse(await paint.evaluate(() => localStorage.getItem("jspaint favorite gifs"))).map((f) => f.id), [`gifcities:${gif(7)}`], "…and came back down");
 	await paint.evaluate(() => { [...document.querySelectorAll(".gif-picker-window button")].find((b) => b.textContent === "Close")?.click(); });
 
 	// A browser that still remembers a (now wrong) site password, reloading a restored session: whoami reports the

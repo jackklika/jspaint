@@ -12,7 +12,8 @@
 //   POST /auth/sites/:name/claim {password}  …or one that has a password, by proving it (once; then it's theirs)
 //   POST /auth/sites/:name/assign {email}    the master key hands a site (root included) to the account with that email
 //   GET  /auth/favorites                     the signed-in account's favorite GIFs (the picker's ♥), newest first
-//   POST /auth/favorites {add, remove}       hearts and un-hearts (add: [{id, width, height, at}], remove: [id]) → the list
+//   POST /auth/favorites {add, remove}       hearts and un-hearts (add: [{id, width, height, at}], remove: [id]) → the list;
+//                                            an id is `source:id-in-that-source` (`gifcities:ABC…`; a bare GifCities id still counts)
 //
 // A user = { id, email, name }; identities = (provider, subject) → user, joined by verified email so a Google
 // sign-in and a later email sign-in land on the same person; owners = site → user. Sessions are random tokens
@@ -283,19 +284,26 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		if (request.method === "GET") { return json({ favorites: await accounts.favorites_of(session.id) }); }
 		if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
 		const body = await request.json().catch(() => ({}));
-		const GIF = /^[A-Z0-9]{20,40}$/;
+		// `source:id` — any store the picker may grow (a bare GifCities id, from before stores were named, is one)
+		const key_of = (/** @type {unknown} */ id) => {
+			if (typeof id !== "string") { return ""; }
+			const key = /^[A-Z0-9]{20,40}$/.test(id) ? `gifcities:${id}` : id;
+			return /^[a-z][a-z0-9-]{0,15}:[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(key) ? key : "";
+		};
 		const size = (/** @type {unknown} */ n) => Math.max(0, Math.min(4000, Math.round(Number(n) || 0)));
 		/** @type {{ id: string, width: number, height: number, at: number }[]} */
 		const add = [];
 		for (const item of Array.isArray(body.add) ? body.add.slice(0, 300) : []) {
-			if (!item || typeof item.id !== "string" || !GIF.test(item.id)) { return json({ error: "add: GifCities ids with width and height" }, 400); }
-			add.push({ id: item.id, width: size(item.width), height: size(item.height), at: Math.min(Date.now(), Math.max(0, Math.round(Number(item.at) || 0))) || Date.now() });
+			const key = item ? key_of(item.id) : "";
+			if (!key) { return json({ error: "add: GIFs as source:id, with width and height" }, 400); }
+			add.push({ id: key, width: size(item.width), height: size(item.height), at: Math.min(Date.now(), Math.max(0, Math.round(Number(item.at) || 0))) || Date.now() });
 		}
 		/** @type {string[]} */
 		const remove = [];
 		for (const id of Array.isArray(body.remove) ? body.remove.slice(0, 300) : []) {
-			if (typeof id !== "string" || !GIF.test(id)) { return json({ error: "remove: GifCities ids" }, 400); }
-			remove.push(id);
+			const key = key_of(id);
+			if (!key) { return json({ error: "remove: GIFs as source:id" }, 400); }
+			remove.push(key);
 		}
 		await accounts.update_favorites(session.id, add, remove);
 		return json({ favorites: await accounts.favorites_of(session.id) });
