@@ -10,7 +10,7 @@ import { $DialogWindow } from "./$ToolWindow.js";
 import { add_block } from "./blocks.js";
 import { escape_html, refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
-import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
+import { are_you_sure, change_url_param, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { begin_loading } from "./loading-veil.js";
 import { is_index, is_page, kb, render_page_tiles } from "./page-tiles.js";
@@ -546,7 +546,68 @@ function sign_out() {
 	}
 }
 
-// ---- pages ----
+// ---- pages: drafts, and switching between them ----
+
+// Every page you open gets its own local session (the #local:… id), and that session is the page's draft: edits are
+// kept there the moment they're made (the autosave), and only Save to My Site publishes them. Switching pages goes
+// back to the page's draft session when there is one, else opens the published page.
+const DRAFTS_KEY = "jspaint site drafts"; // localStorage: { "<site>/<page>": { session, at } }
+
+/** @returns {Record<string, { session: string, at: number }>} */
+function load_drafts() {
+	try {
+		const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+		return drafts && typeof drafts === "object" ? drafts : {};
+	} catch (_error) {
+		return {};
+	}
+}
+/** The current local session's id, from the address. */
+function current_session_id() {
+	return /^#local:([a-z0-9]+)/i.exec(location.hash)?.[1] || "";
+}
+/** @param {string} site @param {string} page @param {string} session */
+function remember_draft(site, page, session) {
+	if (!site || !page || !session) { return; }
+	const drafts = load_drafts();
+	drafts[`${site}/${page}`] = { session, at: Date.now() };
+	const keys = Object.keys(drafts).sort((a, b) => drafts[b].at - drafts[a].at);
+	for (const key of keys.slice(40)) { delete drafts[key]; } // (the newest forty pages; older sessions are still in Manage Storage)
+	try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts)); } catch (_error) { /* full: the page still opens from the site */ }
+}
+/** @param {string} site @param {string} page */
+function draft_session(site, page) {
+	return load_drafts()[`${site}/${page}`]?.session || "";
+}
+$G.on("site-page-opened site-page-restored", (_event, detail) => {
+	const page = detail && detail.page ? String(detail.page) : "";
+	const copy = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.copy_of === "string";
+	if (page && !copy) { remember_draft(load_settings().site, page, current_session_id()); }
+});
+
+/**
+ * Another page of the site (the tabs above the canvas): its draft session, if this browser has one, else the page
+ * as published. Nothing is asked and nothing is lost — the page being left keeps its edits in its own session.
+ * @param {string} path
+ */
+function switch_page(path) {
+	const page = current_site_page_path();
+	if (path === page) { return Promise.resolve(true); }
+	$G.triggerHandler("session-update"); // this page's draft, up to the last stroke
+	saved = true; // (its edits live on in its session, so leaving isn't losing them: no "save changes?")
+	const session = draft_session(load_settings().site, path);
+	if (session && session !== current_session_id()) {
+		change_url_param("local", session); // sessions.js restores the draft, and its page (site-page-restored)
+		return Promise.resolve(true);
+	}
+	return open_page_from_site(path);
+}
+/** The page of the site this document is (not a copy of someone's), or "". */
+function current_site_page_path() {
+	if (!system_file_handle || typeof system_file_handle !== "object" || typeof system_file_handle.site_page !== "string") { return ""; }
+	return typeof system_file_handle.copy_of === "string" ? "" : system_file_handle.site_page;
+}
+
 
 /**
  * Opens a page of the site as the document. Relative assets resolve against the site's files.
@@ -1215,4 +1276,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { SITE_LIMIT, check_sign_in, current_role, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_site, upload_asset, write_file };
+export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site, upload_asset, write_file };

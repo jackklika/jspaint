@@ -95,6 +95,8 @@
 		"domcontentloaded",
 		"noopener",
 		"listbox",
+    "inputtable",
+    "callout",
 		"Tahoma",
 		"Palatino",
 		"Lucida",

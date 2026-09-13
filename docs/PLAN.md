@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-12 — **Page tabs** (Jack: "add pages to the top almost like tabs… if there are more pages than fit, add a […] button that opens up My Pages; all edits should be immediately applied, and only a publish would publish"): the address bar above the canvas is now the site's pages as tabs (`init_page_label` in site-button.js; `.page-tab`, current pressed, `…` → My Site › Pages). Switching is `switch_page` (my-site.js): the page being left keeps its edits in its own local session (remembered per site/page, `jspaint site drafts`), the page being opened comes back from its draft session (`#local:<id>`) or from the site; no "save changes?", nothing published until Save to My Site. Test: `page-tabs.test.mjs`.
+
 - 2026-09-12 — **Where am I** (Jack): the page's address in a slim bar above the canvas area (`.page-path-bar`; desktop and phone; clicking it opens the site view), and the site's name in small type under the globe (`.site-globe-name`).
 
 - 2026-09-12 — **Up to five sites per account, and "my sites" on the globe** (Jack): `MAX_SITES = 5` (auth.js: take/claim refuse with `limit`; assign by the master doesn't count); the globe's site view lists the account's sites (current bold), a click switches (`switch_site`: front page, or My Site), New Site… (`show_new_site_dialog`, sharing `new_site_form` with the Sign In dialog).

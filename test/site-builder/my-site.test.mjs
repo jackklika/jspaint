@@ -108,8 +108,9 @@ await page.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((r
 await page.waitForFunction(() => document.querySelectorAll(".block-layer").length === 2, null, { timeout: 15000 });
 assert.equal(await page.evaluate(() => file_name), "about.html");
 assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "about.html" });
-// The page's address is pinned at the top-left of the canvas area
-assert.equal(await page.$eval(".page-path-label", (el) => el.textContent), `~${site}/about.html`);
+// The bar above the canvas: the site, and its pages as tabs (this one pressed)
+assert.equal(await page.$eval(".page-path-site", (el) => el.textContent), `~${site}/`);
+await page.waitForFunction(() => document.querySelector(".page-tab.current")?.textContent === "about.html", null, { timeout: 10000 });
 
 // The Link tool offers your pages as tiles (signed in): pick one and its address goes in; the heading becomes a link to it
 await select_tool(page, "Pointer");

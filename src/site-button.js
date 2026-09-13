@@ -7,7 +7,7 @@
 import { $DialogWindow } from "./$ToolWindow.js";
 import { $G, E } from "./helpers.js";
 import { end_all_loading } from "./loading-veil.js";
-import { SITE_LIMIT, open_site_from_url, public_url, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_site } from "./my-site.js";
+import { SITE_LIMIT, list_files, open_site_from_url, public_url, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site } from "./my-site.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
 import { ROOT_SITE, site_public_url } from "./site-constants.js";
 import { get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
@@ -186,9 +186,10 @@ async function show_site_view() {
 }
 
 /**
- * The page's address, in a slim bar right above the canvas area (never over the page, and there on a phone too):
- * "~jack/about.html", "coolpaint.world/index.html", a guest's page, a copy of someone's page, or the file's name when
- * it isn't on a site. Clicking it opens the site view.
+ * The bar right above the canvas area: the site's pages as tabs (the current one pressed), so switching is a click —
+ * each page keeps its edits in its own draft session, and only Save to My Site publishes (my-site.js switch_page).
+ * Pages that don't fit go behind a "…" that opens My Pages. A guest's page, a copy of someone's page, or a picture
+ * that isn't on a site shows as one label instead. Never over the page, and there on a phone too.
  */
 function init_page_label() {
 	const area = document.querySelector(".canvas-area");
@@ -199,30 +200,98 @@ function init_page_label() {
 	area.parentNode.insertBefore(column, area);
 	const $bar = $(E("div")).addClass("page-path-bar").appendTo(column);
 	column.append(area);
+	const keep_focus = (/** @type {JQuery.Event} */ e) => { e.preventDefault(); e.stopPropagation(); }; // (a text being edited keeps its caret)
+	const $site = $(E("span")).addClass("page-path-site").appendTo($bar);
+	const $tabs = $(E("div")).addClass("page-tabs").attr({ role: "tablist" }).appendTo($bar);
+	const $more = $(E("button"))
+		.attr({ type: "button", title: localize("All pages (My Pages)"), "aria-label": localize("More pages") })
+		.addClass("page-tabs-more")
+		.text("…")
+		.hide()
+		.appendTo($bar);
+	$more.on("mousedown", keep_focus);
+	$more.on("click", () => { show_my_site_dialog({ tab: "pages" }); });
 	const $label = $(E("button")).attr({ type: "button", title: localize("This page — click for the site view") }).addClass("page-path-label").appendTo($bar);
-	$label.on("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+	$label.on("mousedown", keep_focus);
 	$label.on("click", () => { show_site_view(); });
-	const refresh = () => {
+
+	/** @type {{ site: string, pages: string[], at: number }} */
+	let listed = { site: "", pages: [], at: 0 };
+	/** The site's pages, index.html first (a short cache; a publish or a site change asks again). @param {string} site @param {boolean} force */
+	const load_pages = async (site, force) => {
+		if (!force && listed.site === site && Date.now() - listed.at < 15000) { return listed.pages; }
+		try {
+			const files = (await list_files()).files;
+			const pages = files.map((/** @type {{ path: string }} */ file) => file.path).filter((path) => /\.html?$/i.test(path) && !path.startsWith("versions/"));
+			pages.sort((a, b) => (/^index\.html?$/i.test(a) ? -1 : /^index\.html?$/i.test(b) ? 1 : a.localeCompare(b)));
+			listed = { site, pages, at: Date.now() };
+		} catch (_error) {
+			listed = { site, pages: listed.site === site ? listed.pages : [], at: Date.now() - 10000 }; // (ask again soon)
+		}
+		return listed.pages;
+	};
+	/** Hides the tabs that don't fit (the current one always shows, first if need be), and shows "…" for them. */
+	const fit = () => {
+		const tabs = $tabs[0];
+		$tabs.children().show();
+		$more.hide();
+		if (tabs.scrollWidth <= tabs.clientWidth + 1) { return; }
+		const $current = $tabs.children(".current");
+		if ($current.length && $current.index() > 0) { $tabs.prepend($current); }
+		$more.show();
+		const kids = $tabs.children().toArray();
+		for (let i = kids.length - 1; i > 0 && tabs.scrollWidth > tabs.clientWidth; i--) { kids[i].style.display = "none"; }
+	};
+	let rendered = "";
+	/** @param {string[]} pages @param {string} current */
+	const render_tabs = (pages, current) => {
+		const list = pages.includes(current) ? pages : [current, ...pages];
+		const key = `${current}|${list.join("|")}`;
+		if (key === rendered) { fit(); return; }
+		rendered = key;
+		$tabs.empty();
+		for (const page of list) {
+			const $tab = $(E("button"))
+				.attr({ type: "button", role: "tab", "data-page": page, title: page, "aria-selected": String(page === current) })
+				.addClass("page-tab")
+				.toggleClass("current", page === current)
+				.text(page)
+				.appendTo($tabs);
+			$tab.on("mousedown", keep_focus);
+			$tab.on("click", () => { if (page !== current) { switch_page(page); } });
+		}
+		fit();
+	};
+	/** @param {boolean} [force] - ask the site for its pages again (a publish, a site change) */
+	const refresh = async (force = false) => {
 		const guest = guest_info();
 		const page = current_site_page();
 		const settings = load_settings();
 		const copy_of = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.copy_of === "string" ? system_file_handle.copy_of : "";
-		let text;
-		if (guest) {
-			text = `~${guest.site}/${page || "…"} ${localize("(guest)")}`;
-		} else if (page && copy_of) {
-			text = localize("%1 — a copy of ~%2's", page, copy_of);
-		} else if (page && settings.site) {
-			const site_label = settings.site === ROOT_SITE ? new URL(public_url("")).host : `~${settings.site}`;
-			text = `${site_label}/${page}`;
-		} else {
-			text = `${file_name || localize("untitled")} — ${localize("not on a site")}`;
+		const site_label = settings.site === ROOT_SITE ? new URL(public_url("")).host : `~${settings.site}`;
+		if (guest || copy_of || !page || !settings.site || !is_signed_in()) {
+			// One label: nothing to switch between
+			$site.hide();
+			$tabs.hide();
+			$more.hide();
+			rendered = "";
+			const text = guest ? `~${guest.site}/${page || "…"} ${localize("(guest)")}` :
+				page && copy_of ? localize("%1 — a copy of ~%2's", page, copy_of) :
+					page ? `${site_label}/${page}` : `${file_name || localize("untitled")} — ${localize("not on a site")}`;
+			$label.show().text(text);
+			return;
 		}
-		$label.text(text);
-		$bar.toggleClass("has-site", !!page);
+		$label.hide();
+		$site.show().text(`${site_label}/`);
+		$tabs.show();
+		const pages = await load_pages(settings.site, force);
+		if (current_site_page() !== page || load_settings().site !== settings.site) { return; } // moved on meanwhile
+		render_tabs(pages, page);
 	};
-	$G.on("site-page-opened site-page-restored site-settings-changed session-update history-update", refresh);
-	refresh();
+	$G.on("site-page-opened site-page-restored site-settings-changed", () => { refresh(true); }); // (a switch, a publish)
+	$G.on("session-update history-update", () => { refresh(false); });
+	if (typeof ResizeObserver === "function") { new ResizeObserver(() => { fit(); }).observe($bar[0]); }
+	refresh(true);
 }
 
 /** Call once the toolbox exists (app.js): adds the globe at its bottom. */
@@ -308,6 +377,54 @@ function init_site_button() {
 			text-overflow: ellipsis;
 			cursor: default;
 			text-align: left;
+		}
+		.page-path-site {
+			flex: none;
+			padding: 0 2px 0 4px;
+			font: 11px/16px Arial, Helvetica, sans-serif;
+			color: var(--ButtonText, #000);
+			white-space: nowrap;
+		}
+		.page-tabs {
+			display: flex;
+			align-items: flex-end;
+			gap: 2px;
+			flex: 1 1 auto;
+			min-width: 0;
+			height: 18px;
+			overflow: hidden;
+		}
+		.page-tab {
+			flex: none;
+			max-width: 160px;
+			min-width: 0;
+			height: 16px;
+			padding: 0 8px;
+			font: 11px/14px Arial, Helvetica, sans-serif;
+			color: var(--ButtonText, #000);
+			background: var(--ButtonFace, #c0c0c0);
+			border: 1px solid;
+			border-color: var(--ButtonHilight, #fff) var(--ButtonShadow, #808080) var(--ButtonFace, #c0c0c0) var(--ButtonHilight, #fff);
+			border-radius: 3px 3px 0 0;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			cursor: default;
+		}
+		.page-tab.current {
+			height: 18px;
+			font-weight: bold;
+			background: var(--Window, #fff);
+			border-bottom-color: var(--Window, #fff);
+		}
+		.page-tabs-more {
+			flex: none;
+			width: 22px;
+			height: 16px;
+			padding: 0;
+			margin-left: 2px;
+			font: bold 11px/14px Arial, Helvetica, sans-serif;
+			min-width: 0;
 		}
 		.site-globe {
 			position: relative;
