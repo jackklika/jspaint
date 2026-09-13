@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-12 — **No device-font prompt** (Jack): the Font toolbar no longer calls `queryLocalFonts` (a permission prompt every session); it lists a fixed web-safe set (`WEB_SAFE_FONTS`, `src/$FontBox.js`) — which is also right for pages that visitors see in their own browsers.
+
 - 2026-09-12 — **Storage + loading** (Jack: Storage Error; the account not sticking; the page white then filling in): picture backups moved to IndexedDB (`layer-storage.js`; Manage Storage lists them), `save_settings` recovers from a full localStorage (that's why the Google account never persisted), and `src/loading-veil.js` veils the canvas until a restored session / fresh-visit page is in.
 
 - 2026-09-12 — **Sign in with Google** (branch `auth`; Jack: Google now, email/SMS/passkeys later): `worker/editor/auth.js` (providers table, state cookie, callback, sessions as hashes in the `Accounts` DO, site take/claim, sign-out, same-origin check for cookie auth, dev CORS with credentials), `role_of` + whoami + password route accept sessions; Paint's Sign In dialog (Google button from `/auth/methods`; account mode: pick/create/claim a site), `authorized()` for every editor call, the return from Google (`?signed_in=1`). Test: `google-auth.test.mjs` with a fake Google on :8790 (Node flow + a browser round trip). Live since 2026-09-12 (client ID in wrangler.jsonc, secret on the Worker; Jack signed in as klikajack@gmail.com). Also: the Save dialog needs no password with an account; `POST /auth/sites/:name/assign {email}` (master) hands a site to an account — used to give `root` to Jack's account.

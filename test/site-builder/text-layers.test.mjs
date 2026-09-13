@@ -1,6 +1,15 @@
 import { assert, canvas_box, capture_saves, click_menu_item, open_paint, type_text_box } from "./helpers.mjs";
 
-const { page, close } = await open_paint();
+// (The Font toolbar must never ask the browser for the machine's fonts — that's a permission prompt every session.)
+const { page, close } = await open_paint({
+	init: () => {
+		window.__font_queries = 0;
+		window.queryLocalFonts = () => {
+			window.__font_queries++;
+			return Promise.resolve([]);
+		};
+	},
+});
 const layers = () => page.evaluate(() => (current_history_node.text_layers || []).map((t) => `${t.id}:"${t.text}"@${t.x},${t.y} ${t.font.family} href=${t.href}`));
 
 await type_text_box(page, "Hello web", { x: 50, y: 50, tool: "Web Text" });
@@ -23,6 +32,11 @@ await page.waitForTimeout(80);
 await page.mouse.click(...middle);
 await page.waitForSelector(".textbox", { timeout: 5000 });
 assert.equal(await page.evaluate(() => textbox.$editor.val()), "Hello web");
+// The Fonts box offers a fixed, web-safe list (the classic eight above a separator), never the device's fonts
+assert.equal(await page.evaluate(() => window.__font_queries), 0, "queryLocalFonts is never called");
+assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".font-box select:not(.block-style) option")].filter((o) => !o.disabled).map((o) => `${o.textContent}=${o.value}`)),
+	["Arial", "Comic Sans MS", "Courier New", "Georgia", "Impact", "Times New Roman", "Trebuchet MS", "Verdana", "Arial Black", "Lucida Console", "Lucida Sans Unicode", "Palatino Linotype", "Tahoma"].map((name) => `${name}="${name}"`));
+assert.equal(await page.evaluate(() => document.querySelector(".font-box select:not(.block-style)").value), '"Arial"');
 await page.keyboard.press("End");
 await page.keyboard.type(" page");
 const c = await canvas_box(page);

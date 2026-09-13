@@ -167,7 +167,7 @@ Reuse jspaint's primitives rather than replacing them:
 - **Layers window** — list, reorder, hide, flatten. Bitmap stays the base.
 - **History** — `gif_layers` / `text_layers` snapshots on history nodes (the `textbox_*` fields are the precedent); blobs in a `Map` by id.
 - **Document I/O** — collage ⇄ the §3.3 markup + PNG + GIF blobs. Local save: a folder-ish `.zip` or a single `.html` with data URLs. Later, the same payload is what the editor PUTs to R2.
-- **Fonts** — the FontBox lists the classic web-safe set first (Comic Sans MS, Times New Roman, Arial, Impact, Courier New, Georgia, Verdana, Trebuchet MS).
+- **Fonts** — the FontBox offers a fixed web-safe list and nothing from the device: the classic eight (Arial, Comic Sans MS, Courier New, Georgia, Impact, Times New Roman, Trebuchet MS, Verdana) above a separator, then Arial Black, Lucida Console, Lucida Sans Unicode, Palatino Linotype, Tahoma (`WEB_SAFE_FONTS` in `src/$FontBox.js`). It never calls `queryLocalFonts` (2026-09-12: that put a "use fonts on your device?" permission prompt in front of Jack every session), and a page's font outside the list still shows up in the box when its text is edited.
 
 ## 7. GIF export
 

@@ -8,47 +8,14 @@ import { apply_block_style, apply_list, current_block_style, insert_rule, is_edi
 // The Marquee toggle's icon: a box of text with a scroll arrow (same size as the B/I/U sprites).
 const MARQUEE_ICON_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\"><rect x=\"1\" y=\"4\" width=\"14\" height=\"7\" fill=\"#fff\"/><path d=\"M0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM9 3h1v1h-1zM10 3h1v1h-1zM11 3h1v1h-1zM12 3h1v1h-1zM13 3h1v1h-1zM14 3h1v1h-1zM15 3h1v1h-1zM0 4h1v1h-1zM15 4h1v1h-1zM0 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM7 5h1v1h-1zM8 5h1v1h-1zM9 5h1v1h-1zM11 5h1v1h-1zM12 5h1v1h-1zM13 5h1v1h-1zM15 5h1v1h-1zM0 6h1v1h-1zM3 6h1v1h-1zM15 6h1v1h-1zM0 7h1v1h-1zM2 7h1v1h-1zM3 7h1v1h-1zM4 7h1v1h-1zM5 7h1v1h-1zM6 7h1v1h-1zM8 7h1v1h-1zM9 7h1v1h-1zM10 7h1v1h-1zM11 7h1v1h-1zM15 7h1v1h-1zM0 8h1v1h-1zM3 8h1v1h-1zM15 8h1v1h-1zM0 9h1v1h-1zM5 9h1v1h-1zM6 9h1v1h-1zM7 9h1v1h-1zM9 9h1v1h-1zM10 9h1v1h-1zM11 9h1v1h-1zM12 9h1v1h-1zM13 9h1v1h-1zM15 9h1v1h-1zM0 10h1v1h-1zM15 10h1v1h-1zM0 11h1v1h-1zM1 11h1v1h-1zM2 11h1v1h-1zM3 11h1v1h-1zM4 11h1v1h-1zM5 11h1v1h-1zM6 11h1v1h-1zM7 11h1v1h-1zM8 11h1v1h-1zM9 11h1v1h-1zM10 11h1v1h-1zM11 11h1v1h-1zM12 11h1v1h-1zM13 11h1v1h-1zM14 11h1v1h-1zM15 11h1v1h-1z\" fill=\"#000\"/></svg>";
 
-const eachFont = async (callback, afterAllCallback) => {
-	function localFontAccessUnavailable() {
-		FontDetective.each(callback);
-		FontDetective.all(afterAllCallback);
-	}
-	if (window.queryLocalFonts) {
-		let availableFonts;
-		try {
-			availableFonts = await window.queryLocalFonts();
-		} catch (error) {
-			console.log("queryLocalFonts failed:", error, "\nFalling back to FontDetective.");
-			localFontAccessUnavailable();
-			return;
-		}
-		if (availableFonts.length === 0) {
-			console.log("queryLocalFonts returned no fonts; falling back to FontDetective.");
-			localFontAccessUnavailable();
-			return;
-		}
-		const familyNames = new Set();
-		for (const font of availableFonts) {
-			if (familyNames.has(font.family)) {
-				continue;
-			}
-			familyNames.add(font.family);
-			callback({
-				name: font.family,
-				toString() {
-					return '"' + this.name.replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + '"';
-				},
-			});
-			// This class is not exported by FontDetective.
-			// That said, this queryLocalFonts functionality should be moved into FontDetective.
-			// callback(new FontDetective.Font(font.family));
-		}
-		afterAllCallback();
-	} else {
-		console.log("queryLocalFonts unavailable; falling back to FontDetective.");
-		localFontAccessUnavailable();
-	}
-};
+// The fonts on offer: the classic web-safe set, and nothing from the device. Web text and page elements render in the
+// visitor's browser, so these are the ones that look the same everywhere — and asking the browser for the machine's
+// fonts (queryLocalFonts) puts a permission prompt in front of people every session.
+const CLASSIC_FONTS = ["Arial", "Comic Sans MS", "Courier New", "Georgia", "Impact", "Times New Roman", "Trebuchet MS", "Verdana"];
+const MORE_FONTS = ["Arial Black", "Lucida Console", "Lucida Sans Unicode", "Palatino Linotype", "Tahoma"];
+const WEB_SAFE_FONTS = [...CLASSIC_FONTS, ...MORE_FONTS];
+/** The quoted form the Text tool keeps ("Arial"), as FontDetective used to report it. @param {string} name */
+const quoted = (name) => `"${name.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
 
 /**
  * @returns {OSGUI$Window}
@@ -197,62 +164,20 @@ function $FontBox() {
 	};
 
 	const originalFamily = text_tool_font.family;
-	// The classic web-safe fonts go first, in this order, above a separator; everything else is alphabetical below it.
-	// (Web text layers render in the visitor's browser, so these are the ones that look the same everywhere.)
-	const classic_families = ["Arial", "Comic Sans MS", "Courier New", "Georgia", "Impact", "Times New Roman", "Trebuchet MS", "Verdana"];
-	const $separator = $(E("option")).prop("disabled", true).text("──────────").addClass("font-separator");
-	eachFont((font) => {
-		const $option = $(E("option"));
-		$option.val(font).text(font.name);
-		const classic_index = classic_families.indexOf(font.name);
-		if (classic_index !== -1) {
-			if (!$separator.parent().length) {
-				$family.prepend($separator);
-			}
-			// Insert among the classic fonts, in classic order
-			/** @type {JQuery<HTMLElement>} */
-			let $before = $separator;
-			for (const $classic of $family.children("option.classic-font").toArray().map((el) => $(el))) {
-				if (classic_families.indexOf($classic.text()) > classic_index) {
-					$before = $classic;
-					break;
-				}
-			}
-			$option.addClass("classic-font").insertBefore($before);
-		} else {
-			// Insert in alphabetical order, after the separator
-			const $options = $family.children("option").not(".classic-font").not(".font-separator");
-			let i = 0;
-			for (; i < $options.length; i++) {
-				if ($options.eq(i).text().localeCompare(font.name) > 0) {
-					break;
-				}
-			}
-			if ($options.eq(i).length) {
-				$options.eq(i).before($option);
-			} else {
-				$family.append($option);
-			}
-		}
-		// Select the first known-available font, just in case FontDetective.each is slow.
-		if (!text_tool_font.family) {
-			update_font();
-		}
-	}, () => {
-		// All fonts have been added to the list. Now we can select the font — the one in use right now, which may
-		// have changed since this box was created (a page element being edited reports the font at its caret).
-		$family.val(text_tool_font.family || originalFamily);
-		// Liberation Sans is designed to be metrically compatible with Arial,
-		// and is available in free operating systems like Ubuntu.
-		if (!$family.val()) {
-			$family.val('"Liberation Sans"');
-		}
-		// Fallback to the first font in the list. At least it's something.
-		if (!$family.val()) {
-			$family.val($family.children("option").eq(0).val());
-		}
-		update_font();
-	});
+	// The classic fonts first, in this order, above a separator; the rest below it
+	for (const name of CLASSIC_FONTS) {
+		$(E("option")).val(quoted(name)).text(name).addClass("classic-font").appendTo($family);
+	}
+	$(E("option")).prop("disabled", true).text("──────────").addClass("font-separator").appendTo($family);
+	for (const name of MORE_FONTS) {
+		$(E("option")).val(quoted(name)).text(name).appendTo($family);
+	}
+	// The font in use right now (a page element being edited reports the font at its caret), else the first
+	$family.val(text_tool_font.family || originalFamily);
+	if (!$family.val()) {
+		$family.val($family.children("option").eq(0).val());
+	}
+	update_font();
 
 	if (text_tool_font.family) {
 		$family.val(text_tool_font.family);
@@ -336,5 +261,5 @@ function $FontBox() {
 	}
 }
 
-export { $FontBox };
+export { $FontBox, WEB_SAFE_FONTS };
 
