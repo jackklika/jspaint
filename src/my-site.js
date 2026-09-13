@@ -12,6 +12,7 @@ import { escape_html, refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
 import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
+import { begin_loading } from "./loading-veil.js";
 import { is_index, is_page, kb, render_page_tiles } from "./page-tiles.js";
 import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, is_hosted_editor, site_public_url } from "./site-constants.js";
 import { get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
@@ -41,6 +42,10 @@ const SIGNED_IN_KEY = "jspaint signed in"; // sessionStorage: just back from Goo
 // A plain visit (no #local:… session to restore, captured before sessions.js assigns one): signed in, Paint opens
 // your site's front page rather than a blank picture — edit.<domain> is where you edit your site.
 const FRESH_VISIT = !location.hash;
+// A fresh visit that will open a page (your site's front page, or the domain's as a copy): the canvas stays veiled
+// until it's in, rather than a blank page that then fills (open_site_from_url ends it)
+/** @type {(() => void) | null} */
+let fresh_visit_loading = FRESH_VISIT && (is_signed_in() || has_account() || is_hosted_editor()) ? begin_loading(localize("Loading your page…")) : null;
 const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.html?$/;
 (() => {
 	const params = new URLSearchParams(location.search);
@@ -71,6 +76,14 @@ const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9.
  * doesn't ask again.
  */
 async function open_site_from_url() {
+	try {
+		await open_site_from_url_inner();
+	} finally {
+		fresh_visit_loading?.();
+		fresh_visit_loading = null;
+	}
+}
+async function open_site_from_url_inner() {
 	/** @type {{ site: string, page: string } | null} */
 	let entry = null;
 	try {
@@ -86,8 +99,9 @@ async function open_site_from_url() {
 		// Back from Google: the account's site (its front page), or — no site yet — the dialog that makes one
 		if (await check_sign_in({ probe: true })) {
 			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); } else { show_my_site_dialog(); }
-		} else if (has_account() && await show_sign_in_dialog()) {
-			show_my_site_dialog();
+		} else if (has_account()) {
+			fresh_visit_loading?.();
+			if (await show_sign_in_dialog()) { show_my_site_dialog(); }
 		}
 		return;
 	}
@@ -112,6 +126,7 @@ async function open_site_from_url() {
 		return;
 	}
 	if (await open_page_copy(entry.site, entry.page || "index.html")) { return; }
+	fresh_visit_loading?.();
 	if (!await show_sign_in_dialog({ site: entry.site }) || load_settings().site !== entry.site) { return; }
 	if (entry.page && await open_page_from_site(entry.page)) { return; }
 	show_my_site_dialog();

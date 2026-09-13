@@ -3,7 +3,7 @@
 import { $DialogWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
 import { E, is_discord_embed } from "./helpers.js";
-import { remove_layers_sidecar } from "./layer-storage.js";
+import { list_backup_images, remove_backup_image, remove_layers_sidecar } from "./layer-storage.js";
 import { showMessageBox } from "./msgbox.js";
 
 /** @type {OSGUI$Window & I$DialogWindow} */
@@ -57,7 +57,8 @@ function manage_storage() {
 		$storage_manager.close();
 	});
 
-	const addRow = (k, imgSrc) => {
+	/** @param {string} k - "image#<session id>" @param {string} imgSrc @param {() => void} [remove_backup] - IndexedDB, rather than localStorage */
+	const addRow = (k, imgSrc, remove_backup) => {
 		const $tr = $(E("tr")).appendTo($table);
 
 		const $img = $(E("img")).attr({ src: imgSrc }).addClass("thumbnail-img");
@@ -82,7 +83,7 @@ function manage_storage() {
 			$tr.prev().find(".remove-button").focus();
 			$tr.next().find(".remove-button").focus();
 
-			localStorage.removeItem(k);
+			if (remove_backup) { remove_backup(); } else { localStorage.removeItem(k); }
 			remove_layers_sidecar(k.replace("image#", ""));
 			$tr.remove();
 			if ($table.find("tr").length == 0) {
@@ -115,9 +116,23 @@ function manage_storage() {
 					}
 				} catch (_error) { /* ignore */ }
 				addRow(k, v);
+				$table.find("tr").last().attr("data-session", k.replace("image#", ""));
 			}
 		}
 	}
+
+	// Backups made since the move to IndexedDB (layer-storage.js): listed with the older localStorage ones
+	list_backup_images().then((backups) => {
+		if ($storage_manager.closed) { return; }
+		for (const backup of backups) {
+			const id = backup.session_id;
+			if ($table.find(`tr[data-session="${id}"]`).length) { continue; }
+			addRow(`image#${id}`, URL.createObjectURL(backup.blob), () => { remove_backup_image(id); });
+			$table.find("tr").last().attr("data-session", id);
+		}
+		if (localStorageAvailable && $table.find("tr").length == 0) { $message.html("<p>All clear!</p>"); }
+		$storage_manager.find(".remove-button").first().focus();
+	}).catch(() => { /* no IndexedDB: the localStorage rows are all there is */ });
 
 	if (!localStorageAvailable) {
 		// @TODO: DRY with similar message

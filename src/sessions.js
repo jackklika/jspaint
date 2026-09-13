@@ -4,12 +4,13 @@
 /* global $app, $canvas_area, localize, magnification, main_canvas, main_ctx, redos, undos */
 import { $DialogWindow } from "./$ToolWindow.js";
 // import { localize } from "./app-localization.js";
-import { change_url_param, get_uris, load_image_from_uri, open_from_image_info, redo, reset_file, show_error_message, show_resource_load_error_message, undo, undoable, update_title } from "./functions.js";
+import { change_url_param, get_uris, load_image_from_uri, open_from_image_info, read_image_file, redo, reset_file, show_error_message, show_resource_load_error_message, undo, undoable, update_title } from "./functions.js";
 import { $G, debounce, get_help_folder_icon, image_data_match, is_discord_embed, make_canvas, to_canvas_coords } from "./helpers.js";
 import { storage_quota_exceeded } from "./manage-storage.js";
 import { showMessageBox } from "./msgbox.js";
 import { localStore } from "./storage.js";
-import { restore_layers_sidecar, save_layers_sidecar } from "./layer-storage.js";
+import { get_backup_image, put_backup_image, restore_layers_sidecar, save_layers_sidecar } from "./layer-storage.js";
+import { begin_loading } from "./loading-veil.js";
 
 const log = (...args) => {
 	window.console?.log(...args);
@@ -122,18 +123,28 @@ class LocalSession {
 				return;
 			}
 			log(`Saving image to storage: ${ls_key}`);
-			localStore.set(ls_key, main_canvas.toDataURL("image/png"), (err) => {
-				if (err) {
-					// @ts-ignore (quotaExceeded is added by storage.js)
-					if (err.quotaExceeded) {
-						storage_quota_exceeded();
-					} else {
-						// e.g. localStorage is disabled
-						// (or there's some other error?)
-						// @TODO: show warning with "Don't tell me again" type option
+			// The picture goes to IndexedDB as a PNG blob (layer-storage.js): localStorage's ~5 MB filled up with a few
+			// big pages. Without IndexedDB, localStorage as before.
+			const to_local_storage = () => {
+				localStore.set(ls_key, main_canvas.toDataURL("image/png"), (err) => {
+					if (err) {
+						// @ts-ignore (quotaExceeded is added by storage.js)
+						if (err.quotaExceeded) {
+							storage_quota_exceeded();
+						} else {
+							// e.g. localStorage is disabled
+							// (or there's some other error?)
+							// @TODO: show warning with "Don't tell me again" type option
+						}
 					}
-				}
-			});
+				});
+			};
+			main_canvas.toBlob((blob) => {
+				if (!blob) { to_local_storage(); return; }
+				put_backup_image(session_id, blob).then(() => {
+					try { localStorage.removeItem(ls_key); } catch (_error) { /* ignore */ } // (an older backup here is superseded — and was taking the room)
+				}, () => { to_local_storage(); });
+			}, "image/png");
 			// Stickers and text layers ride along in a sidecar entry (layer-storage.js).
 			save_layers_sidecar(session_id, (err) => {
 				// @ts-ignore (quotaExceeded is added by storage.js)
@@ -143,8 +154,17 @@ class LocalSession {
 			});
 		};
 		this.save_image_to_storage_soon = debounce(this.save_image_to_storage_immediately, 100);
-		localStore.get(ls_key, (err, uri) => {
+		// While the picture and its layers come back, the canvas area shows "Loading…" rather than a blank page
+		const loaded = begin_loading();
+		/** @param {ImageInfo} info */
+		const open_backup = (info) => {
+			open_from_image_info(info, () => {
+				restore_layers_sidecar(session_id).finally(loaded);
+			}, loaded, true, true);
+		};
+		const from_local_storage = () => localStore.get(ls_key, (err, uri) => {
 			if (err) {
+				loaded();
 				if (localStorageAvailable) {
 					show_error_message("Failed to retrieve image from local storage.", err);
 				} else {
@@ -155,16 +175,28 @@ class LocalSession {
 				}
 			} else if (uri) {
 				load_image_from_uri(uri).then((info) => {
-					open_from_image_info(info, () => {
-						restore_layers_sidecar(session_id);
-					}, null, true, true);
+					open_backup(info);
+					this.save_image_to_storage_soon(); // (moves the backup to IndexedDB)
 				}, (error) => {
+					loaded();
 					show_error_message("Failed to open image from local storage.", error);
 				});
 			} else {
+				loaded();
 				// no uri so lets save the blank canvas
 				this.save_image_to_storage_soon();
 			}
+		});
+		get_backup_image(session_id).catch(() => null).then((blob) => {
+			if (!blob) { from_local_storage(); return; } // (an older backup, or none)
+			read_image_file(blob, (error, info) => {
+				if (error) {
+					loaded();
+					show_error_message("Failed to open image from local storage.", error);
+					return;
+				}
+				open_backup(info);
+			});
 		});
 		$G.on("session-update.session-hook", () => {
 			this.save_image_to_storage_soon();

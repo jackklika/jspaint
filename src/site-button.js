@@ -6,6 +6,7 @@
 // spinning earth: continents scroll behind a round pixel mask (and hold still for prefers-reduced-motion).
 import { $DialogWindow } from "./$ToolWindow.js";
 import { $G, E } from "./helpers.js";
+import { end_all_loading } from "./loading-veil.js";
 import { open_site_from_url, public_url, show_my_site_dialog, show_sign_in_dialog, sign_out } from "./my-site.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
 import { site_public_url } from "./site-constants.js";
@@ -163,7 +164,11 @@ function init_site_button() {
 	$G.on("site-page-opened site-page-restored site-settings-changed", refresh_title);
 	refresh_title();
 	// Sent here by edit.<domain>/~name? Open that site (after a pending share-link join, which runs at 400 ms).
-	$G.one("app-ready", () => { setTimeout(() => { if (!guest_info()) { open_site_from_url(); } }, 300); }); // after a share-link join
+	$G.one("app-ready", () => {
+		setTimeout(() => { // after a share-link join
+			if (guest_info()) { end_all_loading(); } else { open_site_from_url(); }
+		}, 300);
+	});
 
 	$("<style>").text(`
 		.site-globe-button {

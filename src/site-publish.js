@@ -41,9 +41,22 @@ function load_settings() {
 
 /** @param {PublishSettings} settings */
 function save_settings(settings) {
+	const json = JSON.stringify({ ...settings, secret: settings.remember_secret ? settings.secret : "" });
 	try {
-		localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, secret: settings.remember_secret ? settings.secret : "" }));
-	} catch (_error) { /* ignore */ }
+		localStorage.setItem(SETTINGS_KEY, json);
+	} catch (_error) {
+		// localStorage is full — of picture backups from before they moved to IndexedDB (layer-storage.js). Those are
+		// legacy now (all but this session's, in case IndexedDB is off): make room and try once more.
+		const current = /^#local:([a-z0-9]+)/.exec(location.hash)?.[1];
+		try {
+			for (const key of Object.keys(localStorage)) {
+				if (key.startsWith("image#") && key !== `image#${current}`) { localStorage.removeItem(key); }
+			}
+			localStorage.setItem(SETTINGS_KEY, json);
+		} catch (error) {
+			window.console?.warn("Couldn't save the site settings: local storage is full.", error);
+		}
+	}
 	$G.triggerHandler("site-settings-changed"); // e.g. the toolbox globe's tooltip
 }
 

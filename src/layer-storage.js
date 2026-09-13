@@ -63,6 +63,35 @@ async function with_store(mode, operate) {
 
 /** @param {string} session_id */
 const sidecar_key = (session_id) => `layers#${session_id}`;
+/** @param {string} session_id */
+const backup_key = (session_id) => `image#${session_id}`;
+
+// ---- the picture's backup (sessions.js): a PNG blob here rather than a data URL in localStorage, whose ~5 MB fills up ----
+
+/** @param {string} session_id @param {Blob} blob */
+async function put_backup_image(session_id, blob) {
+	await with_store("readwrite", (store) => store.put({ version: 1, saved: Date.now(), blob }, backup_key(session_id)));
+}
+/** @param {string} session_id @returns {Promise<Blob | null>} */
+async function get_backup_image(session_id) {
+	const record = await with_store("readonly", (store) => store.get(backup_key(session_id)));
+	return record && record.blob instanceof Blob ? record.blob : null;
+}
+/** @param {string} session_id */
+async function remove_backup_image(session_id) {
+	await with_store("readwrite", (store) => store.delete(backup_key(session_id)));
+}
+/** Every backed-up picture, newest first. @returns {Promise<{ session_id: string, saved: number, blob: Blob }[]>} */
+async function list_backup_images() {
+	const keys = /** @type {IDBValidKey[]} */ (await with_store("readonly", (store) => store.getAllKeys()));
+	const backups = [];
+	for (const key of keys) {
+		if (typeof key !== "string" || !key.startsWith("image#")) { continue; }
+		const record = await with_store("readonly", (store) => store.get(key));
+		if (record && record.blob instanceof Blob) { backups.push({ session_id: key.slice("image#".length), saved: Number(record.saved) || 0, blob: record.blob }); }
+	}
+	return backups.sort((a, b) => b.saved - a.saved);
+}
 
 /**
  * @param {Blob} blob
@@ -195,4 +224,4 @@ function remove_layers_sidecar(session_id) {
 	with_store("readwrite", (store) => store.delete(key)).catch(() => {});
 }
 
-export { remove_layers_sidecar, restore_layers_sidecar, save_layers_sidecar };
+export { get_backup_image, list_backup_images, put_backup_image, remove_backup_image, remove_layers_sidecar, restore_layers_sidecar, save_layers_sidecar };

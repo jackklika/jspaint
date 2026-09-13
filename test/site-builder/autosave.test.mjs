@@ -13,19 +13,22 @@ const snapshot = () => page.evaluate(() => ({
 	text: (current_history_node.text_layers || []).map((t) => `${t.text}@${t.x},${t.y}`),
 }));
 const before = await snapshot();
-// The sidecar lives in IndexedDB (sticker blobs), not localStorage (quota).
-assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("layers#")).length), 0);
-assert.equal(await page.evaluate(() => new Promise((resolve) => {
+// The sidecar (sticker blobs) and the picture's backup live in IndexedDB, not localStorage (quota).
+assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("layers#") || k.startsWith("image#")).length), 0, "nothing big in localStorage");
+const stored_keys = () => page.evaluate(() => new Promise((resolve) => {
 	const open = indexedDB.open("jspaint-site-builder");
 	open.onsuccess = () => {
 		const request = open.result.transaction("layers").objectStore("layers").getAllKeys();
-		request.onsuccess = () => resolve(request.result.filter((k) => String(k).startsWith("layers#")).length);
+		request.onsuccess = () => resolve(request.result.map((k) => String(k).replace(/#.*$/, "#")).sort());
 	};
-})), 1);
+}));
+assert.deepEqual(await stored_keys(), ["image#", "layers#"]);
 
 await page.reload({ waitUntil: "domcontentloaded" });
 await page.waitForSelector(".main-canvas", { timeout: 60000 });
 await page.waitForFunction(() => document.querySelectorAll(".sticker").length === 1 && document.querySelectorAll(".text-layer").length === 1, null, { timeout: 15000 });
+// The canvas was veiled ("Loading…") until the picture and its layers were in; now it isn't
+await page.waitForFunction(() => !document.body.classList.contains("page-loading") && !document.querySelector(".page-loading-panel"), null, { timeout: 15000 });
 await page.waitForTimeout(300);
 const after = await snapshot();
 assert.equal(after.hash, before.hash, "same session");
