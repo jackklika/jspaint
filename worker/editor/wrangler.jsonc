@@ -45,7 +45,7 @@
 		// secret). Empty = the button doesn't show. Made in the Google Cloud console (project coolpaintworld):
 		// OAuth consent screen (external, scopes openid/email/profile), then a Web application client with the
 		// redirect URI https://edit.coolpaint.world/auth/google/callback. See docs/DEPLOY.md.
-		"GOOGLE_CLIENT_ID": ""
+		"GOOGLE_CLIENT_ID": "417076939978-dr3j0nbdubj42ool8prtqq5h8umhm9ra.apps.googleusercontent.com"
 	}
 	// Secret (not in config): SITE_EDIT_SECRET (the master key) — `wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`.
 	// Site passwords are minted with it: `npm run site-password <site>` (writes editor/.passwords/<site>.txt, gitignored).
