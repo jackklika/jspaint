@@ -1,10 +1,12 @@
 // @ts-check
 /* global localize */
 // The page tools: the second half of the toolbox. A Pointer for selecting, moving, and editing elements,
-// one tool per kind of page element (text box, section, divider, GIF, image, table, box, guestbook, counter,
-// music, folder view, contents, raw HTML), and Link, which links the selected element or words. Element tools
+// one tool per kind of page element (text box, section, divider, GIF, image, table, guestbook, counter,
+// last updated, folder view, contents), and Link, which links the selected element or words. Element tools
 // work like the Text tool: click, or drag out a box, where the element should go. See blocks.js for what an
 // element is and block-kinds.js for the kinds. Kept to an even count: the toolbox is two columns.
+// (Colored Box, Music, and raw HTML lost their tools on 2026-09-13 — Jack; the kinds stay for pages that have them,
+// and Page › Insert › Raw HTML remains for the determined.)
 import { add_block } from "./blocks.js";
 import { link_tool } from "./element-link.js";
 import { E } from "./helpers.js";
@@ -52,6 +54,8 @@ const ICONS = {
 	html: svg('<path d="M5 4v1H4v1H3v1H2v2h1v1h1v1h1v1H4v-1H3v-1H2V9H1V7h1V6h1V5h1V4zM11 4v1h1v1h1v1h1v2h-1v1h-1v1h-1v1h1v-1h1v-1h1V9h1V7h-1V6h-1V5h-1V4z" fill="#000080"/><path d="M9 3h1L7 13H6z" fill="#000"/>'),
 	// two chain links (the Font toolbar's link button wears the same glyph)
 	link: svg('<path d="M6 4h5v1h1v1h1v3h-1v1h-1v1H9v-1h2V9h1V7h-1V6H9V5H6zM3 6h4v1H5v1H4v2h1v1h2v1H3v-1H2V7h1zM5 8h6v1H5z" fill="#000080"/>'),
+	// a clock: "last updated"
+	updated: svg('<circle cx="8" cy="8" r="6.5" fill="#fff" stroke="#000"/><rect x="8" y="3" width="1" height="5" fill="#000"/><rect x="8" y="8" width="4" height="1" fill="#000080"/><rect x="7" y="7" width="2" height="2" fill="#000"/>'),
 	// a contents list: a title line, then indented entries
 	toc: svg('<rect x="2" y="2" width="12" height="2" fill="#000"/><rect x="4" y="6" width="2" height="1" fill="#000080"/><rect x="7" y="6" width="7" height="1" fill="#000"/><rect x="4" y="9" width="2" height="1" fill="#000080"/><rect x="7" y="9" width="5" height="1" fill="#000"/><rect x="4" y="12" width="2" height="1" fill="#000080"/><rect x="7" y="12" width="7" height="1" fill="#000"/>'),
 };
@@ -143,13 +147,11 @@ const page_tools = [
 		$options: $(E("div")),
 	},
 	element_tool("table", "table", localize("Table"), localize("Places a table on the page. Click into a cell to type."), ["table", "add table", "insert table", "grid"]),
-	element_tool("box", "box", localize("Colored Box"), localize("Places a colored box with a border you can type in."), ["box", "colored box", "add box", "text box with border", "panel"]),
 	element_tool("x-guestbook", "guestbook", localize("Guestbook"), localize("Places a guestbook visitors can sign. Entries are kept by your site."), ["guestbook", "guest book", "add guestbook", "sign my guestbook"]),
-	element_tool("x-counter", "counter", localize("Visitor Counter"), localize("Places a visitor counter that counts up on the published page."), ["counter", "visitor counter", "hit counter", "add counter"]),
-	element_tool("x-music", "music", localize("Music"), localize("Places background music with a play button on the published page."), ["music", "add music", "background music", "add song", "midi"]),
-	element_tool("x-folder", "folder", localize("Folder View"), localize("Lists the pages in a folder of your site (your posts, say) on the published page, newest first."), ["folder", "folder view", "list of pages", "posts list", "add posts list", "blog index", "add folder view"]),
-	element_tool("x-toc", "toc", localize("Contents"), localize("Lists the page's sections, each a link to it, on the published page."), ["contents", "table of contents", "add contents", "section list", "toc"]),
-	element_tool("raw", "html", localize("HTML"), localize("Places a box of raw HTML on the page. Anything goes (except scripts)."), ["html", "raw html", "add html", "custom html", "code"]),
+	element_tool("x-counter", "counter", localize("Visitor Counter"), localize("Places a visitor counter that counts up with each visit."), ["counter", "visitor counter", "hit counter", "add counter"]),
+	element_tool("x-updated", "updated", localize("Last Updated"), localize("Places a \"last updated\" stamp that follows your saves."), ["last updated", "updated", "add last updated", "date stamp", "updated stamp"]),
+	element_tool("x-folder", "folder", localize("Folder View"), localize("Lists the pages in a folder of your site (your posts, say), newest first. Double-click it to pick the folder."), ["folder", "folder view", "list of pages", "posts list", "add posts list", "blog index", "add folder view"]),
+	element_tool("x-toc", "toc", localize("Contents"), localize("Lists the page's sections, each a link to it."), ["contents", "table of contents", "add contents", "section list", "toc"]),
 ];
 
 export { TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_LINK, TOOL_POINTER, block_tool_id, page_tools };

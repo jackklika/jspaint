@@ -27,9 +27,10 @@ assert.deepEqual(tool_titles.slice(0, 16), ["Free-Form Select", "Select", "Erase
 assert.deepEqual(tool_titles.slice(16, 23), ["---", "Pointer", "Text Box", "Web Text", "Section", "Divider", "Link"]);
 assert.ok(tool_titles.includes("Folder View") && tool_titles.includes("Contents"), "the blog index and contents elements have tools");
 assert.equal((tool_titles.length - 17) % 2, 0, "an even number of page tools: no empty cell");
-assert.ok(tool_titles.includes("GIF Picker") && tool_titles.includes("Guestbook") && tool_titles.includes("HTML"), tool_titles.join(","));
+assert.ok(tool_titles.includes("GIF Picker") && tool_titles.includes("Guestbook") && tool_titles.includes("Last Updated"), tool_titles.join(","));
+assert.ok(!tool_titles.includes("HTML") && !tool_titles.includes("Colored Box") && !tool_titles.includes("Music"), "no raw HTML, colored box, or music tools (2026-09-13)");
 assert.ok(!tool_titles.includes("Heading") && !tool_titles.includes("Marquee"), "no separate Heading/Marquee tools");
-assert.equal(await page.evaluate(() => document.querySelectorAll(".tool-icon.custom-tool-icon").length), 16);
+assert.equal(await page.evaluate(() => document.querySelectorAll(".tool-icon.custom-tool-icon").length), 14);
 assert.equal(await page.evaluate(() => main_canvas.width), 800, "new documents are page width");
 
 // Text Box tool: drag a box → a <p> block, selected, in edit mode, Pointer tool active

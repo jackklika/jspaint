@@ -928,7 +928,7 @@ const menus = {
 		{
 			label: localize("&Insert"),
 			submenu: [
-				...BLOCK_KINDS.filter((kind) => kind.id !== "raw").map((kind) => ({
+				...BLOCK_KINDS.filter((kind) => !kind.hidden).map((kind) => ({
 					label: kind.label,
 					speech_recognition: [`insert ${kind.label.toLowerCase()}`, `add ${kind.label.toLowerCase()}`],
 					action: () => { add_block(kind.id, { x: 40, y: 40 }); },

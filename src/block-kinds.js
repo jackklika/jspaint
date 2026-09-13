@@ -9,7 +9,7 @@ import { get_site_editor_url } from "./site-publish.js";
  * @typedef {object} BlockProp - one attribute in an element's Properties dialog
  * @property {string} attr
  * @property {string} label
- * @property {"text" | "number" | "color" | "select"} type
+ * @property {"text" | "number" | "color" | "select" | "folder"} type - `folder`: a pick from the site's folders (blocks.js)
  * @property {string[]} [options]
  */
 /**
@@ -27,6 +27,7 @@ import { get_site_editor_url } from "./site-publish.js";
  * @property {string} [icon] - glyph for the Layers window
  * @property {boolean} [flow] - a section: stacks in the page's column and grows with its text (blocks.js reflow_sections)
  * @property {boolean} [linkable] - the whole element can be a link (Add Link to Element); default: yes, except x-* elements
+ * @property {boolean} [hidden] - no tool and not in Page › Insert (kept so pages that have one still open); 2026-09-13: box, music, raw
  */
 
 const CLASSIC_FONTS = ["Arial", "Comic Sans MS", "Courier New", "Georgia", "Impact", "Times New Roman", "Trebuchet MS", "Verdana"];
@@ -129,6 +130,7 @@ const BLOCK_KINDS = [
 	},
 	{
 		id: "box",
+		hidden: true,
 		label: "Colored Box",
 		description: "Places a colored box with a border you can type in.",
 		tag: "table",
@@ -168,6 +170,7 @@ const BLOCK_KINDS = [
 	},
 	{
 		id: "x-music",
+		hidden: true,
 		label: "Music",
 		description: "Places background music with a play button on the published page.",
 		tag: "x-music",
@@ -204,7 +207,7 @@ const BLOCK_KINDS = [
 		editable: false,
 		icon: "≡",
 		props: [
-			{ attr: "path", label: "Folder", type: "text" },
+			{ attr: "path", label: "Folder", type: "folder" },
 			{ attr: "show", label: "Show", type: "select", options: ["title", "title,date"] },
 			{ attr: "order", label: "Order", type: "select", options: ["newest", "oldest", "name"] },
 			{ attr: "limit", label: "At most", type: "number" },
@@ -226,6 +229,7 @@ const BLOCK_KINDS = [
 	},
 	{
 		id: "raw",
+		hidden: true,
 		linkable: false,
 		label: "HTML",
 		description: "Places a box of raw HTML on the page. Anything goes (except scripts).",

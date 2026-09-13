@@ -19,6 +19,7 @@ import updated from "./updated.js";
  * @property {Request} request
  * @property {{ list_pages: (folder: string) => Promise<{ path: string, uploaded: number }[]>, page_title: (path: string) => Promise<string | null>, page_summary: (path: string) => Promise<string>, settings: () => Promise<any>, has: (path: string) => Promise<boolean> }} files - read-only look at the site's pages and settings
  * @property {string} page_html - the page being rendered (sanitized), for elements that read the page itself (<x-toc>)
+ * @property {boolean} [preview] - a look from the editor, not a visit: nothing counts (the counter reads instead of hitting)
  */
 
 /**
@@ -66,9 +67,29 @@ function render_x_elements(html, context) {
 	return rewriter.transform(new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } })).text();
 }
 
+/**
+ * Renders one element for the editor's preview: what the page would show for it right now (the live count, the
+ * folder's pages, the sections…), so what's on the canvas is what visitors see. Unknown attributes are dropped.
+ * @param {string} tag
+ * @param {Record<string, unknown>} attrs
+ * @param {XElementContext} context
+ * @returns {Promise<string | null>} inner HTML, or null for a tag that isn't an element
+ */
+// eslint-disable-next-line require-await -- render() may be sync; the caller awaits either way
+async function render_x_element(tag, attrs, context) {
+	const definition = x_elements.get(tag);
+	if (!definition) { return null; }
+	/** @type {Record<string, string>} */
+	const allowed = {};
+	for (const [name, value] of Object.entries(attrs || {})) {
+		if (definition.attrs.includes(name.toLowerCase()) && typeof value === "string") { allowed[name.toLowerCase()] = value.slice(0, 2000); }
+	}
+	return definition.render({ attrs: allowed, context: { ...context, preview: true } });
+}
+
 /** @param {string} text */
 function escape_html(text) {
 	return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 }
 
-export { escape_html, render_x_elements, x_elements };
+export { escape_html, render_x_element, render_x_elements, x_elements };

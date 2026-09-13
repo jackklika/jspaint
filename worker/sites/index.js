@@ -4,11 +4,13 @@
 // sanitized again and have their <x-*> elements rendered server-side; everything else streams through with a
 // fixed content type. Strict CSP on every response: pages can't run scripts.
 // POST /~name/x/<element> (or /x/<element> for root) runs an <x-*> element's action (the guestbook form), also here.
+// POST /~name/x/preview {page, tag, attrs, page_html?} renders one <x-*> element as the page would show it right now
+// (the editor puts that on the canvas: the real count, the folder's pages) — a look, not a visit; CORS open.
 import { DurableObject } from "cloudflare:workers";
 import { ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, valid_path, valid_site_name } from "../shared/names.js";
 import { find_sections, text_of } from "../shared/sections.js";
 import { sanitize_html } from "../shared/sanitize.js";
-import { render_x_elements, x_elements } from "../shared/x-elements/index.js";
+import { render_x_element, render_x_elements, x_elements } from "../shared/x-elements/index.js";
 
 const PAGE_HEADERS = {
 	"Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -157,6 +159,41 @@ async function handle_action(request, url, env) {
 	return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Oops</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>${result.error || "Something went wrong."}</p><p><a href="javascript:history.back()">Go back</a></p></body></html>`.replace('<a href="javascript:history.back()">Go back</a>', `<a href="${site_home(site)}">Go back</a>`), result.status || 400);
 }
 
+/**
+ * POST /~name/x/preview (or /x/preview for the root site): one <x-*> element rendered as the page would show it now,
+ * for the editor's canvas. JSON in, JSON out ({ html }); the body is sent as text/plain so no preflight is needed.
+ * Nothing counts as a visit (`preview` in the context). Public data only, like the pages themselves.
+ * @param {Request} request
+ * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace }} env
+ * @param {string} site
+ */
+async function handle_preview(request, env, site) {
+	const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" };
+	const reply = (/** @type {any} */ data, status = 200) => new Response(JSON.stringify(data), { status, headers });
+	let body;
+	try {
+		body = JSON.parse((await request.text()).slice(0, 600 * 1024));
+	} catch (_error) {
+		return reply({ error: "Bad JSON" }, 400);
+	}
+	const page = String(body.page || "");
+	const tag = String(body.tag || "").toLowerCase();
+	if (!valid_path(page) || !is_html_path(page)) { return reply({ error: "Bad page" }, 400); }
+	if (!x_elements.has(tag)) { return reply({ error: "Not an element" }, 404); }
+	const object = await env.SITES.head(`sites/${site}/${page}`);
+	const html = await render_x_element(tag, body.attrs && typeof body.attrs === "object" ? body.attrs : {}, {
+		site,
+		page,
+		page_uploaded: object ? object.uploaded : null,
+		state: env.SITE_STATE.getByName(site),
+		request,
+		files: site_files(env.SITES, site),
+		page_html: typeof body.page_html === "string" ? body.page_html.slice(0, 512 * 1024) : "",
+		preview: true,
+	});
+	return reply({ html });
+}
+
 /** A same-origin redirect. Relative Location on purpose: Response.redirect() rejects relative URLs, and under `wrangler dev` the request's origin is the configured custom domain. @param {string} location @param {number} [status] */
 function path_redirect(location, status = 301) {
 	return new Response(null, { status, headers: { ...PAGE_HEADERS, Location: location } });
@@ -295,6 +332,11 @@ export default {
 		// Share links used to live on this hostname (/?join=…): they belong to the editor now.
 		if (url.pathname === "/" && url.searchParams.has("join") && env.EDITOR_URL) {
 			return Response.redirect(`${new URL(env.EDITOR_URL).origin}/${url.search}`, 302);
+		}
+		const preview = /^(?:\/~([^/]+))?\/x\/preview$/.exec(url.pathname);
+		if (preview && request.method === "POST") {
+			const site = preview[1] ?? ROOT_SITE;
+			return valid_site_name(site) ? handle_preview(request, env, site) : not_found();
 		}
 		if (request.method === "POST") {
 			return handle_action(request, url, env);

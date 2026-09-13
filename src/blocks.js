@@ -200,6 +200,12 @@ class OnCanvasBlock extends OnCanvasObject {
 				this.begin_edit(/** @type {PointerEvent} */ (e.originalEvent));
 				return;
 			}
+			if (now - last_pointerdown_time < 400 && this.kind.props.length) {
+				// A double-click on an element that isn't typed into (a folder view, a counter…): its settings
+				last_pointerdown_time = 0;
+				show_block_properties_dialog(this);
+				return;
+			}
 			last_pointerdown_time = now;
 			const m = to_canvas_coords(e);
 			mox = m.x - this.x;
@@ -244,9 +250,10 @@ class OnCanvasBlock extends OnCanvasObject {
 		this.el.replaceWith(el);
 		this.el = el;
 		this.$content.append(el);
-		this.$el.attr("title", this.tag.startsWith("x-") ? `<${this.tag}> — rendered by your site when published` : null);
+		this.$el.attr("title", this.tag.startsWith("x-") ? `<${this.tag}> — what your site shows for it (double-click for its settings)` : null);
 		this.refresh_raster();
 		if (this.flow && blocks.includes(this)) { reflow_sections(); }
+		$G.triggerHandler("block-rendered", [this]); // (x-preview.js puts what the site shows into an <x-*> element)
 	}
 	/** Re-rasterizes for Flatten and exports (async; `raster_promise` resolves when it's current). */
 	refresh_raster() {
@@ -1244,6 +1251,31 @@ function show_block_properties_dialog(block = selected_block) {
 		const value = block.attrs[prop.attr] ?? "";
 		/** @type {JQuery<HTMLInputElement | HTMLSelectElement>} */
 		let $input;
+		if (prop.type === "folder") {
+			// The site's folders to pick from (posts folders first), or a new one by name
+			const $select = $(E("select")).addClass("block-properties-folder").appendTo($row);
+			const $custom = $(E("input")).attr({ type: "text", placeholder: "folder name", spellcheck: "false" }).addClass("block-properties-folder-name").hide().appendTo($row);
+			const current = value || "posts";
+			const fill = (/** @type {{ name: string, posts: boolean }[]} */ folders) => {
+				$select.empty();
+				const names = folders.map((folder) => folder.name);
+				if (!names.includes(current)) { folders = [{ name: current, posts: false }, ...folders]; }
+				for (const folder of folders) {
+					$(E("option")).val(folder.name).text(folder.posts ? `${folder.name}/ (posts)` : `${folder.name}/`).appendTo($select);
+				}
+				$(E("option")).val("__new").text("New folder…").appendTo($select);
+				$select.val(current);
+			};
+			fill([]);
+			import("./my-site.js").then((my_site) => my_site.list_site_folders()).then((folders) => { if (folders.length && String($select.val()) !== "__new") { fill(folders); } }).catch(() => { /* not signed in: the current one is all there is */ });
+			$select.on("change", () => {
+				const fresh = String($select.val()) === "__new";
+				$custom.toggle(fresh);
+				if (fresh) { $custom.trigger("focus"); }
+			});
+			fields.push({ attr: prop.attr, get: () => String($select.val()) === "__new" ? String($custom.val()).trim().replace(/^\/+|\/+$/g, "") : String($select.val()) });
+			continue;
+		}
 		if (prop.type === "select") {
 			$input = $(E("select")).appendTo($row);
 			for (const option of prop.options || []) {
@@ -1388,10 +1420,6 @@ function init_blocks() {
 		.block-layer.editing {
 			outline: 1px solid #000080;
 		}
-		.block-layer.x-element .block-content > .block-el {
-			outline: 1px dotted #000080;
-			outline-offset: -1px;
-		}
 		.block-layer.remote-editing {
 			outline: 2px solid #ff69b4;
 		}
@@ -1411,7 +1439,7 @@ function init_blocks() {
 		.block-layer.remote-editing-flash {
 			outline: 2px solid #ff0000;
 		}
-		.block-layer.x-element::after {
+		.block-layer.x-element.selected::after {
 			content: attr(data-tag);
 			position: absolute;
 			right: 0;

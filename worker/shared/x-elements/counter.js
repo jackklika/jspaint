@@ -11,7 +11,8 @@ export default {
 		fallback: "You are visitor number <b>?????</b>",
 	},
 	async render({ attrs, context }) {
-		const count = await context.state.hit(context.page);
+		// A visit counts; the editor's preview just reads
+		const count = context.preview ? await context.state.get_hits(context.page) : await context.state.hit(context.page);
 		const digits = Math.min(10, Math.max(1, parseInt(attrs.digits || "6", 10) || 6));
 		const label = attrs.label ?? "You are visitor number ";
 		const odometer = String(count).padStart(digits, "0").split("").map((d) =>

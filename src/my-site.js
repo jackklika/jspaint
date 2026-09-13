@@ -650,6 +650,24 @@ async function site_settings() {
 }
 
 /**
+ * The site's folders that hold (or are meant to hold) pages — for the Folder View's picker: wherever .html files
+ * are, plus site.json's folders (a posts folder that's still empty); posts folders first. Never the asset folders.
+ * @returns {Promise<{ name: string, posts: boolean }[]>}
+ */
+async function list_site_folders() {
+	const [listing, settings] = await Promise.all([list_files(), site_settings()]);
+	const marked = settings.folders && typeof settings.folders === "object" ? settings.folders : {};
+	const names = new Set(Object.keys(marked));
+	for (const file of listing.files || []) {
+		if (!/\.html?$/i.test(file.path) || !file.path.includes("/")) { continue; }
+		const dir = file.path.slice(0, file.path.lastIndexOf("/"));
+		if (!/^(gifs|collages|previews|midi|versions|x)(\/|$)/i.test(dir)) { names.add(dir); }
+	}
+	const is_posts = (/** @type {string} */ name) => !!(marked[name] && marked[name].kind === "posts");
+	return [...names].sort((a, b) => is_posts(a) === is_posts(b) ? a.localeCompare(b) : is_posts(a) ? -1 : 1).map((name) => ({ name, posts: is_posts(name) }));
+}
+
+/**
  * Merges into site.json (folders merge per folder).
  * @param {{ folders?: Record<string, any>, [key: string]: any }} patch
  */
@@ -1276,4 +1294,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site, upload_asset, write_file };
+export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, list_site_folders, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site, upload_asset, write_file };
