@@ -1,6 +1,7 @@
 // @ts-check
 // jspaint-editor: serves the Paint app (static assets) and the API Paint uses to publish to a site.
 //
+//   GET    /api/sites/:name/presence                 how many are editing the site right now (its pages' live rooms; no auth)
 //   GET    /api/whoami[?site=name]                  checks the bearer (master key, or that site's password); returns role, created, URLs
 //   POST   /api/sites/:name/password                master key only: gives the site a new random password → { site, password, rotated }
 //   DELETE /api/sites/:name/password                master key only: removes the site's password
@@ -46,8 +47,9 @@ const CORS_HEADERS = {
  * @param {any} data
  * @param {number} [status]
  */
-function json(data, status = 200) {
-	return new Response(JSON.stringify(data), { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json; charset=utf-8" } });
+/** @param {any} data @param {number} [status] @param {Record<string, string>} [headers] */
+function json(data, status = 200, headers = {}) {
+	return new Response(JSON.stringify(data), { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json; charset=utf-8", ...headers } });
 }
 
 /**
@@ -713,6 +715,16 @@ const editor = {
 				// A signed-in account: who, and which sites are theirs ("user" = signed in, but not this site's owner)
 				const account = session ? { user: { id: session.id, email: session.email, name: session.name }, sites: await accounts.sites_of(session.id) } : {};
 				return json({ ok: true, role: role || "user", site: site || null, created, sites_url: env.SITES_URL, editor_url: url.origin, ...account });
+			}
+			const presence_match = /^\/api\/sites\/([^/]+)\/presence$/.exec(url.pathname);
+			if (presence_match) {
+				// Who's editing the site right now: the clients in its pages' live rooms (public: a count, nothing more)
+				const name = presence_match[1];
+				if (!valid_site_name(name)) { return json({ error: "Bad site name" }, 400); }
+				const listing = await env.SITES.list({ prefix: `sites/${name}/`, limit: 200 });
+				const pages = listing.objects.map((object) => object.key.slice(`sites/${name}/`.length)).filter((path) => is_html_path(path) && !path.startsWith("versions/")).slice(0, 50);
+				const counts = await Promise.all(pages.map(async (page) => ({ page, editing: await /** @type {any} */ (env.PAGE_ROOM.getByName(`${name}/${page}`)).client_count() })));
+				return json({ site: name, editing: counts.reduce((sum, entry) => sum + entry.editing, 0), pages: counts.filter((entry) => entry.editing > 0) }, 200, { "Cache-Control": "no-store" });
 			}
 			const password_match = /^\/api\/sites\/([^/]+)\/password$/.exec(url.pathname);
 			if (password_match) {

@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-12 — **Who's here on the globe** (Jack): the site view shows viewers (page loads by distinct address in the last 5 minutes, and today — `SiteState.record_view/viewers` in the sites Worker, `x/stats.json`) and editors (clients in the site's live rooms — `PageRoom.client_count`, `GET /api/sites/:name/presence`).
+
 - 2026-09-12 — **No device-font prompt** (Jack): the Font toolbar no longer calls `queryLocalFonts` (a permission prompt every session); it lists a fixed web-safe set (`WEB_SAFE_FONTS`, `src/$FontBox.js`) — which is also right for pages that visitors see in their own browsers.
 
 - 2026-09-12 — **Storage + loading** (Jack: Storage Error; the account not sticking; the page white then filling in): picture backups moved to IndexedDB (`layer-storage.js`; Manage Storage lists them), `save_settings` recovers from a full localStorage (that's why the Google account never persisted), and `src/loading-veil.js` veils the canvas until a restored session / fresh-visit page is in.

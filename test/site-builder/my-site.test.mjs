@@ -33,6 +33,8 @@ await page.click(".site-globe-button");
 await page.waitForSelector(".site-view-window", { timeout: 5000 });
 assert.match(await page.$eval(".site-view-window", (el) => el.textContent), new RegExp(`~${site}`));
 assert.equal(await page.$eval(".site-view-window a[target=_blank]", (el) => el.getAttribute("href")), `${sites}/~${site}/`);
+await page.waitForFunction(() => /viewing/.test(document.querySelector(".site-view-presence")?.textContent || ""), null, { timeout: 10000 });
+assert.match(await page.$eval(".site-view-presence", (el) => el.textContent), /👁 \d+ viewing \(\d+ today\) · ✏️ \d+ editing/);
 await page.evaluate(() => [...document.querySelectorAll(".site-view-window button")].find((b) => b.textContent === "My Site…").click());
 await page.waitForSelector(".my-site-window", { timeout: 10000 });
 await page.waitForFunction(() => !document.querySelector(".site-view-window"), null, { timeout: 5000 });

@@ -95,6 +95,10 @@ export class PageRoom extends DurableObject {
 	clients() {
 		return this.ctx.getWebSockets().map((ws) => ws.deserializeAttachment()).filter((info) => info && info.client_id);
 	}
+	/** How many are in the room right now (the editor's globe shows "N editing"). */
+	client_count() {
+		return this.clients().length;
+	}
 	/**
 	 * @param {any} message
 	 * @param {WebSocket} [except]

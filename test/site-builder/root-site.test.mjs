@@ -84,6 +84,19 @@ assert.match(about, /action="\/x\/guestbook"/, "the guestbook posts to the root'
 assert.match(about, /name="back" value="\/about.html"/);
 assert.match(await (await get("/~zz-test/")).text(), new RegExp(`${marker} zz`));
 
+// Who's looking: page loads count as viewers (by address), for the editor's globe; public, uncached
+for (const ip of ["10.9.9.1", "10.9.9.2", "10.9.9.2"]) { await fetch(`${sites}/about.html`, { headers: { "CF-Connecting-IP": ip } }); }
+await fetch(`${sites}/~zz-test/`, { headers: { "CF-Connecting-IP": "10.9.9.3" } });
+const stats = await fetch(`${sites}/x/stats.json`);
+assert.equal(stats.headers.get("Cache-Control"), "no-store");
+assert.equal(stats.headers.get("Access-Control-Allow-Origin"), "*");
+const root_stats = await stats.json();
+assert.equal(root_stats.site, "root");
+assert.ok(root_stats.viewing >= 2 && root_stats.today >= root_stats.viewing, JSON.stringify(root_stats));
+const zz_stats = await (await fetch(`${sites}/~zz-test/x/stats.json`)).json();
+assert.equal(zz_stats.site, "zz-test");
+assert.ok(zz_stats.viewing >= 1, JSON.stringify(zz_stats));
+
 // Redirects and 404s
 assert.equal(await redirect_of("/~root"), "301 /");
 assert.equal(await redirect_of("/~root/"), "301 /");

@@ -29,9 +29,9 @@ function current_role() {
 	return role;
 }
 
-/** The public URL of a page (or file) of the signed-in site. */
-function public_url(path = "index.html") {
-	return site_public_url(load_settings().site, path, sites_url || DEFAULT_SITES_URL);
+/** The public URL of a page (or file) of the signed-in site (or of another site, on the same sites host). @param {string} [path] @param {string} [site] */
+function public_url(path = "index.html", site = load_settings().site) {
+	return site_public_url(site, path, sites_url || DEFAULT_SITES_URL);
 }
 
 // edit.<domain>/~name[/page] redirects to /?site=name[&page=…]: remember it (before sessions.js rewrites the URL to

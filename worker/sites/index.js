@@ -19,8 +19,16 @@ const PAGE_HEADERS = {
 	"Cache-Control": "no-cache, no-transform",
 };
 
+const VIEWING_WINDOW_MS = 5 * 60 * 1000; // "viewing now": loaded a page this recently
+const VIEWS_KEPT_MS = 24 * 60 * 60 * 1000;
 const GUESTBOOK_MIN_INTERVAL_MS = 30 * 1000; // per visitor
 const GUESTBOOK_MAX_PER_DAY = 20; // per visitor
+
+/** @param {string} text */
+async function sha256_hex(text) {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 const GUESTBOOK_MAX_ENTRIES = 2000; // per site
 
 /** Per-site state for <x-*> elements: visitor counters and guestbook entries. */
@@ -30,8 +38,27 @@ export class SiteState extends DurableObject {
 		this.ctx.blockConcurrencyWhile(() => {
 			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (page TEXT PRIMARY KEY, hits INTEGER NOT NULL DEFAULT 0)");
 			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS guestbook (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, message TEXT NOT NULL, ip_hash TEXT NOT NULL, created INTEGER NOT NULL)");
+			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS views (ip_hash TEXT NOT NULL, page TEXT NOT NULL, at INTEGER NOT NULL)");
+			this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS views_at ON views (at)");
 			return Promise.resolve();
 		});
+	}
+	/**
+	 * Someone opened a page (the editor's globe shows "N viewing"). Pages carry no scripts, so a page load is the
+	 * only signal there is: "viewing now" means "loaded a page in the last few minutes". Kept for a day.
+	 * @param {string} ip_hash @param {string} page
+	 */
+	record_view(ip_hash, page) {
+		const now = Date.now();
+		this.ctx.storage.sql.exec("INSERT INTO views (ip_hash, page, at) VALUES (?, ?, ?)", ip_hash, page, now);
+		if (Math.random() < 0.05) { this.ctx.storage.sql.exec("DELETE FROM views WHERE at < ?", now - VIEWS_KEPT_MS); }
+	}
+	/** @returns {{ viewing: number, today: number, views_today: number }} distinct visitors in the last VIEWING_WINDOW_MS / day, and page loads today */
+	viewers() {
+		const now = Date.now();
+		const recent = this.ctx.storage.sql.exec("SELECT COUNT(DISTINCT ip_hash) AS n FROM views WHERE at > ?", now - VIEWING_WINDOW_MS).one();
+		const today = this.ctx.storage.sql.exec("SELECT COUNT(DISTINCT ip_hash) AS n, COUNT(*) AS loads FROM views WHERE at > ?", now - VIEWS_KEPT_MS).one();
+		return { viewing: Number(recent.n), today: Number(today.n), views_today: Number(today.loads) };
 	}
 	/**
 	 * Newest first.
@@ -261,7 +288,7 @@ export default {
 	 * @param {Request} request
 	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL?: string }} env
 	 */
-	async fetch(request, env) {
+	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
 		const legacy = legacy_host_redirect(url, env.SITES_URL);
 		if (legacy) { return legacy; }
@@ -301,6 +328,11 @@ export default {
 		if (feed && valid_path(`${feed[1]}/index.html`)) {
 			return rss_feed(site_files(env.SITES, site), site, feed[1], url);
 		}
+		if (path === "x/stats.json") {
+			// Who's looking (the editor's globe shows it): public, cheap, never cached
+			const stats = await env.SITE_STATE.getByName(site).viewers();
+			return new Response(JSON.stringify({ site, ...stats }), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" } });
+		}
 		if (!valid_path(path) || path.startsWith("versions/")) {
 			return not_found(); // (versions/: earlier saves, only reachable through the editor)
 		}
@@ -322,6 +354,11 @@ export default {
 				page_html: sanitized,
 			});
 			if (await files.has("site.css")) { rendered = await with_stylesheet(rendered, `${site_base(site)}/site.css`); }
+			if (request.method === "GET") {
+				// A page load is a view (the visitor by a hash of their address; the count is all that's kept for long)
+				const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+				ctx.waitUntil(sha256_hex(`view|${ip}`).then((ip_hash) => env.SITE_STATE.getByName(site).record_view(ip_hash, path)).catch(() => { /* a miss is fine */ }));
+			}
 			return html_response(rendered);
 		}
 		const headers = new Headers(PAGE_HEADERS);

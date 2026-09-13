@@ -116,6 +116,20 @@ async function show_site_view() {
 		$value.addClass("site-view-value").appendTo($row);
 	};
 	$(E("div")).addClass("site-view-heading").append($(E("span")).addClass("site-globe site-globe-static"), $(E("span")).text(guest ? `~${guest.site}` : `~${settings.site}`)).appendTo($main);
+	// Who's here: visitors who loaded a page of the site in the last few minutes (the sites Worker counts page loads —
+	// pages have no scripts), and people in its pages' live rooms
+	const site = guest ? guest.site : settings.site;
+	const $presence = $(E("span")).addClass("site-view-presence").text("…");
+	row(localize("Right now:"), $presence);
+	Promise.all([
+		fetch(public_url("x/stats.json", site), { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null),
+		fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/presence`, { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null),
+	]).then(([stats, presence]) => {
+		if ($w.closed) { return; }
+		const viewing = stats ? `👁 ${stats.viewing} viewing (${stats.today} today)` : `👁 ${localize("viewers unknown")}`;
+		const editing = presence ? `✏️ ${presence.editing} editing` : `✏️ ${localize("editors unknown")}`;
+		$presence.text(`${viewing} · ${editing}`).attr("title", localize("Viewing: loaded a page of the site in the last 5 minutes. Editing: in a page's live room."));
+	});
 	if (guest) {
 		const page_url = site_public_url(guest.site, page || "index.html");
 		$(E("p")).addClass("site-view-blurb").text(localize("You're drawing on this page as a guest, through a share link. Ctrl+S saves it to the site.")).appendTo($main);
@@ -212,6 +226,9 @@ function init_site_button() {
 		}
 		@media (prefers-reduced-motion: reduce) {
 			.site-globe { animation: none; }
+		}
+		.site-view-presence {
+			white-space: nowrap;
 		}
 		.site-view-heading {
 			display: flex;

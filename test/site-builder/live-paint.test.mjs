@@ -69,6 +69,13 @@ assert.deepEqual((await live(alice)).others, ["Bob"]);
 assert.deepEqual((await live(bob)).others, ["Alice"]);
 assert.deepEqual(await blocks(bob), await blocks(alice), "Bob has Alice's heading");
 
+// The globe says who's here: both are in the page's room, and the page was fetched above
+await alice.click(".site-globe-button");
+await alice.waitForFunction(() => /\d+ editing/.test(document.querySelector(".site-view-presence")?.textContent || ""), null, { timeout: 10000 });
+assert.match(await alice.$eval(".site-view-presence", (el) => el.textContent), /2 editing/);
+assert.equal(await (await fetch(`${editor}/api/sites/${site}/presence`)).json().then((p) => p.editing), 2);
+await alice.evaluate(() => { [...document.querySelectorAll(".site-view-window button")].find((b) => b.textContent === "Close")?.click(); });
+
 // Alice adds a text box (click-to-place) → Bob sees it
 await select_tool(alice, "Text Box");
 const ac = await canvas_box(alice);
