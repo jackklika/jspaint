@@ -26,38 +26,41 @@ function pixel_icon(rows, color, etched = false) {
 	return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">${body}</svg>`)}`;
 }
 
-// Thick curved arrows, 24px: a fat 4px arc with a big head (undo bends left, redo bends right), black on the button face.
+// Curved arrows, 24px: a round 3–4px arc over the top with a clean triangular head — undo bends back to the left
+// (navy), redo forward to the right (green): two different arrows, not one and its shadow.
 const UNDO_ROWS = [
 	"........................",
 	"........................",
 	"........................",
 	"........................",
-	"..........########......",
-	"........############....",
-	".......##############...",
-	".......###############..",
-	"......#####......#####..",
-	"....######........#####.",
-	"...#######.........####.",
-	"..########.........####.",
-	".#########.........####.",
-	"..########.........####.",
-	"...#######.........####.",
-	"....######.........####.",
-	"......####........#####.",
-	".......###.......#####..",
-	"........##.......#####..",
-	".........#........###...",
-	"..................##....",
+	"........########........",
+	"......############......",
+	".....##############.....",
+	"....######....######....",
+	"....####........####....",
+	"...####..........####...",
+	"...####..........####...",
+	"..####............####..",
+	"..####............####..",
+	"..####............####..",
+	"..####............####..",
+	"########................",
+	".######.................",
+	".######.................",
+	"..####..................",
+	"...##...................",
+	"........................",
 	"........................",
 	"........................",
 	"........................",
 ];
 const REDO_ROWS = UNDO_ROWS.map((row) => [...row].reverse().join(""));
-const UNDO_ICON = pixel_icon(UNDO_ROWS, "#000");
-const REDO_ICON = pixel_icon(REDO_ROWS, "#000");
-const UNDO_ICON_DISABLED = pixel_icon(UNDO_ROWS, "#000", true);
-const REDO_ICON_DISABLED = pixel_icon(REDO_ROWS, "#000", true);
+const UNDO_COLOR = "#000080";
+const REDO_COLOR = "#008000";
+const UNDO_ICON = pixel_icon(UNDO_ROWS, UNDO_COLOR);
+const REDO_ICON = pixel_icon(REDO_ROWS, REDO_COLOR);
+const UNDO_ICON_DISABLED = pixel_icon(UNDO_ROWS, UNDO_COLOR, true);
+const REDO_ICON_DISABLED = pixel_icon(REDO_ROWS, REDO_COLOR, true);
 
 function update_enabled() {
 	$undo?.prop("disabled", undos.length < 1);
