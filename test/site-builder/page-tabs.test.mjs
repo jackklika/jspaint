@@ -59,7 +59,7 @@ const published_index = await version();
 // Back to index: the draft, stroke and all — and the site still has the published version
 await page.click('.page-tab[data-page="index.html"]');
 await page.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
-await page.waitForFunction((painted) => main_ctx.getImageData(100, 100, 1, 1).data.join(",") === painted, painted, { timeout: 15000 });
+await page.waitForFunction((painted) => main_ctx.getImageData(100, 100, 1, 1).data.join(",") === painted, painted, { timeout: 30000 });
 assert.equal(await page.evaluate(() => location.hash), index_session, "the same draft session");
 assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "index.html" }, "still that page of the site: Ctrl+S publishes it");
 assert.equal(await version(), published_index, "nothing was published by switching");
@@ -71,12 +71,29 @@ assert.match(await page.$eval(".site-publish-log", (el) => el.innerText), /Done!
 assert.notEqual(await version(), published_index, "now it's published");
 await page.evaluate(() => { [...document.querySelectorAll(".site-publish-window button")].find((b) => b.textContent === "Cancel")?.click(); });
 
+// The + tab: a new page, named in the same New Page dialog as My Site › Pages; it opens fresh and becomes the
+// current tab (on the site once saved)
+await page.click(".page-tabs-new");
+const new_page_input = ".dialog-window:has(.window-title:text-is('New Page')) input[type=text]";
+await page.waitForSelector(new_page_input, { timeout: 5000 });
+assert.equal(await page.inputValue(new_page_input), "about.html", "the site has a front page: the suggestion is another name");
+await page.fill(new_page_input, "contact");
+await page.keyboard.press("Enter");
+await page.waitForFunction(() => file_name === "contact.html" && system_file_handle && system_file_handle.fresh === true, null, { timeout: 15000 });
+await page.waitForFunction(() => document.querySelector(".page-tab.current")?.textContent === "contact.html", null, { timeout: 10000 });
+assert.deepEqual(await tabs(page), ["contact.html*", "index.html", "about.html"], "the fresh page leads the tabs until it's listed");
+assert.equal(await page.evaluate(() => [...document.querySelectorAll(".window")].some((w) => /Save changes/.test(w.textContent))), false, "no save prompt on the way");
+await page.keyboard.press("Control+s");
+await page.waitForFunction(() => /Done!|Couldn't|rejected|failed/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
+await page.evaluate(() => { [...document.querySelectorAll(".site-publish-window button")].find((b) => b.textContent === "Cancel")?.click(); });
+await page.waitForFunction(() => [...document.querySelectorAll(".page-tab")].map((t) => t.textContent).join() === "index.html,about.html,contact.html", null, { timeout: 15000 });
+
 // Too many pages for the bar: "…" shows, and opens My Pages
 for (let i = 1; i <= 14; i++) {
 	await fetch(`${editor}/api/sites/${site}/files/posts/entry-number-${i}.html`, { method: "PUT", headers: { ...headers, "Content-Type": "text/html" }, body: `<html><head><title>${i}</title></head><body>${i}</body></html>` });
 }
 await page.evaluate(async () => { const m = await import("/src/my-site.js"); await m.switch_page("about.html"); }); // (a switch lists the pages again)
-await page.waitForFunction(() => document.querySelectorAll(".page-tab").length === 16, null, { timeout: 15000 });
+await page.waitForFunction(() => document.querySelectorAll(".page-tab").length === 17, null, { timeout: 15000 });
 await page.waitForSelector(".page-tabs-more:visible", { timeout: 10000 });
 assert.equal((await tabs(page))[0], "about.html*", "the current page is always in view");
 await page.click(".page-tabs-more");

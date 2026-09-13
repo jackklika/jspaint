@@ -590,17 +590,27 @@ $G.on("site-page-opened site-page-restored", (_event, detail) => {
  * as published. Nothing is asked and nothing is lost — the page being left keeps its edits in its own session.
  * @param {string} path
  */
-function switch_page(path) {
+async function switch_page(path) {
 	const page = current_site_page_path();
-	if (path === page) { return Promise.resolve(true); }
-	$G.triggerHandler("session-update"); // this page's draft, up to the last stroke
+	if (path === page) { return true; }
+	await before_leaving_page(); // this page's draft, up to the last stroke — here and in its room
 	saved = true; // (its edits live on in its session, so leaving isn't losing them: no "save changes?")
 	const session = draft_session(load_settings().site, path);
 	if (session && session !== current_session_id()) {
 		change_url_param("local", session); // sessions.js restores the draft, and its page (site-page-restored)
-		return Promise.resolve(true);
+		return true;
 	}
 	return open_page_from_site(path);
+}
+/**
+ * Before the document becomes another page: this one's session saved, and its last changes sent to its live room
+ * (a stroke made a moment ago is otherwise lost to the room's older draft when the page is opened again).
+ */
+async function before_leaving_page() {
+	$G.triggerHandler("session-update");
+	try {
+		await (await import("./live-session.js")).flush_live_sync();
+	} catch (_error) { /* not live: nothing to send */ }
 }
 /** The page of the site this document is (not a copy of someone's), or "". */
 function current_site_page_path() {
@@ -614,6 +624,7 @@ function current_site_page_path() {
  * @param {string} path
  */
 async function open_page_from_site(path) {
+	if (current_site_page_path()) { await before_leaving_page(); }
 	let text;
 	try {
 		text = await (await read_file(path)).text();
@@ -697,8 +708,8 @@ function slug_for(title) {
 async function new_site_post(folder, title) {
 	const path = `${folder}/${slug_for(title)}.html`;
 	await save_site_settings({ folders: { [folder]: { kind: "posts", ...((await site_settings()).folders?.[folder] || {}) } } }).catch(() => { /* the post still works; the feed needs the mark */ });
-	are_you_sure(() => {
-		$(window).triggerHandler("session-update");
+	are_you_sure(async () => {
+		await before_leaving_page();
 		new_local_session();
 		reset_file();
 		reset_selected_colors();
@@ -720,8 +731,8 @@ async function new_site_post(folder, title) {
  * @param {string} path - like about.html
  */
 function new_site_page(path) {
-	are_you_sure(() => {
-		$(window).triggerHandler("session-update"); // autosave the old session
+	are_you_sure(async () => {
+		await before_leaving_page(); // autosave the old session, and send its last changes to its room
 		new_local_session();
 		reset_file();
 		reset_selected_colors();
@@ -760,6 +771,43 @@ function open_live_page() {
 let $folder = null;
 /** @type {((tab: string) => void) | null} the open folder's tab switcher */
 let switch_folder_tab = null;
+
+/**
+ * New Page: a name, then a fresh page opens in Paint (My Site › Pages › New Page…, the + tab above the canvas).
+ * The first page of a site is its front page: index.html is suggested only once the listing says there's none
+ * (suggesting it for a site that has one would overwrite the front page on save).
+ * @param {{ files?: { path: string }[] | null, on_done?: () => void }} [options] - `files`: the listing, if known (else it's fetched); `on_done`: e.g. close the window that asked
+ */
+function show_new_page_prompt({ files = null, on_done } = {}) {
+	const $d = $DialogWindow(localize("New Page"));
+	$d.addClass("new-page-window");
+	const $label = $(E("label")).text(localize("Page file name: ")).appendTo($d.$main);
+	const suggest = (/** @type {{ path: string }[] | null} */ listing) => (!listing || listing.some((file) => /^index\.html?$/i.test(file.path)) ? "about.html" : "index.html");
+	const suggested = suggest(files);
+	const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", placeholder: suggested, name: "new-page-name" }).val(suggested).appendTo($label);
+	$(E("p")).addClass("my-site-note").text(localize("A fresh page opens in Paint; Save (Ctrl+S) puts it on the site.")).appendTo($d.$main);
+	if (!files && is_signed_in()) {
+		// Not known yet: ask, and offer the front page if the site has none (unless a name was typed meanwhile)
+		list_files().then((listing) => {
+			const better = suggest(listing.files || []);
+			if (better !== suggested && String($name.val()) === suggested) {
+				$name.val(better).attr({ placeholder: better });
+				/** @type {HTMLInputElement} */ ($name[0]).setSelectionRange(0, better.length - 5);
+			}
+		}).catch(() => { /* the safe suggestion stands */ });
+	}
+	$d.$Button(localize("OK"), () => {
+		const path = `${String($name.val()).trim().replace(/\.html?$/i, "").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[._-]+/, "")}.html`;
+		if (path === ".html") { $name.focus(); return; }
+		$d.close();
+		if (on_done) { on_done(); }
+		new_site_page(path);
+	}, { type: "submit" });
+	$d.$Button(localize("Cancel"), () => { $d.close(); });
+	$d.center();
+	$name.focus();
+	/** @type {HTMLInputElement} */ ($name[0]).setSelectionRange(0, suggested.length - 5);
+}
 
 /**
  * File > My Site…: your site in three tabs — Site (its name and address, when it was made, what's on it), Pages (every
@@ -978,27 +1026,7 @@ async function show_my_site_dialog({ tab = "site" } = {}) {
 		}
 		refresh();
 	});
-	const show_new_page_dialog = () => {
-		const $d = $DialogWindow(localize("New Page"));
-		const $label = $(E("label")).text(localize("Page file name: ")).appendTo($d.$main);
-		// The first page of a site is its front page — but only once we know the site has none (the listing is async;
-		// suggesting index.html for a site that has one would overwrite the front page on save).
-		const has_index = !listed_files || listed_files.some((file) => /^index\.html?$/i.test(file.path));
-		const suggested = has_index ? "about.html" : "index.html";
-		const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", placeholder: suggested }).val(suggested).appendTo($label);
-		$(E("p")).addClass("my-site-note").text(localize("A fresh page opens in Paint; Save (Ctrl+S) puts it on the site.")).appendTo($d.$main);
-		$d.$Button(localize("OK"), () => {
-			const path = `${String($name.val()).trim().replace(/\.html?$/i, "").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[._-]+/, "")}.html`;
-			if (path === ".html") { $name.focus(); return; }
-			$d.close();
-			$w.close();
-			new_site_page(path);
-		}, { type: "submit" });
-		$d.$Button(localize("Cancel"), () => { $d.close(); });
-		$d.center();
-		$name.focus();
-		/** @type {HTMLInputElement} */ ($name[0]).setSelectionRange(0, 5);
-	};
+	const show_new_page_dialog = () => { show_new_page_prompt({ files: listed_files, on_done: () => { $w.close(); } }); };
 
 	const show_new_post_dialog = () => {
 		const $d = $DialogWindow(localize("New Post"));
@@ -1294,4 +1322,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, list_site_folders, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site, upload_asset, write_file };
+export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, list_site_folders, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site, upload_asset, write_file };

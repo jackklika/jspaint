@@ -8,7 +8,7 @@ import { $DialogWindow } from "./$ToolWindow.js";
 import { $G, E } from "./helpers.js";
 import { live_sync_state } from "./live-session.js";
 import { end_all_loading } from "./loading-veil.js";
-import { SITE_LIMIT, list_files, open_site_from_url, public_url, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site } from "./my-site.js";
+import { SITE_LIMIT, list_files, open_site_from_url, public_url, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site } from "./my-site.js";
 import { show_page_history } from "./page-history.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
 import { ROOT_SITE, site_public_url } from "./site-constants.js";
@@ -214,6 +214,15 @@ function init_page_label() {
 		.appendTo($bar);
 	$more.on("mousedown", keep_focus);
 	$more.on("click", () => { show_my_site_dialog({ tab: "pages" }); });
+	// A new page, right where the pages are (the same New Page dialog as My Site › Pages)
+	const $plus = $(E("button"))
+		.attr({ type: "button", title: localize("New Page…"), "aria-label": localize("New page") })
+		.addClass("page-tabs-new")
+		.text("+")
+		.hide()
+		.appendTo($bar);
+	$plus.on("mousedown", keep_focus);
+	$plus.on("click", () => { show_new_page_prompt({ files: listed.site === load_settings().site && listed.pages.length ? listed.pages.map((path) => ({ path })) : null }); });
 	const $label = $(E("button")).attr({ type: "button", title: localize("This page — click for the site view") }).addClass("page-path-label").appendTo($bar);
 	$label.on("mousedown", keep_focus);
 	$label.on("click", () => { show_site_view(); });
@@ -277,6 +286,7 @@ function init_page_label() {
 			$site.hide();
 			$tabs.hide();
 			$more.hide();
+			$plus.hide();
 			rendered = "";
 			const text = guest ? `~${guest.site}/${page || "…"} ${localize("(guest)")}` :
 				page && copy_of ? localize("%1 — a copy of ~%2's", page, copy_of) :
@@ -287,6 +297,7 @@ function init_page_label() {
 		$label.hide();
 		$site.show().text(`${site_label}/`);
 		$tabs.show();
+		$plus.show();
 		const pages = await load_pages(settings.site, force);
 		if (current_site_page() !== page || load_settings().site !== settings.site) { return; } // moved on meanwhile
 		render_tabs(pages, page);
@@ -392,7 +403,7 @@ function init_site_button() {
 			display: flex;
 			align-items: flex-end;
 			gap: 2px;
-			flex: 1 1 auto;
+			flex: 0 1 auto; /* (the "…" and "+" follow the last tab, not the bar's far end) */
 			min-width: 0;
 			height: 18px;
 			overflow: hidden;
@@ -420,7 +431,8 @@ function init_site_button() {
 			background: var(--Window, #fff);
 			border-bottom-color: var(--Window, #fff);
 		}
-		.page-tabs-more {
+		.page-tabs-more,
+		.page-tabs-new {
 			flex: none;
 			width: 22px;
 			height: 16px;
@@ -428,6 +440,10 @@ function init_site_button() {
 			margin-left: 2px;
 			font: bold 11px/14px Arial, Helvetica, sans-serif;
 			min-width: 0;
+		}
+		.page-tabs-new {
+			margin-right: 4px;
+			border-radius: 3px 3px 0 0;
 		}
 		.site-globe {
 			position: relative;

@@ -815,6 +815,19 @@ async function send_full_picture() {
 	}
 }
 
+/**
+ * Sends what hasn't been sent yet, now — before the document becomes another page (my-site.js): a stroke made a
+ * moment ago would otherwise be lost to the room's older draft when this page is opened again.
+ */
+async function flush_live_sync() {
+	if (sync_timer) { clearTimeout(sync_timer); sync_timer = null; }
+	if (!connected || !last) { return; }
+	// eslint-disable-next-line no-unmodified-loop-condition -- sync_local_changes clears `syncing` when its round is done
+	for (let tries = 0; tries < 50 && syncing; tries++) { await new Promise((resolve) => { setTimeout(resolve, 20); }); } // (a round in progress finishes first)
+	if (sync_timer) { clearTimeout(sync_timer); sync_timer = null; }
+	await sync_local_changes();
+}
+
 // ---- the page's history (page-history.js) ----
 
 /** Asks the room for every version; the answer arrives as a `live-history` event. */
@@ -1298,4 +1311,4 @@ function live_sync_state() {
 	return { connected, room: room ? { site: room.site, page: room.page } : null, version, others: [...remote_clients.values()].map((client) => client.name), client_id: client_id(), name: my_name() };
 }
 
-export { checkout_version, init_live_session, is_live_sync_enabled, join_page_room, leave_page_room, live_sync_state, request_history, restore_version, set_live_sync_enabled, set_my_name };
+export { checkout_version, flush_live_sync, init_live_session, is_live_sync_enabled, join_page_room, leave_page_room, live_sync_state, request_history, restore_version, set_live_sync_enabled, set_my_name };
