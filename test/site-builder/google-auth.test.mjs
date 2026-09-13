@@ -109,6 +109,11 @@ try {
 	assert.equal((await call(`/api/whoami?site=${site}`, {}, cookies)).status, 200);
 	assert.equal((await (await call(`/api/whoami?site=${site}`, {}, cookies)).json()).role, "user", "not this site's owner (yet)");
 
+	// The cookie beside a password: whoami still names the account (so Paint can prefer it), and the master stays the master
+	me = await (await call("/api/whoami", { headers: { Authorization: `Bearer ${master}` } }, cookies)).json();
+	assert.equal(me.role, "master");
+	assert.equal(me.user?.email, person.email);
+
 	// Taking a site: a free name is yours; then the cookie edits it like the site's password would
 	response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Bad Name!" }) }, cookies);
 	assert.equal(response.status, 400);

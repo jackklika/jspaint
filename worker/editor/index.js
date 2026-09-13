@@ -706,7 +706,7 @@ const editor = {
 				const site = url.searchParams.get("site") || "";
 				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
 				const role = await role_of(request, env, site);
-				const session = bearer_of(request) ? null : await session_of(request, env);
+				const session = await session_of(request, env); // (reported even beside a password: Paint then knows the account and can drop the password)
 				if (!role && !session) { return json({ error: "Unauthorized: the password was rejected" }, 401); }
 				// `created`: when the site got its password (My Site's summary); null for a site the master key alone edits
 				const accounts = accounts_of(env);

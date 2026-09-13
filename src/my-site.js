@@ -249,7 +249,8 @@ async function check_sign_in({ probe = false } = {}) {
 		const account = info.user ? { email: String(info.user.email || ""), name: String(info.user.name || ""), via: "google", sites: Array.isArray(info.sites) ? info.sites : [] } : null;
 		let site = settings.site;
 		if (account && info.role === "user" && account.sites.length && !account.sites.includes(site)) { site = account.sites[0]; } // (one of yours, not whatever site was last typed)
-		if (account || settings.account) { save_settings({ ...settings, site, account, ...(account ? { secret: "", remember_secret: false } : {}) }); } // (a session outranks a stale password)
+		// An account outranks a remembered site password (the master key stays: it's more than the account)
+		if (account || settings.account) { save_settings({ ...settings, site, account, ...(account && info.role !== "master" ? { secret: "", remember_secret: false } : {}) }); }
 		if (site !== settings.site) { return check_sign_in(); }
 		role = info.role === "user" ? null : info.role || null; // ("user": signed in, but not this site's owner)
 		refresh_x_element_kinds();
