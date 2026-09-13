@@ -6,8 +6,10 @@
 // spinning earth: continents scroll behind a round pixel mask (and hold still for prefers-reduced-motion).
 import { $DialogWindow } from "./$ToolWindow.js";
 import { $G, E } from "./helpers.js";
+import { live_sync_state } from "./live-session.js";
 import { end_all_loading } from "./loading-veil.js";
 import { SITE_LIMIT, list_files, open_site_from_url, public_url, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site } from "./my-site.js";
+import { show_page_history } from "./page-history.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
 import { ROOT_SITE, site_public_url } from "./site-constants.js";
 import { get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
@@ -174,6 +176,7 @@ async function show_site_view() {
 		$w.$Button(localize("My Site…"), () => { $w.close(); show_my_site_dialog(); }, { type: "submit" });
 		$w.$Button(page ? localize("Save Page…") : localize("Save to My Site…"), () => { $w.close(); show_publish_dialog(); });
 		if (page) { $w.$Button(localize("Share…"), () => { $w.close(); show_share_dialog(); }); }
+		if (page && live_sync_state().room) { $w.$Button(localize("History…"), () => { $w.close(); show_page_history(); }); }
 		$w.$Button(localize("Sign Out"), () => {
 			sign_out();
 			$w.close();

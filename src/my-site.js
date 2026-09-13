@@ -693,7 +693,7 @@ async function new_site_post(folder, title) {
 		add_block("section", { x: 0, y: 0 }, { html: "Write your post here." });
 		saved = false;
 		update_title();
-		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: true }]);
+		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: true, reason: "new" }]);
 	});
 }
 
@@ -715,7 +715,7 @@ function new_site_page(path) {
 		add_block("heading", { x: 40, y: 30 }, { html: `<font face="Comic Sans MS" color="#ff1493">${path.replace(/\.html?$/i, "")}</font>` });
 		saved = false;
 		update_title();
-		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: true }]);
+		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: true, reason: "new" }]);
 	});
 }
 

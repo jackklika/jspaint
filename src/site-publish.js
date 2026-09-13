@@ -195,7 +195,7 @@ async function publish_collage(settings, log) {
 	file_format = HTML_FORMAT_ID;
 	saved = true;
 	update_title();
-	$G.triggerHandler("site-page-opened", [{ page: `${page_base}.html`, authoritative: true }]); // live-session.js: the room takes this copy
+	$G.triggerHandler("site-page-opened", [{ page: `${page_base}.html`, authoritative: true, reason: "published" }]); // live-session.js: the room takes this copy
 	return result.url;
 }
 

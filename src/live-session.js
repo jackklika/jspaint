@@ -1,7 +1,7 @@
 // @ts-check
 // eslint-disable-next-line no-unused-vars
 /* global saved:writable, pointer:writable, pointer_previous:writable, pointer_start:writable, pointer_active:writable, pointer_over_canvas:writable, button:writable, reverse:writable, shift:writable, ctrl:writable, stroke_size:writable, brush_size:writable, brush_shape:writable, eraser_size:writable, airbrush_size:writable, pencil_size:writable, stroke_color:writable, fill_color:writable, selected_colors:writable, tool_transparent_mode:writable */
-/* global $canvas, $canvas_area, $status_area, localize, magnification, main_canvas, main_ctx, root_history_node, selected_tool, system_file_handle, transparency, update_fill_and_stroke_colors_and_lineWidth */
+/* global $canvas, $canvas_area, $status_area, current_history_node, localize, magnification, main_canvas, main_ctx, root_history_node, selected_tool, system_file_handle, transparency, update_fill_and_stroke_colors_and_lineWidth */
 // Live sync: while you edit a page of your site, Paint is connected to that page's room — a Durable Object on
 // the editor Worker (worker/editor/page-room.js) that holds the live draft and relays changes to everyone
 // editing the same page. Local changes are found by diffing the document after each history change: the
@@ -9,6 +9,8 @@
 // Remote changes are applied in place — and to every node of the undo tree, so undoing your own work never
 // erases someone else's. Presence (cursors, who's editing which text) is relayed but not stored. Publishing
 // (Save to My Site) remains explicit; the room is the shared draft, so the page looks the same wherever you sign in.
+// The room keeps every change as a version (who, what, when — the label sent with each change is the undoable's
+// name); page-history.js shows that tree and can take everyone back to any version (`restore`).
 import { get_editing_block, get_selected_block, order_blocks, remove_block_by_id, set_remote_editor_lookup, snapshot_blocks, upsert_block_from_snapshot } from "./blocks.js";
 import { get_tool_by_id, resize_canvas_without_saving_dimensions, update_helper_layer, update_title } from "./functions.js";
 import { $G, E, get_icon_for_tool, make_canvas, to_canvas_coords } from "./helpers.js";
@@ -34,8 +36,10 @@ const KINDS = /** @type {const} */ (["blocks", "stickers", "text_layers"]);
 
 /** @type {WebSocket | null} */
 let socket = null;
-/** @type {{ site: string, page: string, authoritative: boolean, guest: boolean } | null} */
+/** @type {{ site: string, page: string, authoritative: boolean, guest: boolean, reason: string } | null} */
 let room = null;
+/** The undo-tree node the room last heard about: the next change is labeled by what happened since. @type {HistoryNode | null} */
+let last_synced_node = null;
 let connected = false;
 let version = 0;
 let retry_count = 0;
@@ -129,19 +133,20 @@ function join_current_page() {
  * publishing or creating the page); otherwise the room's draft wins when it has one.
  * @param {string} page
  * @param {boolean} authoritative
+ * @param {string} [reason] - why the document is authoritative ("published", "new"): the history entry's label
  */
-function join_page_room(page, authoritative) {
+function join_page_room(page, authoritative, reason = "") {
 	if (!is_live_sync_enabled()) { return; }
 	// A guest (share link) joins with their key; the owner with the edit secret.
 	const guest = system_file_handle && typeof system_file_handle === "object" && system_file_handle.guest ? system_file_handle.guest : null;
 	if (!guest && !is_signed_in()) { return; }
 	const site = guest ? guest.site : load_settings().site;
 	if (room && room.site === site && room.page === page && socket && socket.readyState <= WebSocket.OPEN) {
-		if (authoritative && connected && !guest) { replace_room_document(); }
+		if (authoritative && connected && !guest) { replace_room_document(false, replace_label(reason)); }
 		return;
 	}
 	leave_page_room();
-	room = { site, page, authoritative: authoritative && !guest, guest: !!guest };
+	room = { site, page, authoritative: authoritative && !guest, guest: !!guest, reason };
 	const url = new URL(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/rooms/${encodeURIComponent(page)}`);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 	if (guest) {
@@ -244,8 +249,9 @@ function handle_message(message) {
 			for (const client of message.clients || []) { remote_clients.set(client.client_id, client); }
 			if ((message.version === 0 && !room?.guest) || room?.authoritative) {
 				// Nothing there yet (or we're the authority): the room takes our document. Guests never seed.
-				if (room) { room.authoritative = false; }
-				replace_room_document(message.version === 0);
+				const reason = room ? room.reason : "";
+				if (room) { room.authoritative = false; room.reason = ""; }
+				replace_room_document(message.version === 0, replace_label(reason));
 			} else if (message.version === 0) {
 				set_status("live", localize("This page has nothing in it yet."));
 				remember_current_as_sent();
@@ -253,10 +259,27 @@ function handle_message(message) {
 				remote_queue = remote_queue.then(() => apply_snapshot(message)).catch((error) => { window.console?.warn("live sync: snapshot failed", error); });
 			}
 			set_status("live");
+			last_synced_node = current_history_node;
+			$G.triggerHandler("live-version");
 			break;
 		case "seeded":
 		case "ack":
 			version = message.version;
+			$G.triggerHandler("live-version");
+			break;
+		case "history":
+		case "state":
+			// For the Page History window (page-history.js)
+			$G.triggerHandler(`live-${message.type}`, [message]);
+			break;
+		case "restored":
+			// Someone (maybe us) took the page back to an older version: the room's document is that now — fetch it.
+			version = message.version;
+			send({ type: "hello", client_id: client_id(), name: my_name(), color: my_color() });
+			if (message.client_id !== client_id()) {
+				$G.triggerHandler("status-message", [localize("%1 went back in the page's history.", message.name || localize("Someone"))]);
+			}
+			$G.triggerHandler("live-version");
 			break;
 		case "replaced":
 			if (message.client_id === client_id()) { break; } // our own, from a previous socket of this tab
@@ -265,11 +288,13 @@ function handle_message(message) {
 			break;
 		case "ops":
 			version = message.version;
+			$G.triggerHandler("live-version");
 			if (message.client_id === client_id()) { break; } // a late echo of our own change (e.g. after re-opening the page): already here
 			remote_queue = remote_queue.then(() => apply_remote_ops(message.ops)).catch((error) => { window.console?.warn("live sync: ops failed", error); });
 			break;
 		case "bitmap":
 			version = message.version;
+			$G.triggerHandler("live-version");
 			if (message.client_id === client_id()) { break; }
 			remote_queue = remote_queue.then(() => apply_remote_bitmap(message)).then(() => { finish_remote_stroke(message.client_id); }).catch((error) => { window.console?.warn("live sync: bitmap failed", error); });
 			break;
@@ -279,6 +304,7 @@ function handle_message(message) {
 			break;
 		case "props":
 			version = message.version;
+			$G.triggerHandler("live-version");
 			remote_queue = remote_queue.then(() => apply_remote_props(message));
 			break;
 		case "presence":
@@ -598,11 +624,33 @@ function remember_current_as_sent() {
 	for (const kind of KINDS) { last.order[kind] = current_ids(kind).join(","); }
 }
 
+/** What the history calls a replaced draft. @param {string} reason */
+function replace_label(reason) {
+	return reason === "published" ? localize("Saved to My Site") : reason === "new" ? localize("New page") : localize("Opened");
+}
+
+/**
+ * What to call the change about to be sent: the undoable that made it (its history node's name), or "Undo …".
+ * @returns {string}
+ */
+function change_label() {
+	const node = current_history_node;
+	let label = node.name || "";
+	if (last_synced_node && node !== last_synced_node) {
+		for (let ancestor = last_synced_node.parent; ancestor; ancestor = ancestor.parent) {
+			if (ancestor === node) { label = `${localize("Undo")} ${last_synced_node.name || ""}`.trim(); break; }
+		}
+	}
+	last_synced_node = node;
+	return label.slice(0, 60);
+}
+
 /**
  * Makes this client's document the room's (empty room, or right after publishing).
  * @param {boolean} [seed=false] - the room is empty: `seed` instead of `replace`
+ * @param {string} [label] - what the history calls it
  */
-async function replace_room_document(seed = false) {
+async function replace_room_document(seed = false, label = "") {
 	const layers = { blocks: snapshot_blocks(), stickers: /** @type {any[]} */ ([]), text_layers: snapshot_text_layers() };
 	for (const snapshot of snapshot_stickers()) {
 		try {
@@ -612,8 +660,9 @@ async function replace_room_document(seed = false) {
 			window.console?.warn("live sync: couldn't upload a sticker", error);
 		}
 	}
-	send({ type: seed ? "seed" : "replace", width: main_canvas.width, height: main_canvas.height, page_properties: get_page_properties(), layers });
+	send({ type: seed ? "seed" : "replace", width: main_canvas.width, height: main_canvas.height, page_properties: get_page_properties(), layers, label: label || (seed ? localize("First draft") : localize("Opened")) });
 	remember_current_as_sent();
+	last_synced_node = current_history_node;
 	await send_full_picture();
 }
 
@@ -631,24 +680,25 @@ async function sync_local_changes() {
 	}
 	syncing = true;
 	try {
+		const label = change_label();
 		// Size and page properties
 		if (main_canvas.width !== last.width || main_canvas.height !== last.height) {
 			// A new size: the remembered pixels must be the new size too, or the bands below overflow them (RangeError)
 			last.width = main_canvas.width;
 			last.height = main_canvas.height;
 			last.pixels = main_ctx.getImageData(0, 0, main_canvas.width, main_canvas.height).data.slice();
-			send({ type: "props", width: main_canvas.width, height: main_canvas.height });
+			send({ type: "props", width: main_canvas.width, height: main_canvas.height, label });
 			await send_full_picture();
 		} else if (last.pixels) {
 			const rect = dirty_rect(last.pixels, main_ctx.getImageData(0, 0, main_canvas.width, main_canvas.height).data, main_canvas.width, main_canvas.height);
 			if (rect) {
-				await send_region(rect.x, rect.y, rect.width, rect.height, false);
+				await send_region(rect.x, rect.y, rect.width, rect.height, false, label);
 			}
 		}
 		const props = JSON.stringify(get_page_properties());
 		if (props !== last.props) {
 			last.props = props;
-			send({ type: "props", page_properties: get_page_properties() });
+			send({ type: "props", page_properties: get_page_properties(), label });
 		}
 		// Layers
 		/** @type {LiveOp[]} */
@@ -687,7 +737,7 @@ async function sync_local_changes() {
 				last.order[kind] = order;
 			}
 		}
-		if (ops.length) { send({ type: "ops", ops }); }
+		if (ops.length) { send({ type: "ops", ops, label }); }
 	} finally {
 		syncing = false;
 	}
@@ -723,8 +773,10 @@ function dirty_rect(before, after, width, height) {
 /**
  * @param {number} x @param {number} y @param {number} width @param {number} height
  * @param {boolean} reset - first band of a full picture
+ * @param {string} label - what the history calls it
+ * @param {boolean} [part] - a band of a full picture: no history entry of its own (folded into what came before)
  */
-async function send_region(x, y, width, height, reset) {
+async function send_region(x, y, width, height, reset, label, part = false) {
 	const image_data = main_ctx.getImageData(x, y, width, height);
 	const canvas = make_canvas(width, height);
 	canvas.ctx.putImageData(image_data, 0, 0);
@@ -741,10 +793,14 @@ async function send_region(x, y, width, height, reset) {
 			last.pixels.set(image_data.data.subarray(row * width * 4, (row + 1) * width * 4), ((y + row) * last.width + x) * 4);
 		}
 	}
-	send({ type: "bitmap", x, y, width, height, png, reset });
+	send({ type: "bitmap", x, y, width, height, png, reset, label, part });
 }
 
-/** Sends the whole picture as horizontal bands (the first with `reset`), replacing the room's patch log. */
+/**
+ * Sends the whole picture as horizontal bands (the first with `reset`), replacing the room's patch log. The bands
+ * are parts of whatever came before them in the history (a seed, a replace, a resize, or the room's own request
+ * for a fresh picture): they get no entry of their own.
+ */
 async function send_full_picture() {
 	if (full_picture_in_flight || !connected) { return; }
 	full_picture_in_flight = true;
@@ -752,11 +808,26 @@ async function send_full_picture() {
 		const width = main_canvas.width;
 		const rows = Math.max(8, Math.min(main_canvas.height, Math.floor(BAND_PIXELS / Math.max(1, width))));
 		for (let y = 0; y < main_canvas.height; y += rows) {
-			await send_region(0, y, width, Math.min(rows, main_canvas.height - y), y === 0);
+			await send_region(0, y, width, Math.min(rows, main_canvas.height - y), y === 0, "", true);
 		}
 	} finally {
 		full_picture_in_flight = false;
 	}
+}
+
+// ---- the page's history (page-history.js) ----
+
+/** Asks the room for every version; the answer arrives as a `live-history` event. */
+function request_history() {
+	return send({ type: "history" });
+}
+/** Asks for a version as it was (document and bitmap patches); the answer arrives as a `live-state` event. @param {number} id */
+function checkout_version(id) {
+	return send({ type: "checkout", id });
+}
+/** Takes the page — for everyone — back to a version; the next change branches from it. @param {number} id */
+function restore_version(id) {
+	return send({ type: "restore", id });
 }
 
 // ---- presence ----
@@ -1120,7 +1191,7 @@ function init_live_session() {
 		schedule_sync();
 	});
 	$G.on("layers-changed block-editing-changed", () => { send_presence(); reapply_remote_locks(); });
-	$G.on("site-page-opened", (_event, detail) => { join_page_room(detail.page, !!detail.authoritative); });
+	$G.on("site-page-opened", (_event, detail) => { join_page_room(detail.page, !!detail.authoritative, detail.reason || ""); });
 	$G.on("site-page-restored", (_event, detail) => { join_page_room(detail.page, false); });
 	$G.on("resize theme-load", () => {
 		for (const client of remote_clients.values()) { position_remote_cursor(client); }
@@ -1222,9 +1293,9 @@ function init_live_session() {
 	`).appendTo(document.head);
 }
 
-/** @returns {{ connected: boolean, room: { site: string, page: string } | null, version: number, others: string[] }} for tests and the menu */
+/** @returns {{ connected: boolean, room: { site: string, page: string } | null, version: number, others: string[], client_id: string, name: string }} for tests, the menu, and the Page History window */
 function live_sync_state() {
-	return { connected, room: room ? { site: room.site, page: room.page } : null, version, others: [...remote_clients.values()].map((client) => client.name) };
+	return { connected, room: room ? { site: room.site, page: room.page } : null, version, others: [...remote_clients.values()].map((client) => client.name), client_id: client_id(), name: my_name() };
 }
 
-export { init_live_session, is_live_sync_enabled, join_page_room, leave_page_room, live_sync_state, set_live_sync_enabled, set_my_name };
+export { checkout_version, init_live_session, is_live_sync_enabled, join_page_room, leave_page_room, live_sync_state, request_history, restore_version, set_live_sync_enabled, set_my_name };
