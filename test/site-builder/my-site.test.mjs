@@ -27,8 +27,9 @@ await page.fill('.my-site-sign-in input[name="password"]', minted.password);
 await page.click(".my-site-sign-in button[type=submit]");
 await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 15000 });
 
-// Signed in, the toolbox globe shows the site view: address, and My Site… opens the window
+// Signed in, the toolbox globe shows the site view: address, and My Site… opens the window; the site's name sits under the globe
 assert.match(await page.getAttribute(".site-globe-button", "title"), new RegExp(`~${site}`));
+assert.equal(await page.$eval(".site-globe-name", (el) => el.textContent), `~${site}`);
 await page.click(".site-globe-button");
 await page.waitForSelector(".site-view-window", { timeout: 5000 });
 assert.match(await page.$eval(".site-view-window", (el) => el.textContent), new RegExp(`~${site}`));
@@ -107,6 +108,8 @@ await page.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((r
 await page.waitForFunction(() => document.querySelectorAll(".block-layer").length === 2, null, { timeout: 15000 });
 assert.equal(await page.evaluate(() => file_name), "about.html");
 assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "about.html" });
+// The page's address is pinned at the top-left of the canvas area
+assert.equal(await page.$eval(".page-path-label", (el) => el.textContent), `~${site}/about.html`);
 
 // The Link tool offers your pages as tiles (signed in): pick one and its address goes in; the heading becomes a link to it
 await select_tool(page, "Pointer");

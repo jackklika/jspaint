@@ -1,5 +1,5 @@
 // @ts-check
-/* global $toolbox, localize, system_file_handle */
+/* global $toolbox, file_name, localize, system_file_handle */
 // The globe at the bottom of the toolbox: your site in one click. Not signed in → the Sign In dialog, then a
 // "My Site" view: your address, this page, and buttons to browse the site's files, save, share, or sign out.
 // A guest (share link) sees whose page they're on and how to pass the link along. The globe itself is a web-1.0
@@ -9,7 +9,7 @@ import { $G, E } from "./helpers.js";
 import { end_all_loading } from "./loading-veil.js";
 import { SITE_LIMIT, open_site_from_url, public_url, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_site } from "./my-site.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
-import { site_public_url } from "./site-constants.js";
+import { ROOT_SITE, site_public_url } from "./site-constants.js";
 import { get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
 
 const GLOBE = 32; // px
@@ -185,11 +185,52 @@ async function show_site_view() {
 	$w.center();
 }
 
+/**
+ * The page's address, in a slim bar right above the canvas area (never over the page, and there on a phone too):
+ * "~jack/about.html", "coolpaint.world/index.html", a guest's page, a copy of someone's page, or the file's name when
+ * it isn't on a site. Clicking it opens the site view.
+ */
+function init_page_label() {
+	const area = document.querySelector(".canvas-area");
+	if (!area || !area.parentNode || document.querySelector(".page-path-bar")) { return; }
+	// The bar and the canvas area share a column in the row of toolboxes (the row's rules don't mind)
+	const column = E("div");
+	column.className = "canvas-column";
+	area.parentNode.insertBefore(column, area);
+	const $bar = $(E("div")).addClass("page-path-bar").appendTo(column);
+	column.append(area);
+	const $label = $(E("button")).attr({ type: "button", title: localize("This page — click for the site view") }).addClass("page-path-label").appendTo($bar);
+	$label.on("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+	$label.on("click", () => { show_site_view(); });
+	const refresh = () => {
+		const guest = guest_info();
+		const page = current_site_page();
+		const settings = load_settings();
+		const copy_of = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.copy_of === "string" ? system_file_handle.copy_of : "";
+		let text;
+		if (guest) {
+			text = `~${guest.site}/${page || "…"} ${localize("(guest)")}`;
+		} else if (page && copy_of) {
+			text = localize("%1 — a copy of ~%2's", page, copy_of);
+		} else if (page && settings.site) {
+			const site_label = settings.site === ROOT_SITE ? new URL(public_url("")).host : `~${settings.site}`;
+			text = `${site_label}/${page}`;
+		} else {
+			text = `${file_name || localize("untitled")} — ${localize("not on a site")}`;
+		}
+		$label.text(text);
+		$bar.toggleClass("has-site", !!page);
+	};
+	$G.on("site-page-opened site-page-restored site-settings-changed session-update history-update", refresh);
+	refresh();
+}
+
 /** Call once the toolbox exists (app.js): adds the globe at its bottom. */
 function init_site_button() {
 	const art = globe_artwork();
 	const $button = $(E("button")).addClass("site-globe-button").attr({ type: "button", "aria-label": localize("My Site") }).appendTo($toolbox);
 	$(E("span")).addClass("site-globe").appendTo($button);
+	const $name = $(E("span")).addClass("site-globe-name").appendTo($button); // the site's name, small, under the globe
 	$button.on("mousedown", (e) => { e.preventDefault(); }); // don't take focus from a text box being edited
 	$button.on("click", () => { show_site_view(); });
 	const refresh_title = () => {
@@ -198,9 +239,11 @@ function init_site_button() {
 			localize("My Site — you're a guest on ~%1", guest.site) :
 			is_signed_in() ? localize("My Site — ~%1", load_settings().site) : localize("My Site — sign in to put pages on the web");
 		$button.attr("title", title);
+		$name.text(guest ? `~${guest.site}` : is_signed_in() ? `~${load_settings().site}` : localize("sign in"));
 	};
 	$G.on("site-page-opened site-page-restored site-settings-changed", refresh_title);
 	refresh_title();
+	init_page_label();
 	// Sent here by edit.<domain>/~name? Open that site (after a pending share-link join, which runs at 400 ms).
 	$G.one("app-ready", () => {
 		setTimeout(() => { // after a share-link join
@@ -215,9 +258,56 @@ function init_site_button() {
 			margin-top: 4px;
 			padding: 0;
 			display: inline-flex;
+			flex-direction: column;
 			align-items: center;
 			justify-content: center;
+			gap: 1px;
 			flex-shrink: 0;
+		}
+		.site-globe-name {
+			display: block;
+			max-width: 46px;
+			font: 8px/9px Arial, Helvetica, sans-serif;
+			letter-spacing: 0.2px;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			color: var(--ButtonText, #000);
+		}
+		.canvas-column {
+			display: flex;
+			flex-direction: column;
+			flex: 1 1 0;
+			min-width: 0;
+			min-height: 0;
+		}
+		.canvas-column > .canvas-area {
+			flex: 1 1 0;
+			min-height: 0;
+		}
+		.page-path-bar {
+			display: flex;
+			align-items: center;
+			flex: none;
+			height: 18px;
+			padding: 0 2px;
+			background: var(--ButtonFace, #c0c0c0);
+		}
+		.page-path-label {
+			max-width: 100%;
+			min-width: 0;
+			height: 16px;
+			padding: 0 6px;
+			font: 11px/14px Arial, Helvetica, sans-serif;
+			color: var(--ButtonText, #000);
+			background: var(--Window, #fff);
+			border: 1px solid;
+			border-color: var(--ButtonShadow, #808080) var(--ButtonHilight, #fff) var(--ButtonHilight, #fff) var(--ButtonShadow, #808080);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			cursor: default;
+			text-align: left;
 		}
 		.site-globe {
 			position: relative;

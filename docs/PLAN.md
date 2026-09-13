@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-12 — **Where am I** (Jack): the page's address in a slim bar above the canvas area (`.page-path-bar`; desktop and phone; clicking it opens the site view), and the site's name in small type under the globe (`.site-globe-name`).
+
 - 2026-09-12 — **Up to five sites per account, and "my sites" on the globe** (Jack): `MAX_SITES = 5` (auth.js: take/claim refuse with `limit`; assign by the master doesn't count); the globe's site view lists the account's sites (current bold), a click switches (`switch_site`: front page, or My Site), New Site… (`show_new_site_dialog`, sharing `new_site_form` with the Sign In dialog).
 
 - 2026-09-12 — **Who's here on the globe** (Jack): the site view shows viewers (page loads by distinct address in the last 5 minutes, and today — `SiteState.record_view/viewers` in the sites Worker, `x/stats.json`) and editors (clients in the site's live rooms — `PageRoom.client_count`, `GET /api/sites/:name/presence`).

@@ -14,6 +14,8 @@ assert.deepEqual(await page.evaluate(() => [selected_tool.id, brush_shape, brush
 // The globe at the bottom of the toolbox is My Site: not signed in, it asks you to sign in
 assert.equal(await page.evaluate(() => document.querySelector(".tools-component").lastElementChild.className), "site-globe-button");
 assert.equal(await page.evaluate(() => { const b = document.querySelector(".site-globe-button").getBoundingClientRect(); return `${Math.round(b.width)}x${Math.round(b.height)}`; }), "50x50");
+assert.equal(await page.$eval(".site-globe-name", (el) => el.textContent), "sign in", "the globe says what it's for when nobody's signed in");
+assert.match(await page.$eval(".page-path-label", (el) => el.textContent), /not on a site$/, "a plain picture: the label says so");
 await page.click(".site-globe-button");
 await page.waitForSelector(".my-site-sign-in", { timeout: 5000 });
 await page.evaluate(() => [...document.querySelectorAll(".my-site-sign-in button")].find((b) => b.textContent === "Cancel").click());
