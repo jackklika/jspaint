@@ -10,6 +10,7 @@
 //   POST /auth/sign-out                   ends the session (the cookie is cleared)
 //   POST /auth/sites {name}               a signed-in user takes a site nobody has (no owner, no password, no files)
 //   POST /auth/sites/:name/claim {password}  …or one that has a password, by proving it (once; then it's theirs)
+//   POST /auth/sites/:name/assign {email}    the master key hands a site (root included) to the account with that email
 //
 // A user = { id, email, name }; identities = (provider, subject) → user, joined by verified email so a Google
 // sign-in and a later email sign-in land on the same person; owners = site → user. Sessions are random tokens
@@ -241,6 +242,22 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		if (!is_master && (!stored || !given || given !== stored)) { return json({ error: "The password was rejected" }, 401); }
 		await accounts.claim_site(site, session.id);
 		return json({ ok: true, site, yours: true });
+	}
+	const assign_match = /^\/auth\/sites\/([^/]+)\/assign$/.exec(path);
+	if (assign_match) {
+		// Support, by hand: the master key makes a site (root included) an account's
+		if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
+		const site = assign_match[1];
+		if (!valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
+		if ((await role_of(request, env, site)) !== "master") { return json({ error: "Unauthorized: send Authorization: Bearer <master key>" }, 401); }
+		const body = await request.json().catch(() => ({}));
+		const email = String(body.email || "").trim().toLowerCase();
+		if (!email) { return json({ error: "email: the account's address (they must have signed in once)" }, 400); }
+		const accounts = accounts_of(env);
+		const user = await accounts.user_by_email(email);
+		if (!user) { return json({ error: "No account with that email has signed in yet" }, 404); }
+		await accounts.claim_site(site, user.id);
+		return json({ ok: true, site, user: { email: user.email, name: user.name } });
 	}
 	return json({ error: "Not found" }, 404);
 }

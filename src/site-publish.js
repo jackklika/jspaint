@@ -223,6 +223,13 @@ function show_publish_dialog({ auto = false, page } = {}) {
 	const $remember = $(E("input")).attr({ type: "checkbox", id: "site-publish-remember" }).prop("checked", settings.remember_secret).appendTo($remember_row);
 	$(E("label")).attr({ for: "site-publish-remember" }).text(` ${localize("Remember the password on this computer")}`).appendTo($remember_row);
 	const $editor_url = field(localize("Editor URL: "), "editor_url");
+	const account = !guest && settings.account ? settings.account : null;
+	if (account) {
+		// Signed in with an account: the session cookie proves it; no password to type
+		$secret.closest(".site-publish-row").hide();
+		$remember_row.hide();
+		$(E("div")).addClass("site-publish-row site-publish-account").text(localize("Signed in as %1 (Google) — no password needed.", account.email || account.name)).appendTo($main);
+	}
 	if (guest) {
 		// Guests save with their share link's key, to the page it covers: nothing to fill in.
 		for (const $input of [$site, $page, $secret, $editor_url]) { $input.prop("disabled", true); }
@@ -264,7 +271,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			$page.focus();
 			return;
 		}
-		if (!current.secret && !guest) {
+		if (!current.secret && !guest && !account) {
 			log("The password is needed to save.");
 			$secret.focus();
 			return;
@@ -273,7 +280,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			current.site = guest.site;
 			current.invite = { key: guest.key, page: current.page };
 		} else {
-			save_settings(current);
+			save_settings({ ...settings, ...current }); // (keeps the account)
 		}
 		$save.prop("disabled", true);
 		$log.empty();
@@ -294,8 +301,8 @@ function show_publish_dialog({ auto = false, page } = {}) {
 	$w.$Button(localize("Cancel"), () => { $w.close(); });
 	$w.$content.css({ width: "min(460px, 90vw)" });
 	$w.center();
-	($site.val() ? $secret : $site).focus();
-	if (auto && settings.site && (settings.secret || guest)) {
+	($site.val() ? (account ? $page : $secret) : $site).focus();
+	if (auto && settings.site && (settings.secret || guest || account)) {
 		$save.trigger("click");
 	}
 	return result_promise;

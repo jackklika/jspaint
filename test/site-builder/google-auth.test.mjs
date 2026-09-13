@@ -104,6 +104,7 @@ try {
 	assert.deepEqual(me.sites, []);
 	assert.match(me.user.id, /^[0-9a-f]{24}$/);
 	const user_id = me.user.id;
+	const my_email = person.email; // (the fake's `person` changes later, for the other-account cases)
 	const site = `g-${stamp}`;
 	assert.equal((await call(`/api/whoami?site=${site}`, {}, cookies)).status, 200);
 	assert.equal((await (await call(`/api/whoami?site=${site}`, {}, cookies)).json()).role, "user", "not this site's owner (yet)");
@@ -165,7 +166,16 @@ try {
 	const unverified = await call(`/auth/google/callback?code=good-code&state=${new URL(start.headers.get("Location") || "").searchParams.get("state")}`, {}, { coolpaint_auth_state: cookie_from(start, "coolpaint_auth_state")?.value || "" });
 	assert.equal(unverified.status, 403, "an unverified email doesn't get in");
 
-	const sites_to_clean = [site, older];
+	// The master hands a site to an account by email (support, by hand); root too
+	const handed = `g-${stamp}-handed`;
+	response = await fetch(`${editor}/auth/sites/${handed}/assign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: my_email }) });
+	assert.equal(response.status, 401, "the master key only");
+	response = await fetch(`${editor}/auth/sites/${handed}/assign`, { method: "POST", headers: { Authorization: `Bearer ${master}`, "Content-Type": "application/json" }, body: JSON.stringify({ email: `nobody-${stamp}@example.com` }) });
+	assert.equal(response.status, 404, "an account that never signed in");
+	response = await fetch(`${editor}/auth/sites/${handed}/assign`, { method: "POST", headers: { Authorization: `Bearer ${master}`, "Content-Type": "application/json" }, body: JSON.stringify({ email: my_email.toUpperCase() }) });
+	assert.deepEqual(await response.json(), { ok: true, site: handed, user: { email: my_email, name: "Jack Test" } });
+	assert.equal((await (await call(`/api/whoami?site=${handed}`, {}, cookies)).json()).role, "site", "…and now the account edits it");
+	const sites_to_clean = [site, older, handed];
 
 	// Signing out ends the session
 	response = await call("/auth/sign-out", { method: "POST" }, cookies);

@@ -77,6 +77,11 @@ export class Accounts extends DurableObject {
 		sql.exec("INSERT INTO identities (provider, subject, user_id, email, created) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider, subject) DO UPDATE SET email = excluded.email", provider, subject, user_id, email || null, now);
 		return { user: /** @type {any} */ (this.get_user(user_id)), created };
 	}
+	/** @param {string} email @returns {{ id: string, email: string, name: string } | null} */
+	user_by_email(email) {
+		const row = this.ctx.storage.sql.exec("SELECT id FROM users WHERE email = ?", email.toLowerCase()).toArray()[0];
+		return row ? this.get_user(String(row.id)) : null;
+	}
 	/** @param {string} hash - SHA-256 of the session token @param {string} user_id @param {number} expires - ms */
 	create_session(hash, user_id, expires) {
 		const sql = this.ctx.storage.sql;

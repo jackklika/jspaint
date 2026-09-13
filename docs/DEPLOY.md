@@ -37,6 +37,12 @@ The editor's Google sign-in (`worker/editor/auth.js`) needs an OAuth client from
 2. **APIs & Services → Credentials → Create credentials → OAuth client ID → Web application**: authorized JavaScript origin `https://edit.coolpaint.world`; authorized redirect URI `https://edit.coolpaint.world/auth/google/callback` (add `http://localhost:8787/auth/google/callback` to sign in against a local editor with the real Google).
 3. Put the client ID in `worker/editor/wrangler.jsonc` → `vars.GOOGLE_CLIENT_ID` (it's public), and the secret in the Worker: `cd worker && npx wrangler secret put GOOGLE_CLIENT_SECRET -c editor/wrangler.jsonc`. Deploy the editor. `GET https://edit.coolpaint.world/auth/methods` says `{"google":true}` when it's on; with the ID empty the button simply doesn't show.
 
+**Handing a site to an account** (root included), once that person has signed in with Google at least once:
+
+```sh
+curl -X POST https://edit.coolpaint.world/auth/sites/<site>/assign -H "Authorization: Bearer $(cat worker/editor/.secret.txt)" -H "Content-Type: application/json" -d '{"email":"person@example.com"}'
+```
+
 Locally, `worker/editor/.dev.vars` points `GOOGLE_AUTH_URL`/`GOOGLE_TOKEN_URL`/`GOOGLE_USERINFO_URL` at the fake Google that `test/site-builder/google-auth.test.mjs` runs on `:8790`, and `AUTH_ORIGIN=http://localhost:8787` (wrangler dev reports the custom domain as the request host, so the callback address comes from config).
 
 ## Custom domains: the one rule
