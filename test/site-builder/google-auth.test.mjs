@@ -204,6 +204,20 @@ try {
 	await paint.waitForSelector(".my-site-window .my-site-facts", { timeout: 20000 });
 	assert.match(await paint.$eval(".my-site-window .my-site-facts", (el) => el.textContent), new RegExp(`Signed in:browser-${stamp}@example.com \\(Google\\)`));
 	assert.deepEqual(await paint.evaluate(() => { const s = JSON.parse(localStorage.getItem("jspaint site publish settings")); return [s.site, s.secret, s.account.sites]; }), [browser_site, "", [browser_site]]);
+	// A browser that still remembers a (now wrong) site password, reloading a restored session: whoami reports the
+	// account beside the password, Paint drops the password, and the site is still editable (the session owns it)
+	await paint.evaluate(() => { [...document.querySelectorAll(".my-site-window button")].find((b) => b.textContent === "Close")?.click(); });
+	await paint.evaluate(() => {
+		const s = JSON.parse(localStorage.getItem("jspaint site publish settings"));
+		s.account = null;
+		s.secret = "stale-stale-stale-stale";
+		s.remember_secret = true;
+		localStorage.setItem("jspaint site publish settings", JSON.stringify(s));
+	});
+	await paint.waitForFunction(() => /#local:/.test(location.hash), null, { timeout: 5000 });
+	await paint.reload({ waitUntil: "domcontentloaded" });
+	await paint.waitForFunction(() => { const s = JSON.parse(localStorage.getItem("jspaint site publish settings") || "{}"); return s.account && s.account.email && s.secret === ""; }, null, { timeout: 20000 });
+	assert.equal(await paint.evaluate(async () => (await import("/src/my-site.js")).current_role()), "site", "the session owns the site");
 	await close();
 	sites_to_clean.push(browser_site);
 

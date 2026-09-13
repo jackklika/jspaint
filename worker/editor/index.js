@@ -145,19 +145,18 @@ async function role_of(request, env, site = "") {
 	const secret = env.SITE_EDIT_SECRET;
 	if (!secret) { return null; }
 	const token = bearer_of(request);
-	if (!token) {
-		// No bearer: a signed-in account (auth.js session cookie) that owns the site edits it like the site's password does
-		if (!site || !valid_site_name(site)) { return null; }
-		const session = await session_of(request, env);
-		return session && (await accounts_of(env).owner_of(site)) === session.id ? "site" : null;
-	}
-	if (same_string(token, secret)) { return "master"; }
+	if (token && same_string(token, secret)) { return "master"; }
 	if (!site || !valid_site_name(site)) { return null; }
-	const given = await password_hash(secret, site, token);
-	let stored = await site_hash(env, site);
-	if (stored && same_string(given, stored)) { return "site"; }
-	stored = await site_hash(env, site, { fresh: true });
-	return stored && same_string(given, stored) ? "site" : null;
+	if (token) {
+		const given = await password_hash(secret, site, token);
+		let stored = await site_hash(env, site);
+		if (stored && same_string(given, stored)) { return "site"; }
+		stored = await site_hash(env, site, { fresh: true });
+		if (stored && same_string(given, stored)) { return "site"; }
+	}
+	// No (good) bearer: a signed-in account (auth.js session cookie) that owns the site edits it like the site's password does
+	const session = await session_of(request, env);
+	return session && (await accounts_of(env).owner_of(site)) === session.id ? "site" : null;
 }
 
 // --- share keys: a guest's pass to one page ---

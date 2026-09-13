@@ -92,7 +92,10 @@ async function open_site_from_url() {
 		return;
 	}
 	if (!entry || !entry.site) {
-		if (!FRESH_VISIT) { return; }
+		if (!FRESH_VISIT) {
+			if (is_signed_in() || has_account()) { check_sign_in(); } // (a restored session: still learn the account, drop a stale password)
+			return;
+		}
 		if (is_signed_in() && await check_sign_in()) {
 			// Your site's front page (not the page you last saved: edit.<domain>/about is the address for that)
 			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); }
@@ -250,8 +253,9 @@ async function check_sign_in({ probe = false } = {}) {
 		let site = settings.site;
 		if (account && info.role === "user" && account.sites.length && !account.sites.includes(site)) { site = account.sites[0]; } // (one of yours, not whatever site was last typed)
 		// An account outranks a remembered site password (the master key stays: it's more than the account)
-		if (account || settings.account) { save_settings({ ...settings, site, account, ...(account && info.role !== "master" ? { secret: "", remember_secret: false } : {}) }); }
-		if (site !== settings.site) { return check_sign_in(); }
+		const drop_password = !!account && info.role !== "master" && !!settings.secret;
+		if (account || settings.account) { save_settings({ ...settings, site, account, ...(drop_password ? { secret: "", remember_secret: false } : {}) }); }
+		if (site !== settings.site || drop_password) { return check_sign_in(); } // (once more, for the site that is yours / without the password)
 		role = info.role === "user" ? null : info.role || null; // ("user": signed in, but not this site's owner)
 		refresh_x_element_kinds();
 		return role !== null;
