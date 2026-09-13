@@ -11,6 +11,8 @@
 //   POST /auth/sites {name}               a signed-in user takes a site nobody has (no owner, no password, no files)
 //   POST /auth/sites/:name/claim {password}  …or one that has a password, by proving it (once; then it's theirs)
 //   POST /auth/sites/:name/assign {email}    the master key hands a site (root included) to the account with that email
+//   GET  /auth/favorites                     the signed-in account's favorite GIFs (the picker's ♥), newest first
+//   POST /auth/favorites {add, remove}       hearts and un-hearts (add: [{id, width, height, at}], remove: [id]) → the list
 //
 // A user = { id, email, name }; identities = (provider, subject) → user, joined by verified email so a Google
 // sign-in and a later email sign-in land on the same person; owners = site → user. Sessions are random tokens
@@ -84,6 +86,28 @@ function set_cookie(url, env, name, value, max_age) {
 const accounts_of = (env) => /** @type {any} */ (env.ACCOUNTS.getByName("global"));
 
 /**
+ * Server-side product events (signup, site_claimed): captured straight to PostHog's ingestion API with
+ * the editor Worker's POSTHOG_API_KEY secret (the public client key — same project as the app's
+ * analytics). From there, Hog Functions route them onward — a Discord destination for signups today.
+ * Fire-and-forget: waitUntil keeps it alive past the response; no key set (local dev) = a no-op.
+ * @param {any} env
+ * @param {ExecutionContext | null} ctx
+ * @param {string} event
+ * @param {string} distinct_id the account's user id, so events tie to one person
+ * @param {Record<string, string>} properties
+ */
+function capture_event(env, ctx, event, distinct_id, properties) {
+	const api_key = env.POSTHOG_API_KEY;
+	if (!api_key) { return; }
+	const capture = fetch("https://us.i.posthog.com/e/", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ api_key, batch: [{ event, properties: { distinct_id, ...properties }, timestamp: new Date().toISOString() }] }),
+	}).catch(() => { /* analytics must never break a signup */ });
+	if (ctx) { ctx.waitUntil(capture); }
+}
+
+/**
  * The signed-in user behind the request's session cookie, if any (and if the request looks like our own page's —
  * a cross-site request can't act with the cookie; see cookie_request_allowed).
  * @param {Request} request @param {any} env
@@ -147,7 +171,7 @@ function json(data, status = 200, headers = {}) {
  * @param {Map<string, any>} site_hashes - index.js's cache, to look a stored hash up
  * @param {(env: any, site: string, options?: { fresh?: boolean }) => Promise<string | null>} site_hash
  */
-async function handle_auth(request, url, env, { role_of, password_hash, site_hash }) {
+async function handle_auth(request, url, env, { role_of, password_hash, site_hash }, ctx = null) {
 	const path = url.pathname;
 	if (request.method === "OPTIONS") { return new Response(null, { status: 204, headers: CORS }); }
 	if (path === "/auth/methods") {
@@ -191,7 +215,10 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const identity = provider.identity(profile);
 		if (!profile_response.ok || !identity.subject) { return json({ error: `${name} didn't say who you are` }, 502, { "Set-Cookie": clear_state }); }
 		if (!identity.verified || !identity.email) { return json({ error: `Your ${name} account has no verified email address` }, 403, { "Set-Cookie": clear_state }); }
-		const { user } = await accounts_of(env).sign_in_identity({ provider: name, subject: identity.subject, email: identity.email, name: identity.name });
+		const { user, created } = await accounts_of(env).sign_in_identity({ provider: name, subject: identity.subject, email: identity.email, name: identity.name });
+		if (created) {
+			capture_event(env, ctx, "signup", user.id, { email: user.email || "", name: user.name || "", provider: name });
+		}
 		const session_cookie = await issue_session(url, env, user.id);
 		const headers = new Headers({ Location: safe_next(next), "Cache-Control": "no-store" });
 		headers.append("Set-Cookie", session_cookie);
@@ -222,6 +249,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const listing = await env.SITES.list({ prefix: `sites/${site}/`, limit: 1 });
 		if (listing.objects.length) { return json({ error: "That name is taken" }, 409); }
 		await accounts.claim_site(site, session.id);
+		capture_event(env, ctx, "site_claimed", session.id, { site, email: session.email || "" });
 		return json({ ok: true, site, yours: true });
 	}
 	const claim_match = /^\/auth\/sites\/([^/]+)\/claim$/.exec(path);
@@ -244,7 +272,33 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const is_master = (await role_of(request, env, site)) === "master";
 		if (!is_master && (!stored || !given || given !== stored)) { return json({ error: "The password was rejected" }, 401); }
 		await accounts.claim_site(site, session.id);
+		capture_event(env, ctx, "site_claimed", session.id, { site, email: session.email || "" });
 		return json({ ok: true, site, yours: true });
+	}
+	if (path === "/auth/favorites") {
+		// The account's favorite GIFs: GifCities ids the picker hearted, so they're the same on every device
+		const session = await session_of(request, env);
+		if (!session) { return json({ error: "Sign in first" }, 401); }
+		const accounts = accounts_of(env);
+		if (request.method === "GET") { return json({ favorites: await accounts.favorites_of(session.id) }); }
+		if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
+		const body = await request.json().catch(() => ({}));
+		const GIF = /^[A-Z0-9]{20,40}$/;
+		const size = (/** @type {unknown} */ n) => Math.max(0, Math.min(4000, Math.round(Number(n) || 0)));
+		/** @type {{ id: string, width: number, height: number, at: number }[]} */
+		const add = [];
+		for (const item of Array.isArray(body.add) ? body.add.slice(0, 300) : []) {
+			if (!item || typeof item.id !== "string" || !GIF.test(item.id)) { return json({ error: "add: GifCities ids with width and height" }, 400); }
+			add.push({ id: item.id, width: size(item.width), height: size(item.height), at: Math.min(Date.now(), Math.max(0, Math.round(Number(item.at) || 0))) || Date.now() });
+		}
+		/** @type {string[]} */
+		const remove = [];
+		for (const id of Array.isArray(body.remove) ? body.remove.slice(0, 300) : []) {
+			if (typeof id !== "string" || !GIF.test(id)) { return json({ error: "remove: GifCities ids" }, 400); }
+			remove.push(id);
+		}
+		await accounts.update_favorites(session.id, add, remove);
+		return json({ favorites: await accounts.favorites_of(session.id) });
 	}
 	const assign_match = /^\/auth\/sites\/([^/]+)\/assign$/.exec(path);
 	if (assign_match) {

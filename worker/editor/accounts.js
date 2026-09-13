@@ -20,6 +20,8 @@ export class Accounts extends DurableObject {
 			sql.exec("CREATE TABLE IF NOT EXISTS identities (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT, created INTEGER NOT NULL, PRIMARY KEY (provider, subject))");
 			sql.exec("CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL)");
 			sql.exec("CREATE TABLE IF NOT EXISTS owners (site TEXT PRIMARY KEY, user_id TEXT NOT NULL, claimed INTEGER NOT NULL)");
+			// The GIFs an account hearted in the GIF picker (GifCities ids), so favorites follow the person, not the browser
+			sql.exec("CREATE TABLE IF NOT EXISTS favorites (user_id TEXT NOT NULL, gif TEXT NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL, PRIMARY KEY (user_id, gif))");
 			return Promise.resolve();
 		});
 	}
@@ -116,5 +118,25 @@ export class Accounts extends DurableObject {
 	/** @param {string} user_id @returns {string[]} the sites this user owns, oldest first */
 	sites_of(user_id) {
 		return this.ctx.storage.sql.exec("SELECT site FROM owners WHERE user_id = ? ORDER BY claimed", user_id).toArray().map((row) => String(row.site));
+	}
+	/** @param {string} user_id @returns {{ id: string, width: number, height: number, at: number }[]} the user's favorite GIFs, newest first */
+	favorites_of(user_id) {
+		return this.ctx.storage.sql.exec("SELECT gif, width, height, at FROM favorites WHERE user_id = ? ORDER BY at DESC, gif LIMIT 300", user_id).toArray()
+			.map((row) => ({ id: String(row.gif), width: Number(row.width), height: Number(row.height), at: Number(row.at) }));
+	}
+	/**
+	 * Hearts and un-hearts, together: the picker's toggles and the merge on sign-in.
+	 * @param {string} user_id
+	 * @param {{ id: string, width: number, height: number, at: number }[]} add - kept with their own `at` (a favorite hearted earlier elsewhere keeps its place)
+	 * @param {string[]} remove
+	 */
+	update_favorites(user_id, add, remove) {
+		const sql = this.ctx.storage.sql;
+		for (const gif of remove) { sql.exec("DELETE FROM favorites WHERE user_id = ? AND gif = ?", user_id, gif); }
+		for (const item of add) {
+			sql.exec("INSERT INTO favorites (user_id, gif, width, height, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, gif) DO UPDATE SET width = excluded.width, height = excluded.height, at = MAX(favorites.at, excluded.at)", user_id, item.id, item.width, item.height, item.at);
+		}
+		// Room for 300: the oldest go
+		sql.exec("DELETE FROM favorites WHERE user_id = ? AND gif NOT IN (SELECT gif FROM favorites WHERE user_id = ? ORDER BY at DESC, gif LIMIT 300)", user_id, user_id);
 	}
 }

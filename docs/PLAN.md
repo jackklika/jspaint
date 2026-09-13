@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-13 — **Favorites on the account** (Jack: "make the favorites state stay with the account cloud state"): `Accounts` DO gets a `favorites` table (`favorites_of`, `update_favorites`); `GET /auth/favorites`, `POST /auth/favorites {add, remove}` (session); the picker merges local and account lists (`sync_favorites`, on open and on `site-settings-changed`) and posts each ♥. Tests: google-auth.test.mjs (routes, and the browser: a ♥ made signed in comes back after the local list is cleared).
+
 - 2026-09-13 — **Undo/Redo buttons** (Jack: "still look wonky… the arrows should both be different colors"): the quick buttons' arrows are generated arcs (a symmetric 3–4px semicircle with a triangular head; `UNDO_ROWS` in quick-buttons.js, redo mirrored), navy for Undo and green for Redo, etched grey when disabled; checked in 4× screenshots. Also: the GIF picker's analytics calls are guarded — `app-analytics.js` reaches for the bare `posthog` global (`posthog?.capture` still throws when the identifier is undeclared), which broke the picker wherever the PostHog snippet isn't loaded (dev servers, browsers that block it).
 
 - 2026-09-13 — **GIF favorites** (Jack: "add way to heart gifs and have 'favorite gif tab'"): the GIF picker has Search and Favorites tabs; every tile (search results and favorites, `make_tile`) wears a ♥ button that toggles the GIF in localStorage (`jspaint favorite gifs`, by GifCities id); `gif-favorites-changed` keeps hearts and the tab's count in step. Test: `gif-favorites.test.mjs` (offline: search and GIFs stubbed with `page.route`).

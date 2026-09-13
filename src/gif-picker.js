@@ -3,11 +3,13 @@
 // The GIF picker (the "GIFs" button under the tools, or View > GIF Picker): search GifCities — the
 // Internet Archive's collection of GeoCities GIFs — and click or drag a result onto the canvas to add
 // it as an animated sticker (stickers.js). gifcities.org has no API or CORS, so requests go through
-// the editor Worker's proxy (worker/editor/index.js). A ♥ on each GIF keeps it in the Favorites tab
-// (this browser's, in localStorage — by GifCities id, so they're the same GIFs on any editor).
+// the editor Worker's proxy (worker/editor/index.js). A ♥ on each GIF keeps it in the Favorites tab: in this
+// browser (localStorage, by GifCities id) and, signed in with an account, on the account too (GET/POST
+// /auth/favorites) — the two are merged whenever the picker opens or the sign-in changes, so favorites follow
+// the person between devices, and hearts made signed out come along when they sign in.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { track_app_event as track_event } from "./app-analytics.js";
-import { current_site, get_site_editor_url } from "./site-publish.js";
+import { authorized, current_site, get_site_editor_url, has_account } from "./site-publish.js";
 import { show_error_message } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { is_editing_container } from "./blocks.js";
@@ -93,8 +95,56 @@ function toggle_favorite(gif) {
 	save_favorites(list);
 	track_app_event("gif_favorite", { on, site: current_site() || null });
 	$G.triggerHandler("gif-favorites-changed");
+	if (has_account()) {
+		// …and on the account (best effort: the next merge catches up if this doesn't land)
+		const item = list.find((entry) => entry.id === gif.id);
+		post_favorites(on ? { add: [item] } : { remove: [gif.id] }).catch(() => { /* offline */ });
+	}
 	return on;
 }
+
+/** @param {{ add?: FavoriteGif[], remove?: string[] }} changes @returns {Promise<FavoriteGif[] | null>} the account's list after */
+async function post_favorites(changes) {
+	const response = await fetch(`${get_site_editor_url()}/auth/favorites`, authorized({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) }));
+	if (!response.ok) { return null; }
+	const data = await response.json();
+	return Array.isArray(data.favorites) ? data.favorites : null;
+}
+
+/** @type {Promise<void> | null} */
+let syncing_favorites = null;
+/**
+ * Brings this browser's favorites and the account's together: the union, newest first — hearts made here go up
+ * to the account, the account's come down. Signed out, nothing happens (the local list stands).
+ */
+function sync_favorites() {
+	if (!has_account()) { return Promise.resolve(); }
+	if (syncing_favorites) { return syncing_favorites; }
+	syncing_favorites = (async () => {
+		try {
+			const response = await fetch(`${get_site_editor_url()}/auth/favorites`, authorized());
+			if (!response.ok) { return; }
+			/** @type {FavoriteGif[]} */
+			const cloud = (await response.json()).favorites || [];
+			const local = load_favorites();
+			const cloud_ids = new Set(cloud.map((item) => item.id));
+			const only_here = local.filter((item) => !cloud_ids.has(item.id));
+			const merged = (only_here.length ? (await post_favorites({ add: only_here })) || [...cloud, ...only_here] : cloud)
+				.slice()
+				.sort((a, b) => b.at - a.at);
+			if (JSON.stringify(merged.map((item) => item.id)) !== JSON.stringify(local.map((item) => item.id))) {
+				save_favorites(merged);
+				$G.triggerHandler("gif-favorites-changed");
+			}
+		} catch (_error) {
+			/* offline: the local list stands */
+		} finally {
+			syncing_favorites = null;
+		}
+	})();
+	return syncing_favorites;
+}
+$G.on("site-settings-changed", () => { sync_favorites(); }); // (signing in: the hearts made signed out come along)
 /** The GifCities id in a proxy URL, if it is one. @param {string} url */
 function gif_id_of(url) {
 	return /\/api\/gifcities\/gif\/([A-Z0-9]{20,40})/.exec(url)?.[1] || "";
@@ -301,6 +351,7 @@ function show_gif_picker() {
 	$favorites = $(E("div")).addClass("gif-picker-results gif-picker-favorites inset-deep").appendTo($favorites_panel);
 	$(E("div")).addClass("gif-picker-credit").html('GIFs from <a href="https://gifcities.org" target="_blank" rel="noopener">GifCities</a>, the Internet Archive\'s GeoCities collection.').appendTo($main);
 	render_favorites(); // (the tab's count)
+	sync_favorites(); // (an account's favorites, from wherever they were hearted)
 	const on_favorites_changed = () => {
 		render_favorites();
 		$results?.children(".gif-tile").each((_index, tile) => { $(tile).triggerHandler("gif-favorites-changed"); }); // (a heart on a search result follows the Favorites tab; triggerHandler: no bubbling back up here)
