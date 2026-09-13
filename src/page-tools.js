@@ -10,6 +10,7 @@
 import { add_block } from "./blocks.js";
 import { link_tool } from "./element-link.js";
 import { E } from "./helpers.js";
+import { LINK_ICON_SVG } from "./icons.js";
 import { toggle_gif_picker } from "./gif-picker.js";
 import { show_pictures_window } from "./pictures.js";
 
@@ -52,8 +53,8 @@ const ICONS = {
 	counter: svg('<rect x="1" y="4" width="14" height="8" fill="#000" stroke="#808080"/><rect x="3" y="6" width="2" height="4" fill="#00ff00"/><rect x="7" y="6" width="2" height="4" fill="#00ff00"/><rect x="11" y="6" width="2" height="4" fill="#00ff00"/>'),
 	music: svg('<rect x="6" y="2" width="1" height="9" fill="#000"/><rect x="12" y="1" width="1" height="9" fill="#000"/><rect x="6" y="2" width="7" height="2" fill="#000"/><rect x="3" y="10" width="4" height="3" fill="#000"/><rect x="9" y="9" width="4" height="3" fill="#000"/>'),
 	html: svg('<path d="M5 4v1H4v1H3v1H2v2h1v1h1v1h1v1H4v-1H3v-1H2V9H1V7h1V6h1V5h1V4zM11 4v1h1v1h1v1h1v2h-1v1h-1v1h-1v1h1v-1h1v-1h1V9h1V7h-1V6h-1V5h-1V4z" fill="#000080"/><path d="M9 3h1L7 13H6z" fill="#000"/>'),
-	// two chain links (the Font toolbar's link button wears the same glyph)
-	link: svg('<path d="M6 4h5v1h1v1h1v3h-1v1h-1v1H9v-1h2V9h1V7h-1V6H9V5H6zM3 6h4v1H5v1H4v2h1v1h2v1H3v-1H2V7h1zM5 8h6v1H5z" fill="#000080"/>'),
+	// two chain links (the Font toolbar's link button wears the same glyph — icons.js)
+	link: LINK_ICON_SVG,
 	// a clock: "last updated"
 	updated: svg('<circle cx="8" cy="8" r="6.5" fill="#fff" stroke="#000"/><rect x="8" y="3" width="1" height="5" fill="#000"/><rect x="8" y="8" width="4" height="1" fill="#000080"/><rect x="7" y="7" width="2" height="2" fill="#000"/>'),
 	// a contents list: a title line, then indented entries
