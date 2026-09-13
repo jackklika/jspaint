@@ -29,6 +29,16 @@ npm run deploy                                 # = deploy:sites, then deploy:edi
 - Secrets never go through git: `SITE_EDIT_SECRET` (the master key) is a Worker secret on `jspaint-editor` (`npx wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`; the value is kept in the gitignored `worker/editor/.secret.txt`); locally it lives in the gitignored `worker/editor/.dev.vars`. Site passwords are minted with `npm run site-password <site>` and written to the gitignored `worker/editor/.passwords/<site>.txt` — never printed.
 - Durable Object classes need a migration entry in `worker/editor/wrangler.jsonc` (`migrations`: v1 `PageRoom`, v2 `GifStats`, v3 `Accounts`); add a new tag for a new class, never edit an old one.
 
+## Sign in with Google (once)
+
+The editor's Google sign-in (`worker/editor/auth.js`) needs an OAuth client from the Google Cloud console — `gcloud` can't make this kind (its `iam oauth-clients` are Workforce Identity clients for an organization's own users). Project `coolpaintworld`, account `jack@silversense.org`:
+
+1. **APIs & Services → OAuth consent screen** (Google Auth Platform): audience **External**; app name "coolpaint.world", support email, developer contact; scopes `openid`, `email`, `profile` only (no verification needed for those); then **Publish** it out of testing mode (one click; testing mode allows only 100 listed test users).
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID → Web application**: authorized JavaScript origin `https://edit.coolpaint.world`; authorized redirect URI `https://edit.coolpaint.world/auth/google/callback` (add `http://localhost:8787/auth/google/callback` to sign in against a local editor with the real Google).
+3. Put the client ID in `worker/editor/wrangler.jsonc` → `vars.GOOGLE_CLIENT_ID` (it's public), and the secret in the Worker: `cd worker && npx wrangler secret put GOOGLE_CLIENT_SECRET -c editor/wrangler.jsonc`. Deploy the editor. `GET https://edit.coolpaint.world/auth/methods` says `{"google":true}` when it's on; with the ID empty the button simply doesn't show.
+
+Locally, `worker/editor/.dev.vars` points `GOOGLE_AUTH_URL`/`GOOGLE_TOKEN_URL`/`GOOGLE_USERINFO_URL` at the fake Google that `test/site-builder/google-auth.test.mjs` runs on `:8790`, and `AUTH_ORIGIN=http://localhost:8787` (wrangler dev reports the custom domain as the request host, so the callback address comes from config).
+
 ## Custom domains: the one rule
 
 **Never list a hostname in both wrangler configs.** Wrangler treats a config's `routes` as that Worker's *complete* set of custom domains and, in a non-TTY shell, silently re-points a hostname that another Worker holds. Moving a hostname between Workers: attach it to the new Worker's config and deploy, then remove it from the old config and deploy that, right away, and commit both.

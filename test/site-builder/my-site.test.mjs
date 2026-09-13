@@ -20,9 +20,10 @@ const { page, close } = await open_paint();
 // Sign in
 await click_menu_item(page, "Sign In to My Site...");
 await page.waitForSelector(".my-site-sign-in", { timeout: 5000 });
+await page.fill('.my-site-sign-in input[name="editor-url"]', editor);
+await page.waitForSelector(".my-site-sign-in .google-sign-in", { timeout: 5000 }); // that editor has Google sign-in set up: the button is offered
 await page.fill('.my-site-sign-in input[name="site-name"]', site);
 await page.fill('.my-site-sign-in input[name="password"]', minted.password);
-await page.fill('.my-site-sign-in input[name="editor-url"]', editor);
 await page.click(".my-site-sign-in button[type=submit]");
 await page.waitForFunction(() => !document.querySelector(".my-site-sign-in"), null, { timeout: 15000 });
 

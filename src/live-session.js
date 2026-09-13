@@ -146,9 +146,9 @@ function join_page_room(page, authoritative) {
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 	if (guest) {
 		url.searchParams.set("invite", guest.key);
-	} else {
+	} else if (load_settings().secret) {
 		url.searchParams.set("token", load_settings().secret);
-	}
+	} // (an account's session rides in the cookie: the room is on the editor's own origin)
 	set_status("connecting");
 	try {
 		socket = new WebSocket(url.href);

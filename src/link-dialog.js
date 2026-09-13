@@ -7,7 +7,7 @@
 import { $DialogWindow } from "./$ToolWindow.js";
 import { E } from "./helpers.js";
 import { render_page_tiles, select_page_tile } from "./page-tiles.js";
-import { current_site, get_site_editor_url, is_signed_in, load_settings } from "./site-publish.js";
+import { authorized, current_site, get_site_editor_url, is_signed_in } from "./site-publish.js";
 
 /**
  * @typedef {object} LinkTarget
@@ -72,7 +72,7 @@ function show_link_dialog(target) {
 	};
 	if (site && is_signed_in()) {
 		note(localize("Loading your pages…"));
-		fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files`, { headers: { Authorization: `Bearer ${load_settings().secret}` } })
+		fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files`, authorized())
 			.then((response) => (response.ok ? response.json() : null))
 			.then((listing) => {
 				if ($w.closed) { return; }

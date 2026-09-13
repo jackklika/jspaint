@@ -13,7 +13,7 @@ import { update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { qr_modules, render_qr_canvas } from "./qr.js";
 import { preview_path, render_share_preview } from "./share-preview.js";
-import { current_site, get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
+import { authorized, current_site, get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
 
 const JOIN_KEY = "jspaint join"; // sessionStorage: the share link this tab opened with (survives the app's own reloads)
 // <site>/<page>/<key>; the page may itself contain slashes (encoded in links, decoded by URLSearchParams).
@@ -69,15 +69,13 @@ function share_url(site, page, key) {
  */
 async function upload_share_preview(site, page) {
 	const guest = guest_info();
-	const headers = guest ?
-		{ Authorization: `Invite ${guest.key}`, "X-Invite-Page": page } :
-		{ Authorization: `Bearer ${load_settings().secret}` };
 	const blob = await render_share_preview();
-	const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/${preview_path(page)}`, {
+	// A guest's key, or the owner's proof (the site's password, or an account's session cookie)
+	const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/${preview_path(page)}`, authorized({
 		method: "PUT",
-		headers: { ...headers, "Content-Type": "image/png" },
+		headers: { "Content-Type": "image/png", ...(guest ? { Authorization: `Invite ${guest.key}`, "X-Invite-Page": page } : {}) },
 		body: blob,
-	});
+	}));
 	if (!response.ok) {
 		throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
 	}
@@ -107,12 +105,12 @@ function schedule_preview_refresh() {
  * @param {number} days
  */
 async function make_share_key(page, days) {
-	const { site, secret } = load_settings();
-	const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/rooms/${encodeURIComponent(page)}/invite`, {
+	const { site } = load_settings();
+	const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/rooms/${encodeURIComponent(page)}/invite`, authorized({
 		method: "POST",
-		headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ days }),
-	});
+	}));
 	if (!response.ok) {
 		throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
 	}

@@ -40,7 +40,12 @@
 	],
 	"vars": {
 		"EDITOR_URL": "https://edit.coolpaint.world",
-		"SITES_URL": "https://coolpaint.world"
+		"SITES_URL": "https://coolpaint.world",
+		// Sign in with Google (auth.js): the OAuth client's ID (public); its secret is GOOGLE_CLIENT_SECRET (a Worker
+		// secret). Empty = the button doesn't show. Made in the Google Cloud console (project coolpaintworld):
+		// OAuth consent screen (external, scopes openid/email/profile), then a Web application client with the
+		// redirect URI https://edit.coolpaint.world/auth/google/callback. See docs/DEPLOY.md.
+		"GOOGLE_CLIENT_ID": ""
 	}
 	// Secret (not in config): SITE_EDIT_SECRET (the master key) — `wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`.
 	// Site passwords are minted with it: `npm run site-password <site>` (writes editor/.passwords/<site>.txt, gitignored).

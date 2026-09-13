@@ -126,6 +126,7 @@ async function show_site_view() {
 		});
 	} else {
 		row(localize("Address:"), link(public_url(), public_url()));
+		if (settings.account) { row(localize("Account:"), $(E("span")).text(`${settings.account.email || settings.account.name} (Google)`)); }
 		row(localize("Editor:"), $(E("span")).text(get_site_editor_url()));
 		const copy_of = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.copy_of === "string" ? system_file_handle.copy_of : "";
 		row(localize("This page:"), copy_of ?

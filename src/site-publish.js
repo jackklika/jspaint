@@ -17,7 +17,8 @@ import { preview_path, render_share_preview } from "./share-preview.js";
 const SETTINGS_KEY = "jspaint site publish settings";
 const LEGACY_EDITOR_URLS = new Set(["https://coolpaint.world", "https://www.coolpaint.world"]);
 
-/** @typedef {{ editor_url: string, site: string, page: string, secret: string, remember_secret: boolean, invite?: { key: string, page: string } }} PublishSettings */
+/** @typedef {{ email: string, name: string, via: string, sites: string[] }} Account - a signed-in account (a Google sign-in; whoami says which sites are theirs) */
+/** @typedef {{ editor_url: string, site: string, page: string, secret: string, remember_secret: boolean, account?: Account | null, invite?: { key: string, page: string } }} PublishSettings */
 
 /** @returns {PublishSettings} */
 function load_settings() {
@@ -34,6 +35,7 @@ function load_settings() {
 		page: stored.page || "index.html",
 		secret: stored.secret || "",
 		remember_secret: stored.remember_secret !== false,
+		account: stored.account && typeof stored.account === "object" ? { email: String(stored.account.email || ""), name: String(stored.account.name || ""), via: String(stored.account.via || "google"), sites: Array.isArray(stored.account.sites) ? stored.account.sites : [] } : null,
 	};
 }
 
@@ -62,10 +64,27 @@ function get_site_files_base() {
 	return site ? `${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/` : "";
 }
 
-/** Whether a site name and secret are on file (my-site.js validates them against the server). */
+/** Whether a site is chosen and there's a way in: its password, or a signed-in account (my-site.js validates them against the server). */
 function is_signed_in() {
-	const { site, secret } = load_settings();
-	return !!(site && secret);
+	const { site, secret, account } = load_settings();
+	return !!(site && (secret || account));
+}
+
+/** Whether someone is signed in with an account (whether or not a site is chosen yet). */
+function has_account() {
+	return !!load_settings().account;
+}
+
+/**
+ * A fetch init that carries whatever proves who we are: the site's password as a bearer, and always the editor's
+ * session cookie (an account's sign-in; the editor is same-origin in production, and credentials must be asked for).
+ * @param {RequestInit} [init]
+ */
+function authorized(init = {}) {
+	const { secret } = load_settings();
+	const headers = new Headers(init.headers || {});
+	if (secret && !headers.has("Authorization")) { headers.set("Authorization", `Bearer ${secret}`); }
+	return { ...init, credentials: /** @type {RequestCredentials} */ ("include"), headers };
 }
 
 /**
@@ -88,13 +107,13 @@ const extension_for_type = (type) => ({ "image/gif": "gif", "image/png": "png", 
 async function publish_collage(settings, log) {
 	const base = settings.editor_url.replace(/\/+$/, "");
 	// A guest (share link) saves with their key, scoped to their page; the owner with the site's password (or the master key).
-	const headers = settings.invite ? { Authorization: `Invite ${settings.invite.key}`, "X-Invite-Page": settings.invite.page } : { Authorization: `Bearer ${settings.secret}` };
+	const headers = settings.invite ? { Authorization: `Invite ${settings.invite.key}`, "X-Invite-Page": settings.invite.page } : settings.secret ? { Authorization: `Bearer ${settings.secret}` } : {}; // (an account's session rides in the cookie)
 	const api = `${base}/api/sites/${encodeURIComponent(settings.site)}/files`;
 	const page_base = settings.page.replace(/\.html?$/i, "") || "index";
 
 	/** @param {string} path @param {Blob | string} body @param {string} type */
 	const upload = async (path, body, type) => {
-		const response = await fetch(`${api}/${path}`, { method: "PUT", headers: { ...headers, "Content-Type": type }, body });
+		const response = await fetch(`${api}/${path}`, { method: "PUT", credentials: "include", headers: { ...headers, "Content-Type": type }, body });
 		const data = await response.json().catch(() => ({}));
 		if (!response.ok) {
 			throw new Error(data.error || `Upload of ${path} failed (HTTP ${response.status})`);
@@ -104,7 +123,7 @@ async function publish_collage(settings, log) {
 
 	// Check the secret first so a typo fails fast, before any uploads; the listing tells us which
 	// hashed assets are already there (one request, and no 404 noise in the console).
-	const listing = await fetch(api, { headers });
+	const listing = await fetch(api, { headers, credentials: "include" });
 	if (listing.status === 401 || listing.status === 403) {
 		throw new Error(settings.invite ? "This share link has expired or doesn't cover this page." : "The password was rejected.");
 	}
@@ -308,4 +327,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { current_site, get_site_editor_url, get_site_files_base, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog };
+export { authorized, current_site, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog };

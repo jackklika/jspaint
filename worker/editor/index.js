@@ -27,6 +27,7 @@
 // says which. Reads of site files are public. Open sign-up / Google OAuth come later (docs/PLAN.md phase 5).
 import { inject_analytics } from "../shared/analytics.js";
 import { ROOT_SITE, content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
+import { accounts_of, editor_origin, handle_auth, session_of } from "./auth.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { x_elements } from "../shared/x-elements/index.js";
 export { Accounts } from "./accounts.js";
@@ -144,7 +145,12 @@ async function role_of(request, env, site = "") {
 	const secret = env.SITE_EDIT_SECRET;
 	if (!secret) { return null; }
 	const token = bearer_of(request);
-	if (!token) { return null; }
+	if (!token) {
+		// No bearer: a signed-in account (auth.js session cookie) that owns the site edits it like the site's password does
+		if (!site || !valid_site_name(site)) { return null; }
+		const session = await session_of(request, env);
+		return session && (await accounts_of(env).owner_of(site)) === session.id ? "site" : null;
+	}
 	if (same_string(token, secret)) { return "master"; }
 	if (!site || !valid_site_name(site)) { return null; }
 	const given = await password_hash(secret, site, token);
@@ -600,13 +606,21 @@ export function site_entry_redirect(url) {
 	return new Response(null, { status: 302, headers: { Location: `/?${params}`, "Cache-Control": "no-store" } });
 }
 
-export default {
+const editor = {
 	/**
 	 * @param {Request} request
 	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, GIF_STATS: DurableObjectNamespace, ACCOUNTS: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL: string, SITE_EDIT_SECRET?: string, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
 	 */
 	async fetch(request, env) {
 		const url = new URL(request.url);
+		if (url.pathname.startsWith("/auth/")) {
+			try {
+				return await handle_auth(request, url, env, { role_of, password_hash, site_hash });
+			} catch (error) {
+				console.error(error);
+				return json({ error: error.message || String(error) }, 500);
+			}
+		}
 		if (!url.pathname.startsWith("/api/")) {
 			const canonical = canonical_redirect(url, env.EDITOR_URL);
 			if (canonical) { return canonical; }
@@ -692,10 +706,14 @@ export default {
 				const site = url.searchParams.get("site") || "";
 				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
 				const role = await role_of(request, env, site);
-				if (!role) { return json({ error: "Unauthorized: the password was rejected" }, 401); }
+				const session = bearer_of(request) ? null : await session_of(request, env);
+				if (!role && !session) { return json({ error: "Unauthorized: the password was rejected" }, 401); }
 				// `created`: when the site got its password (My Site's summary); null for a site the master key alone edits
-				const created = site ? await /** @type {any} */ (env.ACCOUNTS.getByName("global")).get_created(site) : null;
-				return json({ ok: true, role, site: site || null, created, sites_url: env.SITES_URL, editor_url: url.origin });
+				const accounts = accounts_of(env);
+				const created = site ? await accounts.get_created(site) : null;
+				// A signed-in account: who, and which sites are theirs ("user" = signed in, but not this site's owner)
+				const account = session ? { user: { id: session.id, email: session.email, name: session.name }, sites: await accounts.sites_of(session.id) } : {};
+				return json({ ok: true, role: role || "user", site: site || null, created, sites_url: env.SITES_URL, editor_url: url.origin, ...account });
 			}
 			const password_match = /^\/api\/sites\/([^/]+)\/password$/.exec(url.pathname);
 			if (password_match) {
@@ -704,8 +722,10 @@ export default {
 				if (!valid_site_name(name)) { return json({ error: "Bad site name" }, 400); }
 				const role = await role_of(request, env, name);
 				if (!role) { return json({ error: "Unauthorized: send Authorization: Bearer <master key>" }, 401); }
-				if (role !== "master") { return json({ error: "Only the master key can set a site's password" }, 403); }
 				const accounts = /** @type {any} */ (env.ACCOUNTS.getByName("global"));
+				const session = bearer_of(request) ? null : await session_of(request, env);
+				const owner = !!session && (await accounts.owner_of(name)) === session.id; // (the account that owns the site, not someone holding its password)
+				if (role !== "master" && !owner) { return json({ error: "Only the master key or the site's owner can set a site's password" }, 403); }
 				if (request.method === "POST") {
 					const password = generate_password();
 					const { rotated } = await accounts.set_hash(name, await password_hash(/** @type {string} */ (env.SITE_EDIT_SECRET), name, password));
@@ -757,5 +777,30 @@ export default {
 			console.error(error);
 			return json({ error: error.message || String(error) }, 500);
 		}
+	},
+};
+
+/**
+ * Paint on one localhost port talking to the Worker on another (tests, `npm run dev:*`) must send the session cookie:
+ * that takes the exact origin and Allow-Credentials, which the plain "*" (fine for bearer auth) can't say. Production
+ * is same-origin and never needs this.
+ * @param {Request} request @param {Response} response @param {any} env
+ */
+function with_dev_cors(request, response, env) {
+	const origin = request.headers.get("Origin") || "";
+	const local_editor = /^http:\/\/localhost(:\d+)?$/.test(editor_origin(new URL(request.url), env)); // (wrangler dev reports the custom domain as the host: go by config)
+	if (response.status === 101 || !/^http:\/\/localhost(:\d+)?$/.test(origin) || !local_editor) { return response; }
+	if (!response.headers.has("Access-Control-Allow-Origin")) { return response; }
+	const headers = new Headers(response.headers);
+	headers.set("Access-Control-Allow-Origin", origin);
+	headers.set("Access-Control-Allow-Credentials", "true");
+	headers.append("Vary", "Origin");
+	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+export default {
+	/** @param {Request} request @param {any} env */
+	async fetch(request, env) {
+		return with_dev_cors(request, await editor.fetch(request, env), env);
 	},
 };

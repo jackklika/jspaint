@@ -14,7 +14,7 @@ import { are_you_sure, reset_canvas_and_history, reset_file, reset_selected_colo
 import { $G, E } from "./helpers.js";
 import { is_index, is_page, kb, render_page_tiles } from "./page-tiles.js";
 import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, is_hosted_editor, site_public_url } from "./site-constants.js";
-import { get_site_editor_url, get_site_files_base, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
+import { get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
 
 /** @type {string | null} learned from /api/whoami */
 let sites_url = null;
@@ -37,12 +37,19 @@ function public_url(path = "index.html") {
 // its own #local:… id — same mechanism as the share link in share.js), and open_site_from_url() acts on it once the
 // app is up. Other query params are kept (jspaint reads a few of its own).
 const SITE_ENTRY_KEY = "jspaint open site"; // sessionStorage
+const SIGNED_IN_KEY = "jspaint signed in"; // sessionStorage: just back from Google (auth.js sends us to /?signed_in=1)
 // A plain visit (no #local:… session to restore, captured before sessions.js assigns one): signed in, Paint opens
 // your site's front page rather than a blank picture — edit.<domain> is where you edit your site.
 const FRESH_VISIT = !location.hash;
 const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.html?$/;
 (() => {
 	const params = new URLSearchParams(location.search);
+	if (params.has("signed_in")) {
+		params.delete("signed_in");
+		const rest = params.toString();
+		history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
+		try { sessionStorage.setItem(SIGNED_IN_KEY, "1"); } catch (_error) { /* ignore */ }
+	}
 	if (!params.has("site")) { return; }
 	const site = (params.get("site") || "").toLowerCase();
 	const page = params.get("page") || "";
@@ -70,6 +77,20 @@ async function open_site_from_url() {
 		entry = JSON.parse(sessionStorage.getItem(SITE_ENTRY_KEY) || "null");
 		sessionStorage.removeItem(SITE_ENTRY_KEY);
 	} catch (_error) { /* ignore */ }
+	let just_signed_in = false;
+	try {
+		just_signed_in = sessionStorage.getItem(SIGNED_IN_KEY) === "1";
+		sessionStorage.removeItem(SIGNED_IN_KEY);
+	} catch (_error) { /* ignore */ }
+	if (just_signed_in) {
+		// Back from Google: the account's site (its front page), or — no site yet — the dialog that makes one
+		if (await check_sign_in({ probe: true })) {
+			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); } else { show_my_site_dialog(); }
+		} else if (has_account() && await show_sign_in_dialog()) {
+			show_my_site_dialog();
+		}
+		return;
+	}
 	if (!entry || !entry.site) {
 		if (!FRESH_VISIT) { return; }
 		if (is_signed_in() && await check_sign_in()) {
@@ -153,7 +174,7 @@ async function api(path, init = {}) {
 	const { secret } = load_settings();
 	const headers = new Headers(init.headers || {});
 	if (secret) { headers.set("Authorization", `Bearer ${secret}`); }
-	const response = await fetch(`${get_site_editor_url()}${path}`, { ...init, headers });
+	const response = await fetch(`${get_site_editor_url()}${path}`, { ...init, credentials: "include", headers });
 	if (!response.ok) {
 		let message = `HTTP ${response.status}`;
 		try {
@@ -217,43 +238,155 @@ async function upload_asset(file) {
  * Checks the stored site name and secret against the server.
  * @returns {Promise<boolean>}
  */
-async function check_sign_in() {
-	if (!is_signed_in()) { return false; }
+async function check_sign_in({ probe = false } = {}) {
+	const settings = load_settings();
+	if (!is_signed_in() && !settings.account && !probe) { return false; }
 	try {
-		const info = await (await api(`/api/whoami?site=${encodeURIComponent(load_settings().site)}`)).json();
+		const info = await (await api(`/api/whoami${settings.site ? `?site=${encodeURIComponent(settings.site)}` : ""}`)).json();
 		sites_url = info.sites_url || sites_url;
-		role = info.role || null;
 		site_created = typeof info.created === "number" ? info.created : null;
+		// An account (a Google sign-in, in the session cookie): remember who, and which sites are theirs
+		const account = info.user ? { email: String(info.user.email || ""), name: String(info.user.name || ""), via: "google", sites: Array.isArray(info.sites) ? info.sites : [] } : null;
+		let site = settings.site;
+		if (account && info.role === "user" && account.sites.length && !account.sites.includes(site)) { site = account.sites[0]; } // (one of yours, not whatever site was last typed)
+		if (account || settings.account) { save_settings({ ...settings, site, account, ...(account ? { secret: "", remember_secret: false } : {}) }); } // (a session outranks a stale password)
+		if (site !== settings.site) { return check_sign_in(); }
+		role = info.role === "user" ? null : info.role || null; // ("user": signed in, but not this site's owner)
 		refresh_x_element_kinds();
-		return true;
-	} catch (_error) {
+		return role !== null;
+	} catch (error) {
+		if (settings.account && /** @type {any} */ (error).status === 401) { save_settings({ ...settings, account: null }); } // the session ended
 		return false;
 	}
 }
 
 /**
- * File > Sign In to My Site…
- * @param {{ site?: string }} [options] - `site` prefills the name (an edit.<domain>/~name link)
+ * File > Sign In to My Site… — a Google button when the editor has one (auth.js), or a site name and its password.
+ * Signed in with an account, it's the account's sites instead: pick one, make one, or claim one by its password.
+ * @param {{ site?: string, password?: boolean }} [options] - `site` prefills the name (an edit.<domain>/~name link); `password`: the password fields even with an account
  * @returns {Promise<boolean>} signed in
  */
-function show_sign_in_dialog({ site: prefill = "" } = {}) {
+function show_sign_in_dialog({ site: prefill = "", password: password_mode = false } = {}) {
 	return new Promise((resolve) => {
 		const settings = load_settings();
 		let done = false;
 		const $w = $DialogWindow(localize("Sign In to My Site"));
 		$w.addClass("my-site-sign-in squish");
+		const $main = $w.$main;
+		const finish = () => {
+			done = true;
+			$w.close();
+			resolve(true);
+		};
+		const $status = $(E("div")).addClass("my-site-status");
+		const account = settings.account;
+		if (account && !password_mode) {
+			$w.addClass("my-site-sign-in-account");
+			$(E("p")).addClass("my-site-account").text(localize("Signed in as %1 (Google).", account.email || account.name)).appendTo($main);
+			/** @param {string} site */
+			const use_site = async (site) => {
+				$status.text(localize("Checking…"));
+				save_settings({ ...load_settings(), site });
+				if (await check_sign_in()) { finish(); } else { $status.text(localize("That site isn't yours.")); }
+			};
+			if (account.sites.length) {
+				$(E("p")).addClass("my-site-note").text(localize("Your sites:")).appendTo($main);
+				const $sites = $(E("div")).addClass("my-site-account-sites").appendTo($main);
+				for (const site of account.sites) {
+					$(E("button")).attr({ type: "button", "data-site": site }).text(`~${site}`).on("click", () => { use_site(site); }).appendTo($sites);
+				}
+			} else {
+				$(E("p")).addClass("my-site-note").text(localize("No site yet — pick a name. It becomes your address: …/~name/")).appendTo($main);
+			}
+			const $name_row = $(E("label")).addClass("my-site-row").text(`${localize(account.sites.length ? "New site:" : "Site name:")} `).appendTo($main);
+			const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", autocapitalize: "off", placeholder: "e.g. jack", name: "new-site-name" }).val(prefill).appendTo($name_row);
+			const $claim_row = $(E("label")).addClass("my-site-row").text(`${localize("Its password:")} `).hide().appendTo($main);
+			const $claim_password = $(E("input")).attr({ type: "password", autocomplete: "off", name: "claim-password" }).appendTo($claim_row);
+			$status.appendTo($main);
+			const $create = $w.$Button(localize("Create"), async () => {
+				const name = String($name.val()).trim().toLowerCase();
+				if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) {
+					$status.text(localize("Site names are 1–32 lowercase letters, digits, or hyphens."));
+					$name.focus();
+					return;
+				}
+				$create.prop("disabled", true);
+				$status.text(localize("Checking…"));
+				try {
+					const claiming = $claim_row.is(":visible");
+					if (claiming) {
+						await api(`/auth/sites/${encodeURIComponent(name)}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: String($claim_password.val()) }) });
+					} else {
+						await api("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+					}
+					await use_site(name);
+				} catch (error) {
+					$create.prop("disabled", false);
+					if (/** @type {any} */ (error).status === 409 && /password/.test(error.message)) {
+						// It has a password (made before accounts): proving it makes it theirs
+						$claim_row.show();
+						$create.text(localize("Claim"));
+						$status.text(localize("That site has a password. Enter it to make the site yours."));
+						$claim_password.focus();
+					} else {
+						$status.text(error.message);
+					}
+				}
+			}, { type: "submit" });
+			$w.$Button(localize("Password…"), () => {
+				$w.close();
+				show_sign_in_dialog({ site: prefill, password: true }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
+			});
+			$w.$Button(localize("Sign Out"), () => {
+				sign_out();
+				$w.close();
+				$G.triggerHandler("site-settings-changed");
+			});
+			$w.$Button(localize("Cancel"), () => { $w.close(); });
+			$w.on("close", () => { if (!done) { resolve(false); } });
+			$w.$content.css({ width: "min(420px, 92vw)" });
+			$w.center();
+			$name.focus();
+			return;
+		}
+		const $google = $(E("div")).addClass("my-site-google").hide().appendTo($main);
 		$(E("p")).text(prefill === ROOT_SITE ?
 			localize("\"root\" is the front page of the domain itself. Enter its password.") :
-			localize("Your site lives at …/~name/. Enter the name and its password.")).appendTo($w.$main);
+			localize("Your site lives at …/~name/. Enter the name and its password.")).appendTo($main);
 		/** @param {string} label @param {string} value @param {object} attrs */
 		const field = (label, value, attrs) => {
-			const $row = $(E("label")).addClass("my-site-row").text(`${label} `).appendTo($w.$main);
+			const $row = $(E("label")).addClass("my-site-row").text(`${label} `).appendTo($main);
 			return $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", ...attrs }).val(value).appendTo($row);
 		};
 		const $site = field(localize("Site name:"), prefill || settings.site, { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
 		const $secret = field(localize("Password:"), settings.secret, { type: "password", autocomplete: "current-password", name: "password" });
 		const $editor = field(localize("Editor URL:"), settings.editor_url, { placeholder: default_editor_url(), name: "editor-url" });
-		const $status = $(E("div")).addClass("my-site-status").appendTo($w.$main);
+		$status.appendTo($main);
+		// Sign in with Google, when the editor (the one typed in) has it set up; the button goes there and comes back to /?signed_in=1
+		const $button = $(E("a")).addClass("google-sign-in").attr({ role: "button" }).text(localize("Sign in with Google")).appendTo($google);
+		$(E("div")).addClass("my-site-or").text(localize("— or with a site password —")).appendTo($google);
+		const typed_editor = () => (String($editor.val()).trim() || default_editor_url()).replace(/\/+$/, "");
+		const offer_google = async () => {
+			const at = typed_editor();
+			$button.attr("href", `${at}/auth/google?next=${encodeURIComponent("/?signed_in=1")}`);
+			if (!is_hosted_editor() && at === default_editor_url()) { $google.hide(); return; } // (a dev Paint pointed at the real editor: don't probe it cross-origin)
+			try {
+				const methods = await (await fetch(`${at}/auth/methods`)).json();
+				if (!$w.closed && at === typed_editor()) { $google.toggle(!!methods.google); }
+			} catch (_error) {
+				$google.hide(); // no editor to ask: the password way still works
+			}
+		};
+		$button.on("click", (e) => {
+			e.preventDefault();
+			location.href = `${typed_editor()}/auth/google?next=${encodeURIComponent("/?signed_in=1")}`;
+		});
+		let offer_timer = 0;
+		$editor.on("input change", () => {
+			clearTimeout(offer_timer);
+			offer_timer = window.setTimeout(offer_google, 300);
+		});
+		offer_google();
 		const $ok = $w.$Button(localize("Sign In"), async () => {
 			const site = String($site.val()).trim().toLowerCase();
 			const secret = String($secret.val());
@@ -280,11 +413,9 @@ function show_sign_in_dialog({ site: prefill = "" } = {}) {
 			}
 			$ok.prop("disabled", true);
 			$status.text("Checking…");
-			save_settings({ ...settings, site, secret, editor_url, remember_secret: true });
+			save_settings({ ...settings, site, secret, editor_url, remember_secret: true, account: null }); // (a password sign-in, not the account's)
 			if (await check_sign_in()) {
-				done = true;
-				$w.close();
-				resolve(true);
+				finish();
 			} else {
 				$ok.prop("disabled", false);
 				$status.text(`Couldn't sign in at ${editor_url}: the password was rejected or the editor is unreachable.`);
@@ -306,7 +437,8 @@ async function ensure_signed_in() {
 
 function sign_out() {
 	const settings = load_settings();
-	save_settings({ ...settings, secret: "", remember_secret: false });
+	if (settings.account) { api("/auth/sign-out", { method: "POST" }).catch(() => { /* the cookie may already be gone */ }); }
+	save_settings({ ...settings, secret: "", remember_secret: false, account: null });
 	sites_url = null;
 	if (system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page) {
 		system_file_handle = null; // Ctrl+S goes back to saving a file
@@ -603,7 +735,7 @@ async function show_my_site_dialog({ tab = "site" } = {}) {
 		fact(localize("Pages:"), pages.length ? `${pages.length}${pages.some((file) => is_index(file.path)) ? "" : ` — ${localize("no front page (index.html) yet")}`}` : localize("none yet"));
 		fact(localize("Files:"), `${files.length} (${kb(bytes)})`);
 		if (posts_folders.length) { fact(localize("Posts:"), posts_folders.map((folder) => `${folder}/ (RSS: ${folder}/feed.xml)`).join(", ")); }
-		fact(localize("Signed in:"), role === "master" ? localize("with the master key") : localize("with this site's password"));
+		fact(localize("Signed in:"), load_settings().account ? `${load_settings().account.email} (Google)` : role === "master" ? localize("with the master key") : localize("with this site's password"));
 		$(E("p")).addClass("my-site-note").text(site === ROOT_SITE ? localize("The front page of the domain: its pages live at the root address, other sites at ~name.") : localize("Pages shows your pages as thumbnails; Files, everything on the site.")).appendTo($summary);
 	};
 
@@ -820,6 +952,36 @@ $("<style>").text(`
 		gap: 6px;
 	}
 	.my-site-sign-in .my-site-row {
+		margin-bottom: 6px;
+	}
+	.my-site-google {
+		text-align: center;
+		margin-bottom: 8px;
+	}
+	.google-sign-in {
+		display: inline-block;
+		padding: 6px 16px;
+		border: 2px outset var(--ButtonFace, #c0c0c0);
+		background: var(--ButtonFace, #c0c0c0);
+		color: var(--ButtonText, #000);
+		text-decoration: none;
+		font-weight: bold;
+	}
+	.google-sign-in:active {
+		border-style: inset;
+	}
+	.my-site-or {
+		margin-top: 8px;
+		font-size: 11px;
+		opacity: 0.8;
+	}
+	.my-site-account {
+		margin: 0 0 6px;
+	}
+	.my-site-account-sites {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
 		margin-bottom: 6px;
 	}
 	.my-site-sign-in .my-site-row input {
