@@ -67,7 +67,7 @@ const call = (path, init = {}, cookies = {}) => fetch(`${editor}${path}`, {
 
 try {
 	// The editor says which ways in it has
-	assert.deepEqual(await (await call("/auth/methods")).json(), { google: true, password: true });
+	assert.deepEqual(await (await call("/auth/methods")).json(), { google: true, password: true, site_limit: 5 });
 
 	// Start: off to Google with our client id, the callback address, and a state kept in a cookie
 	let response = await call(`/auth/google?next=${encodeURIComponent("/?signed_in=1")}`);
@@ -180,7 +180,22 @@ try {
 	response = await fetch(`${editor}/auth/sites/${handed}/assign`, { method: "POST", headers: { Authorization: `Bearer ${master}`, "Content-Type": "application/json" }, body: JSON.stringify({ email: my_email.toUpperCase() }) });
 	assert.deepEqual(await response.json(), { ok: true, site: handed, user: { email: my_email, name: "Jack Test" } });
 	assert.equal((await (await call(`/api/whoami?site=${handed}`, {}, cookies)).json()).role, "site", "…and now the account edits it");
-	const sites_to_clean = [site, older, handed];
+	// Up to five sites per account: the three so far, two more, then no
+	const extra = [`g-${stamp}-4`, `g-${stamp}-5`];
+	for (const name of extra) {
+		response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }, cookies);
+		assert.equal(response.status, 200, await response.text());
+	}
+	response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: `g-${stamp}-6` }) }, cookies);
+	assert.equal(response.status, 409);
+	assert.equal((await response.json()).limit, 5);
+	const sixth = `g-${stamp}-6-pw`;
+	const sixth_password = (await (await fetch(`${editor}/api/sites/${sixth}/password`, { method: "POST", headers: { Authorization: `Bearer ${master}` } })).json()).password;
+	response = await call(`/auth/sites/${sixth}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: sixth_password }) }, cookies);
+	assert.equal(response.status, 409, "claiming counts too");
+	assert.deepEqual((await (await call("/api/whoami", {}, cookies)).json()).sites.length, 5);
+	assert.equal((await (await call("/auth/methods")).json()).site_limit, 5);
+	const sites_to_clean = [site, older, handed, ...extra, sixth];
 
 	// Signing out ends the session
 	response = await call("/auth/sign-out", { method: "POST" }, cookies);
@@ -204,6 +219,28 @@ try {
 	await paint.waitForSelector(".my-site-window .my-site-facts", { timeout: 20000 });
 	assert.match(await paint.$eval(".my-site-window .my-site-facts", (el) => el.textContent), new RegExp(`Signed in:browser-${stamp}@example.com \\(Google\\)`));
 	assert.deepEqual(await paint.evaluate(() => { const s = JSON.parse(localStorage.getItem("jspaint site publish settings")); return [s.site, s.secret, s.account.sites]; }), [browser_site, "", [browser_site]]);
+
+	// The globe is "my sites": the account's sites with the current one marked, New Site… while there's room; a click switches
+	await paint.evaluate(() => { [...document.querySelectorAll(".my-site-window button")].find((b) => b.textContent === "Close")?.click(); });
+	await paint.click(".site-globe-button");
+	await paint.waitForSelector(".site-view-window .site-view-sites", { timeout: 10000 });
+	assert.deepEqual(await paint.evaluate(() => [...document.querySelectorAll(".site-view-site")].map((b) => `${b.textContent}${b.classList.contains("current") ? "*" : ""}`)), [`~${browser_site}*`]);
+	assert.match(await paint.$eval(".site-view-window", (el) => el.textContent), /Your sites \(1 of 5\)/);
+	await paint.click(".site-view-window .site-view-new-site");
+	await paint.waitForSelector(".new-site-window", { timeout: 5000 });
+	const second_site = `${browser_site}-2`;
+	await paint.fill('.new-site-window input[name="new-site-name"]', second_site);
+	await paint.click(".new-site-window button[type=submit]");
+	await paint.waitForSelector(".my-site-window .my-site-facts", { timeout: 20000 }); // (no front page yet: My Site opens for the new site)
+	assert.equal(await paint.evaluate(() => JSON.parse(localStorage.getItem("jspaint site publish settings")).site), second_site, "switched to the new site");
+	await paint.evaluate(() => { [...document.querySelectorAll(".my-site-window button")].find((b) => b.textContent === "Close")?.click(); });
+	await paint.click(".site-globe-button");
+	await paint.waitForSelector(".site-view-window .site-view-sites", { timeout: 10000 });
+	assert.deepEqual(await paint.evaluate(() => [...document.querySelectorAll(".site-view-site")].map((b) => `${b.textContent}${b.classList.contains("current") ? "*" : ""}`)), [`~${browser_site}`, `~${second_site}*`]);
+	await paint.click(`.site-view-site[data-site="${browser_site}"]`);
+	await paint.waitForFunction((site) => JSON.parse(localStorage.getItem("jspaint site publish settings")).site === site, browser_site, { timeout: 15000 });
+	await paint.waitForSelector(".my-site-window", { timeout: 20000 }); // (that one has no front page either)
+	sites_to_clean.push(second_site);
 	// A browser that still remembers a (now wrong) site password, reloading a restored session: whoami reports the
 	// account beside the password, Paint drops the password, and the site is still editable (the session owns it)
 	await paint.evaluate(() => { [...document.querySelectorAll(".my-site-window button")].find((b) => b.textContent === "Close")?.click(); });
@@ -217,7 +254,7 @@ try {
 	await paint.waitForFunction(() => /#local:/.test(location.hash), null, { timeout: 5000 });
 	await paint.reload({ waitUntil: "domcontentloaded" });
 	await paint.waitForFunction(() => { const s = JSON.parse(localStorage.getItem("jspaint site publish settings") || "{}"); return s.account && s.account.email && s.secret === ""; }, null, { timeout: 20000 });
-	assert.equal(await paint.evaluate(async () => (await import("/src/my-site.js")).current_role()), "site", "the session owns the site");
+	await paint.waitForFunction(async () => (await import("/src/my-site.js")).current_role() === "site", null, { timeout: 15000 }); // the session owns the site (the check runs twice: once more after dropping the password)
 	await close();
 	sites_to_clean.push(browser_site);
 

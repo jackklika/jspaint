@@ -18,6 +18,7 @@
 import { valid_site_name } from "../shared/names.js";
 
 const SESSION_COOKIE = "coolpaint_session";
+const MAX_SITES = 5; // per account (the master key can hand out more)
 const STATE_COOKIE = "coolpaint_auth_state";
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const STATE_TTL_S = 10 * 60;
@@ -150,7 +151,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 	const path = url.pathname;
 	if (request.method === "OPTIONS") { return new Response(null, { status: 204, headers: CORS }); }
 	if (path === "/auth/methods") {
-		return json({ google: !!PROVIDERS.google.client(env).id, password: true });
+		return json({ google: !!PROVIDERS.google.client(env).id, password: true, site_limit: MAX_SITES });
 	}
 	const provider_match = /^\/auth\/([a-z]+)(\/callback)?$/.exec(path);
 	if (provider_match && PROVIDERS[provider_match[1]]) {
@@ -216,6 +217,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const owner = await accounts.owner_of(site);
 		if (owner === session.id) { return json({ ok: true, site, yours: true }); }
 		if (owner) { return json({ error: "That name is taken" }, 409); }
+		if ((await accounts.sites_of(session.id)).length >= MAX_SITES) { return json({ error: `An account can have up to ${MAX_SITES} sites`, limit: MAX_SITES }, 409); }
 		if (await site_hash(env, site, { fresh: true })) { return json({ error: "That site has a password: claim it with the password", claimable: true }, 409); }
 		const listing = await env.SITES.list({ prefix: `sites/${site}/`, limit: 1 });
 		if (listing.objects.length) { return json({ error: "That name is taken" }, 409); }
@@ -234,6 +236,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const accounts = accounts_of(env);
 		const owner = await accounts.owner_of(site);
 		if (owner && owner !== session.id) { return json({ error: "That site is someone else's" }, 409); }
+		if (owner !== session.id && (await accounts.sites_of(session.id)).length >= MAX_SITES) { return json({ error: `An account can have up to ${MAX_SITES} sites`, limit: MAX_SITES }, 409); }
 		const body = await request.json().catch(() => ({}));
 		const password = String(body.password || "");
 		const stored = await site_hash(env, site, { fresh: true });

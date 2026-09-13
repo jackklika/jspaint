@@ -7,7 +7,7 @@
 import { $DialogWindow } from "./$ToolWindow.js";
 import { $G, E } from "./helpers.js";
 import { end_all_loading } from "./loading-veil.js";
-import { open_site_from_url, public_url, show_my_site_dialog, show_sign_in_dialog, sign_out } from "./my-site.js";
+import { SITE_LIMIT, open_site_from_url, public_url, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_site } from "./my-site.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
 import { site_public_url } from "./site-constants.js";
 import { get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
@@ -141,7 +141,31 @@ async function show_site_view() {
 		});
 	} else {
 		row(localize("Address:"), link(public_url(), public_url()));
-		if (settings.account) { row(localize("Account:"), $(E("span")).text(`${settings.account.email || settings.account.name} (Google)`)); }
+		if (settings.account) {
+			row(localize("Account:"), $(E("span")).text(`${settings.account.email || settings.account.name} (Google)`));
+			// My sites: the account's, the current one marked; another one is a click away; New Site… while there's room
+			const sites = settings.account.sites.includes(settings.site) ? settings.account.sites : [settings.site, ...settings.account.sites];
+			const $sites = $(E("span")).addClass("site-view-sites");
+			for (const site of sites) {
+				const current = site === settings.site;
+				$(E("button")).attr({ type: "button", "data-site": site, title: current ? localize("The site you're on") : localize("Switch to ~%1", site) }).addClass("site-view-site").toggleClass("current", current).prop("disabled", current)
+					.text(`~${site}`)
+					.on("click", async () => {
+						$w.close();
+						await switch_site(site);
+					})
+					.appendTo($sites);
+			}
+			if (sites.length < SITE_LIMIT) {
+				$(E("button")).attr({ type: "button" }).addClass("site-view-new-site").text(localize("New Site…")).on("click", async () => {
+					$w.close();
+					const name = await show_new_site_dialog();
+					if (name) { await switch_site(name); }
+				})
+					.appendTo($sites);
+			}
+			row(localize("Your sites (%1 of %2):", String(sites.length), String(SITE_LIMIT)), $sites);
+		}
 		row(localize("Editor:"), $(E("span")).text(get_site_editor_url()));
 		const copy_of = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.copy_of === "string" ? system_file_handle.copy_of : "";
 		row(localize("This page:"), copy_of ?
@@ -229,6 +253,14 @@ function init_site_button() {
 		}
 		.site-view-presence {
 			white-space: nowrap;
+		}
+		.site-view-sites {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 4px;
+		}
+		.site-view-site.current {
+			font-weight: bold;
 		}
 		.site-view-heading {
 			display: flex;

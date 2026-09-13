@@ -59,7 +59,7 @@ await page.waitForSelector(new_page_input, { timeout: 5000 });
 assert.equal(await page.inputValue(new_page_input), "index.html", "an empty site's first page is its front page");
 await page.fill(new_page_input, "about.html");
 await page.keyboard.press("Enter");
-await page.waitForSelector(".block-layer", { timeout: 10000 });
+await page.waitForSelector(".block-layer", { timeout: 20000 }); // (a fresh page: a session switch and a listing; slow under load)
 assert.equal(await page.evaluate(() => file_name), "about.html");
 assert.match(await page.evaluate(() => document.querySelector(".block-layer .block-el").textContent), /about/);
 await page.keyboard.press("Escape");

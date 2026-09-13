@@ -280,6 +280,105 @@ async function check_sign_in({ probe = false } = {}) {
 	}
 }
 
+const SITE_LIMIT = 5; // sites per account (auth.js MAX_SITES says the same)
+
+/**
+ * A new site's name (and, when the name has a password from before accounts, that password to claim it): the two
+ * fields and the request, shared by the Sign In dialog and the New Site window.
+ * @param {JQuery} $into @param {string} [prefill]
+ */
+function new_site_form($into, prefill = "") {
+	const $name_row = $(E("label")).addClass("my-site-row").text(`${localize("Site name:")} `).appendTo($into);
+	const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", autocapitalize: "off", placeholder: "e.g. jack", name: "new-site-name" }).val(prefill).appendTo($name_row);
+	const $claim_row = $(E("label")).addClass("my-site-row").text(`${localize("Its password:")} `).hide().appendTo($into);
+	const $claim_password = $(E("input")).attr({ type: "password", autocomplete: "off", name: "claim-password" }).appendTo($claim_row);
+	return {
+		claiming: () => $claim_row.is(":visible"),
+		/** Makes (or claims) the site; the name when it's theirs, null with the reason in `$status`. @param {JQuery} $status */
+		submit: async ($status) => {
+			const name = String($name.val()).trim().toLowerCase();
+			if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) {
+				$status.text(localize("Site names are 1–32 lowercase letters, digits, or hyphens."));
+				$name.trigger("focus");
+				return null;
+			}
+			$status.text(localize("Checking…"));
+			try {
+				if ($claim_row.is(":visible")) {
+					await api(`/auth/sites/${encodeURIComponent(name)}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: String($claim_password.val()) }) });
+				} else {
+					await api("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+				}
+				$status.text("");
+				return name;
+			} catch (error) {
+				if (/** @type {any} */ (error).status === 409 && /password/.test(error.message)) {
+					// It has a password (made before accounts): proving it makes it theirs
+					$claim_row.show();
+					$status.text(localize("That site has a password. Enter it to make the site yours."));
+					$claim_password.trigger("focus");
+				} else {
+					$status.text(error.message);
+				}
+				return null;
+			}
+		},
+	};
+}
+
+/**
+ * New Site…: a name (up to SITE_LIMIT sites per account).
+ * @param {string} [prefill]
+ * @returns {Promise<string | null>} the new site's name, once it's the account's
+ */
+function show_new_site_dialog(prefill = "") {
+	return new Promise((resolve) => {
+		let made = null;
+		const $w = $DialogWindow(localize("New Site"));
+		$w.addClass("new-site-window squish");
+		$(E("p")).addClass("my-site-note").text(localize("Pick a name. It becomes the site's address: …/~name/ (an account can have up to %1 sites).", String(SITE_LIMIT))).appendTo($w.$main);
+		const form = new_site_form($w.$main, prefill);
+		const $status = $(E("div")).addClass("my-site-status").appendTo($w.$main);
+		const $create = $w.$Button(localize("Create"), async () => {
+			$create.prop("disabled", true);
+			const name = await form.submit($status);
+			$create.prop("disabled", false);
+			if (name) {
+				made = name;
+				$w.close();
+			} else if (form.claiming()) {
+				$create.text(localize("Claim"));
+			}
+		}, { type: "submit" });
+		$w.$Button(localize("Cancel"), () => { $w.close(); });
+		$w.on("close", () => { resolve(made); });
+		$w.$content.css({ width: "min(420px, 92vw)" });
+		$w.center();
+		$w.$main.find('input[name="new-site-name"]').trigger("focus");
+	});
+}
+
+/**
+ * Makes another of the account's sites the current one, and opens it: its front page, or My Site when it has none.
+ * @param {string} site
+ * @returns {Promise<boolean>}
+ */
+async function switch_site(site) {
+	const settings = load_settings();
+	if (settings.site === site) { return true; }
+	save_settings({ ...settings, site });
+	if (!await check_sign_in()) {
+		save_settings({ ...load_settings(), site: settings.site }); // not theirs after all: back
+		return false;
+	}
+	if (await page_exists(site, "index.html")) {
+		await open_page_from_site("index.html");
+	} else {
+		show_my_site_dialog();
+	}
+	return true;
+}
+
 /**
  * File > Sign In to My Site… — a Google button when the editor has one (auth.js), or a site name and its password.
  * Signed in with an account, it's the account's sites instead: pick one, make one, or claim one by its password.
@@ -310,49 +409,31 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 				if (await check_sign_in()) { finish(); } else { $status.text(localize("That site isn't yours.")); }
 			};
 			if (account.sites.length) {
-				$(E("p")).addClass("my-site-note").text(localize("Your sites:")).appendTo($main);
+				// Their sites: pick one (the globe's window switches between them later)
+				$(E("p")).addClass("my-site-note").text(localize("Your sites (%1 of %2):", String(account.sites.length), String(SITE_LIMIT))).appendTo($main);
 				const $sites = $(E("div")).addClass("my-site-account-sites").appendTo($main);
 				for (const site of account.sites) {
 					$(E("button")).attr({ type: "button", "data-site": site }).text(`~${site}`).on("click", () => { use_site(site); }).appendTo($sites);
 				}
+				$status.appendTo($main);
+				if (account.sites.length < SITE_LIMIT) {
+					$w.$Button(localize("New Site…"), async () => {
+						const name = await show_new_site_dialog();
+						if (name) { use_site(name); }
+					});
+				}
 			} else {
+				// No site yet: the name, right here
 				$(E("p")).addClass("my-site-note").text(localize("No site yet — pick a name. It becomes your address: …/~name/")).appendTo($main);
-			}
-			const $name_row = $(E("label")).addClass("my-site-row").text(`${localize(account.sites.length ? "New site:" : "Site name:")} `).appendTo($main);
-			const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", autocapitalize: "off", placeholder: "e.g. jack", name: "new-site-name" }).val(prefill).appendTo($name_row);
-			const $claim_row = $(E("label")).addClass("my-site-row").text(`${localize("Its password:")} `).hide().appendTo($main);
-			const $claim_password = $(E("input")).attr({ type: "password", autocomplete: "off", name: "claim-password" }).appendTo($claim_row);
-			$status.appendTo($main);
-			const $create = $w.$Button(localize("Create"), async () => {
-				const name = String($name.val()).trim().toLowerCase();
-				if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) {
-					$status.text(localize("Site names are 1–32 lowercase letters, digits, or hyphens."));
-					$name.focus();
-					return;
-				}
-				$create.prop("disabled", true);
-				$status.text(localize("Checking…"));
-				try {
-					const claiming = $claim_row.is(":visible");
-					if (claiming) {
-						await api(`/auth/sites/${encodeURIComponent(name)}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: String($claim_password.val()) }) });
-					} else {
-						await api("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-					}
-					await use_site(name);
-				} catch (error) {
+				const form = new_site_form($main, prefill);
+				$status.appendTo($main);
+				const $create = $w.$Button(localize("Create"), async () => {
+					$create.prop("disabled", true);
+					const name = await form.submit($status);
 					$create.prop("disabled", false);
-					if (/** @type {any} */ (error).status === 409 && /password/.test(error.message)) {
-						// It has a password (made before accounts): proving it makes it theirs
-						$claim_row.show();
-						$create.text(localize("Claim"));
-						$status.text(localize("That site has a password. Enter it to make the site yours."));
-						$claim_password.focus();
-					} else {
-						$status.text(error.message);
-					}
-				}
-			}, { type: "submit" });
+					if (name) { use_site(name); } else if (form.claiming()) { $create.text(localize("Claim")); }
+				}, { type: "submit" });
+			}
 			$w.$Button(localize("Password…"), () => {
 				$w.close();
 				show_sign_in_dialog({ site: prefill, password: true }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
@@ -366,7 +447,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 			$w.on("close", () => { if (!done) { resolve(false); } });
 			$w.$content.css({ width: "min(420px, 92vw)" });
 			$w.center();
-			$name.focus();
+			$main.find('input[name="new-site-name"]').trigger("focus");
 			return;
 		}
 		const $google = $(E("div")).addClass("my-site-google").hide().appendTo($main);
@@ -1134,4 +1215,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { check_sign_in, current_role, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_sign_in_dialog, sign_out, upload_asset, write_file };
+export { SITE_LIMIT, check_sign_in, current_role, open_site_from_url, ensure_signed_in, list_files, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_site, upload_asset, write_file };
