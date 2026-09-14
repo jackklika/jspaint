@@ -117,7 +117,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
 	const blocks = snapshot_blocks();
 	const key = sidecar_key(session_id);
 	// Which page of which site this document is (so a reload can rejoin its live room and Save goes back there).
-	const site_page = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.site_page === "string" ? { site: system_file_handle.guest?.site || load_settings().site, page: system_file_handle.site_page, guest: system_file_handle.guest || null } : null;
+	const site_page = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.site_page === "string" ? { site: system_file_handle.guest?.site || load_settings().site, page: system_file_handle.site_page, guest: system_file_handle.guest || null, fresh: !!system_file_handle.fresh } : null;
 	const page_properties = get_page_properties();
 	const has_page_properties = Object.values(page_properties).some((value) => value !== "" && value !== 0);
 	if (stickers.length === 0 && text_layers.length === 0 && blocks.length === 0 && !site_page && !has_page_properties) {
@@ -159,7 +159,7 @@ async function save_layers_sidecar(session_id, callback = () => {}) {
  */
 async function restore_layers_sidecar(session_id) {
 	const key = sidecar_key(session_id);
-	/** @type {{ stickers?: any[], text_layers?: TextLayerSnapshot[], blocks?: BlockSnapshot[], site_page?: { site: string, page: string, guest?: { site: string, key: string } | null } | null, page_properties?: Partial<import("./page-properties.js").PageProperties> } | null} */
+	/** @type {{ stickers?: any[], text_layers?: TextLayerSnapshot[], blocks?: BlockSnapshot[], site_page?: { site: string, page: string, guest?: { site: string, key: string } | null, fresh?: boolean } | null, page_properties?: Partial<import("./page-properties.js").PageProperties> } | null} */
 	let data = null;
 	try {
 		data = await with_store("readonly", (store) => store.get(key));
@@ -201,8 +201,10 @@ async function restore_layers_sidecar(session_id) {
 		current_history_node.blocks = snapshot_blocks();
 		current_history_node.stickers = snapshot_stickers();
 		current_history_node.text_layers = snapshot_text_layers();
-		if (data.site_page && data.site_page.page && (data.site_page.guest || data.site_page.site === load_settings().site)) {
-			system_file_handle = { site_page: data.site_page.page, ...(data.site_page.guest ? { guest: data.site_page.guest } : {}) };
+		// Whose page: a guest's, one of the signed-in site's — or a fresh page that isn't on a site yet (the starter page; a
+		// save may be waiting for it after a sign-in)
+		if (data.site_page && data.site_page.page && (data.site_page.guest || data.site_page.fresh || data.site_page.site === load_settings().site)) {
+			system_file_handle = { site_page: data.site_page.page, ...(data.site_page.guest ? { guest: data.site_page.guest } : {}), ...(data.site_page.fresh ? { fresh: true } : {}) }; // (fresh: a new page still asks before replacing one of that name)
 			file_name = data.site_page.page;
 			file_format = "text/html";
 			$G.triggerHandler("site-page-restored", [{ page: data.site_page.page }]);

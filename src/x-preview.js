@@ -1,4 +1,5 @@
 // @ts-check
+/* global system_file_handle */
 // What the site shows, on the canvas: an <x-*> element (a visitor counter, a folder view, a guestbook, contents,
 // last updated) is rendered by the sites Worker when a page is served — so in the editor it shows what visitors
 // see right now, not a placeholder: the real count, the folder's pages, the sections. The page's own site renders
@@ -7,6 +8,7 @@
 import { block_markup, get_blocks } from "./blocks.js";
 import { $G } from "./helpers.js";
 import { current_site_page_path, public_url } from "./my-site.js";
+import { ROOT_SITE } from "./site-constants.js";
 import { get_site_files_base, load_settings } from "./site-publish.js";
 
 const FRESH_MS = 15000; // a preview this recent isn't asked for again on a re-render
@@ -23,11 +25,23 @@ function sections_markup() {
 }
 
 /**
- * @param {import("./blocks.js").OnCanvasBlock} block
- * @param {string} page
+ * Whose page this is: a copy of someone's page asks their site (public data), your own page asks yours — and a
+ * fresh page that isn't on a site yet (the starter page, before signing in) asks the domain's own site, so a visitor
+ * counter shows digits rather than the placeholder (the count is root's; the page's own starts at zero once saved).
  */
-function key_of(block, page) {
-	return JSON.stringify([load_settings().site, page, block.tag, block.attrs, block.tag === "x-toc" ? sections_markup() : ""]);
+function page_of() {
+	const handle = system_file_handle && typeof system_file_handle === "object" ? system_file_handle : null;
+	if (handle && typeof handle.copy_of === "string" && typeof handle.site_page === "string") { return { site: handle.copy_of, page: handle.site_page }; }
+	const page = current_site_page_path();
+	const site = load_settings().site || (handle && handle.fresh && page ? ROOT_SITE : "");
+	return { site, page };
+}
+/**
+ * @param {import("./blocks.js").OnCanvasBlock} block
+ * @param {{ site: string, page: string }} target
+ */
+function key_of(block, target) {
+	return JSON.stringify([target.site, target.page, block.tag, block.attrs, block.tag === "x-toc" ? sections_markup() : ""]);
 }
 
 /**
@@ -61,10 +75,10 @@ function show(block, html) {
  */
 async function refresh_block(block, force = false) {
 	if (!block.tag.startsWith("x-")) { return; }
-	const site = load_settings().site;
-	const page = current_site_page_path();
+	const target = page_of();
+	const { site, page } = target;
 	if (!site || !page) { return; }
-	const key = key_of(block, page);
+	const key = key_of(block, target);
 	const cached = previews.get(key);
 	if (cached) {
 		show(block, cached.html);
@@ -87,7 +101,7 @@ async function refresh_block(block, force = false) {
 	previews.set(key, { html, at: Date.now() });
 	if (previews.size > 200) { previews.delete(/** @type {string} */ (previews.keys().next().value)); }
 	// Still that element, still asking the same thing?
-	if (get_blocks().includes(block) && key_of(block, page) === key) { show(block, html); }
+	if (get_blocks().includes(block) && key_of(block, page_of()) === key) { show(block, html); }
 }
 
 /** Every <x-*> element on the page, again. @param {boolean} [force] */

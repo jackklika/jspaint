@@ -4,7 +4,7 @@
 // site being refused, and signing out. Needs the editor Worker:
 //   SITE_BUILDER_EDITOR_URL=http://localhost:8787 SITE_BUILDER_SECRET=<master, from worker/editor/.dev.vars>
 import { createServer } from "node:http";
-import { assert, click_menu_item, open_paint } from "./helpers.mjs";
+import { assert, canvas_box, click_menu_item, open_paint, select_tool } from "./helpers.mjs";
 
 const editor = (process.env.SITE_BUILDER_EDITOR_URL || "").replace(/\/+$/, "");
 const master = process.env.SITE_BUILDER_SECRET;
@@ -216,10 +216,43 @@ try {
 	assert.equal(cookie_from(response, "coolpaint_session")?.attrs.includes("Max-Age=0"), true);
 	assert.equal((await call("/api/whoami", {}, cookies)).status, 401, "the old cookie is dead");
 
+	// A newcomer at the editor: the starter page, a stroke, Save → Sign In → Google → back on the same drawing, with
+	// the save waiting: a site name → the page goes up as that site's index.html
+	person = { sub: `sub-${stamp}-newcomer`, email: `newcomer-${stamp}@example.com`, email_verified: true, name: "New Jack" };
+	const { page: newcomer, close: close_newcomer } = await open_paint({ url: `${editor}/` });
+	await newcomer.waitForFunction(() => system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
+	await newcomer.waitForSelector(".welcome-window", { timeout: 10000 });
+	await newcomer.evaluate(() => { [...document.querySelectorAll(".welcome-window button")].find((b) => b.textContent === "Start drawing").click(); });
+	await select_tool(newcomer, "Brush");
+	const nc = await canvas_box(newcomer);
+	await newcomer.mouse.click(nc.x + 600, nc.y + 500);
+	await newcomer.waitForFunction(() => main_ctx.getImageData(600, 500, 1, 1).data.join(",") !== "255,255,255,255", null, { timeout: 5000 });
+	const stroke = await newcomer.evaluate(() => main_ctx.getImageData(600, 500, 1, 1).data.join(","));
+	const drawing_session = await newcomer.evaluate(() => location.hash);
+	assert.match(drawing_session, /^#local:/);
+	await newcomer.keyboard.press("Control+s");
+	await newcomer.waitForSelector(".my-site-sign-in .google-sign-in", { timeout: 10000 });
+	await newcomer.click(".my-site-sign-in .google-sign-in");
+	await newcomer.waitForSelector(".my-site-sign-in-account", { timeout: 20000 }); // back, with an account and no site — and the save waiting
+	assert.equal(await newcomer.evaluate(() => location.hash), drawing_session, "the same drawing's session");
+	await newcomer.waitForFunction((stroke) => main_ctx.getImageData(600, 500, 1, 1).data.join(",") === stroke, stroke, { timeout: 30000 }); // (the drawing comes back from IndexedDB; slow under load)
+	assert.match(await newcomer.$eval(".my-site-sign-in-account", (el) => el.textContent), /Your page is saved to it right after/);
+	const newcomer_site = `g-${stamp}-new`;
+	await newcomer.fill('.my-site-sign-in-account input[name="new-site-name"]', newcomer_site);
+	await newcomer.click(".my-site-sign-in-account button[type=submit]");
+	await newcomer.waitForFunction(() => /Done!|Couldn't|rejected|failed/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
+	assert.match(await newcomer.$eval(".site-publish-log", (el) => el.innerText), /Done!/, "saved right after the name");
+	const newcomer_files = (await (await fetch(`${editor}/api/sites/${newcomer_site}/files`, { headers: { Authorization: `Bearer ${master}` } })).json()).files.map((f) => f.path);
+	assert.ok(newcomer_files.includes("index.html") && newcomer_files.includes("collages/index.png"), newcomer_files.join(","));
+	assert.deepEqual(await newcomer.evaluate(() => system_file_handle), { site_page: "index.html" }, "their page now");
+	sites_to_clean.push(newcomer_site);
+	await close_newcomer();
+
 	// In the browser, from Paint at the editor: the Sign In dialog's Google button, the round trip, no site yet → pick a
 	// name → My Site opens for it, signed in as the account
 	person = { sub: `sub-${stamp}-browser`, email: `browser-${stamp}@example.com`, email_verified: true, name: "Browser Jack" };
 	const { page: paint, close } = await open_paint({ url: `${editor}/` });
+	await paint.waitForFunction(() => system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
 	await click_menu_item(paint, "Sign In to My Site...");
 	await paint.waitForSelector(".my-site-sign-in .google-sign-in", { timeout: 10000 });
 	assert.match(await paint.getAttribute(".my-site-sign-in .google-sign-in", "href") || "", /\/auth\/google\?next=/);

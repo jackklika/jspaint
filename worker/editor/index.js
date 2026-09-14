@@ -570,16 +570,22 @@ const SITE_ENTRY = /^\/~([^/]+)(?:\/(.*))?$/;
 // Paint's own files, served as they are; everything else on the editor host is a page address.
 const APP_DIRECTORIES = /^\/(src|lib|images|styles|help|audio|localization)\//;
 const APP_FILES = new Set(["/", "/index.html", "/favicon.ico", "/manifest.webmanifest", "/browserconfig.xml"]);
+// edit.<domain>/new: a fresh site's first page (the starter page and the Welcome window, src/my-site.js), for anyone
+const NEW_SITE_PATH = "/new";
 /**
  * Page addresses on the editor host mirror the sites host, and open that page in Paint (src/my-site.js: the page
  * itself when you're signed in as the site, a copy otherwise): edit.<domain>/~name[/page] → ?site=name[&page=…],
  * and edit.<domain>/about (or /about.html, /blog/post) → the root site's page. ".html" is optional. A path under
- * a site that isn't a page (a GIF, a typo) just opens the site. Returns null for Paint's own files.
+ * a site that isn't a page (a GIF, a typo) just opens the site. edit.<domain>/new → ?new=1: a new site's first
+ * page. Returns null for Paint's own files.
  * @param {URL} url
  * @returns {Response | null}
  */
 export function site_entry_redirect(url) {
 	if (APP_FILES.has(url.pathname) || APP_DIRECTORIES.test(url.pathname)) { return null; }
+	if (url.pathname === NEW_SITE_PATH || url.pathname === `${NEW_SITE_PATH}/`) {
+		return new Response(null, { status: 302, headers: { Location: "/?new=1", "Cache-Control": "no-store" } });
+	}
 	let site, rest;
 	const tilde = SITE_ENTRY.exec(url.pathname);
 	if (tilde) {
@@ -611,12 +617,13 @@ const editor = {
 	/**
 	 * @param {Request} request
 	 * @param {{ ASSETS: Fetcher, SITES: R2Bucket, PAGE_ROOM: DurableObjectNamespace, GIF_STATS: DurableObjectNamespace, ACCOUNTS: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL: string, SITE_EDIT_SECRET?: string, POSTHOG_API_KEY?: string, POSTHOG_HOST?: string }} env
+	 * @param {ExecutionContext} ctx - waitUntil for fire-and-forget work (server-side analytics capture)
 	 */
-	async fetch(request, env) {
+	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
 		if (url.pathname.startsWith("/auth/")) {
 			try {
-				return await handle_auth(request, url, env, { role_of, password_hash, site_hash });
+				return await handle_auth(request, url, env, { role_of, password_hash, site_hash }, ctx);
 			} catch (error) {
 				console.error(error);
 				return json({ error: error.message || String(error) }, 500);

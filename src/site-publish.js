@@ -144,11 +144,13 @@ async function publish_collage(settings, log) {
 		throw new Error(`Couldn't reach the editor at ${base} (HTTP ${listing.status}).`);
 	}
 	const existing = new Set((await listing.json()).files.map((/** @type {{ path: string }} */ file) => file.path));
-	// A brand-new page (New Page…, New Post…) named like one already on the site: ask before replacing it.
-	const fresh = system_file_handle && typeof system_file_handle === "object" && system_file_handle.fresh;
+	// A brand-new page (New Page…, New Post…, the starter page) or a copy of someone's page, named like one already
+	// on the site: ask before replacing it.
+	const handle = system_file_handle && typeof system_file_handle === "object" ? system_file_handle : null;
+	const fresh = !!handle && (!!handle.fresh || (typeof handle.copy_of === "string" && handle.copy_of !== settings.site)); // (a copy of your own page going back is just a save)
 	if (fresh && existing.has(`${page_base}.html`)) {
 		const { promise } = showMessageBox({
-			message: localize("%1 is already on your site. Replace it with this new page? (Versions… in My Site can bring the old one back.)", `${page_base}.html`),
+			message: localize("%1 is already on your site. Replace it with this one? (Versions… in My Site can bring the old one back.)", `${page_base}.html`),
 			buttons: [{ label: localize("Replace"), value: "replace" }, { label: localize("Cancel"), value: "cancel", default: true }],
 		});
 		if (await promise !== "replace") {
@@ -306,7 +308,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			$w.$Button(localize("Open Page"), () => { window.open(url, "_blank", "noopener"); }).focus();
 		} catch (error) {
 			log(String(error.message || error));
-			show_error_message("Couldn't save to the site.", error);
+			if (!/^Not saved:/.test(String(error.message || ""))) { show_error_message("Couldn't save to the site.", error); } // (a declined "Replace?" is a choice, not a failure)
 		} finally {
 			$save.prop("disabled", false);
 		}

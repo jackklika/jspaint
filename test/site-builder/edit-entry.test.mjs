@@ -32,5 +32,7 @@ for (const asset of ["/", "/favicon.ico", "/src/app.js", "/images/icons/512x512.
 }
 assert.equal(await entry("/index.html"), "307 /", "the assets' own canonical redirect, untouched");
 assert.equal(await entry("/privacy.html"), "302 /?site=root&page=privacy.html", "jspaint's own about/privacy pages give way to the site's");
+assert.equal(await entry("/new"), "302 /?new=1", "a new site's first page, not a root page called new");
+assert.equal(await entry("/new/"), "302 /?new=1");
 assert.equal(await entry("/nope.png"), "404", "not a page, not a file");
 console.log("edit-entry: ok");

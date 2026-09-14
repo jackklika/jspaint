@@ -221,7 +221,7 @@ assert.doesNotMatch(await page.evaluate(() => current_history_node.blocks[0].htm
 	assert.equal(await elsewhere.inputValue('.my-site-sign-in input[name="site-name"]'), `other-${site}`);
 	await close_elsewhere();
 }
-// Not signed in at all (incognito): a plain visit opens the domain's front page as a copy to play with
+// Not signed in at all (incognito): a plain visit opens a starter page of their own and the Welcome window
 {
 	// Give the root site a front page: this test's about.html and its bitmap, copied over with the master key
 	const copy = async (/** @type {string} */ from, /** @type {string} */ to) => {
@@ -234,9 +234,15 @@ assert.doesNotMatch(await page.evaluate(() => current_history_node.blocks[0].htm
 	await copy("about.html", "index.html");
 	// (Only the hosted editor does this — Paint from a dev server starts blank — so load it from the editor Worker.)
 	const { page: visitor, close: close_visitor } = await open_paint({ url: `${editor}/` });
-	await visitor.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
-	assert.deepEqual(await visitor.evaluate(() => system_file_handle), { site_page: "index.html", copy_of: "root" });
+	await visitor.waitForFunction(() => file_name === "index.html" && system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
+	assert.deepEqual(await visitor.evaluate(() => system_file_handle), { site_page: "index.html", fresh: true }, "a page of their own, not a copy of root's (first-run.test.mjs has the rest)");
+	await visitor.waitForSelector(".welcome-window", { timeout: 10000 });
 	assert.equal(await visitor.evaluate(() => !!document.querySelector(".my-site-sign-in")), false);
+	// The domain's homepage is a copy at /~root/, with no Welcome over it
+	await visitor.goto(`${editor}/~root/`, { waitUntil: "domcontentloaded" });
+	await visitor.waitForFunction(() => file_name === "index.html" && system_file_handle && system_file_handle.copy_of === "root", null, { timeout: 20000 });
+	await visitor.waitForTimeout(800);
+	assert.equal(await visitor.evaluate(() => !!document.querySelector(".welcome-window")), false, "no Welcome over a copy");
 	await close_visitor();
 	for (const path of ["index.html", "collages/about.png"]) {
 		await fetch(`${editor}/api/sites/root/files/${path}`, { method: "DELETE", headers });

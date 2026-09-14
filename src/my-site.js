@@ -15,6 +15,7 @@ import { $G, E } from "./helpers.js";
 import { begin_loading } from "./loading-veil.js";
 import { is_index, is_page, kb, render_page_tiles } from "./page-tiles.js";
 import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, is_hosted_editor, site_public_url } from "./site-constants.js";
+import { show_welcome, welcome_dismissed } from "./welcome.js";
 import { get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
 
 /** @type {string | null} learned from /api/whoami */
@@ -38,7 +39,9 @@ function public_url(path = "index.html", site = load_settings().site) {
 // its own #local:… id — same mechanism as the share link in share.js), and open_site_from_url() acts on it once the
 // app is up. Other query params are kept (jspaint reads a few of its own).
 const SITE_ENTRY_KEY = "jspaint open site"; // sessionStorage
-const SIGNED_IN_KEY = "jspaint signed in"; // sessionStorage: just back from Google (auth.js sends us to /?signed_in=1)
+const SIGNED_IN_KEY = "jspaint signed in"; // sessionStorage: just back from Google (auth.js sends us to /?signed_in=1[&resume=save&page=…])
+const NEW_SITE_KEY = "jspaint new site"; // sessionStorage: edit.<domain>/new — a fresh site's first page (the Worker sends /?new=1)
+const TEMPLATES_SITE = "templates"; // a site like any other: its start.html is the starter page when it has one
 // A plain visit (no #local:… session to restore, captured before sessions.js assigns one): signed in, Paint opens
 // your site's front page rather than a blank picture — edit.<domain> is where you edit your site.
 const FRESH_VISIT = !location.hash;
@@ -50,10 +53,19 @@ const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9.
 (() => {
 	const params = new URLSearchParams(location.search);
 	if (params.has("signed_in")) {
+		// Back from Google — and, when a save sent us there, the page to pick up (its drawing's #local: session rides in the hash)
+		const resume = params.get("resume") === "save" && PAGE_PATH.test(params.get("page") || "") ? { resume: "save", page: params.get("page") } : { resume: "" };
 		params.delete("signed_in");
+		if (params.has("resume")) { params.delete("resume"); params.delete("page"); }
 		const rest = params.toString();
 		history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
-		try { sessionStorage.setItem(SIGNED_IN_KEY, "1"); } catch (_error) { /* ignore */ }
+		try { sessionStorage.setItem(SIGNED_IN_KEY, JSON.stringify(resume)); } catch (_error) { /* ignore */ }
+	}
+	if (params.has("new")) {
+		params.delete("new");
+		const rest = params.toString();
+		history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
+		try { sessionStorage.setItem(NEW_SITE_KEY, "1"); } catch (_error) { /* ignore */ }
 	}
 	if (!params.has("site")) { return; }
 	const site = (params.get("site") || "").toLowerCase();
@@ -90,12 +102,28 @@ async function open_site_from_url_inner() {
 		entry = JSON.parse(sessionStorage.getItem(SITE_ENTRY_KEY) || "null");
 		sessionStorage.removeItem(SITE_ENTRY_KEY);
 	} catch (_error) { /* ignore */ }
-	let just_signed_in = false;
+	/** @type {{ resume: string, page?: string } | null} */
+	let just_signed_in = null;
 	try {
-		just_signed_in = sessionStorage.getItem(SIGNED_IN_KEY) === "1";
+		const raw = sessionStorage.getItem(SIGNED_IN_KEY);
+		just_signed_in = raw === "1" ? { resume: "" } : raw ? JSON.parse(raw) : null;
 		sessionStorage.removeItem(SIGNED_IN_KEY);
 	} catch (_error) { /* ignore */ }
+	let new_site = false;
+	try {
+		new_site = sessionStorage.getItem(NEW_SITE_KEY) === "1";
+		sessionStorage.removeItem(NEW_SITE_KEY);
+	} catch (_error) { /* ignore */ }
 	if (just_signed_in) {
+		if (just_signed_in.resume === "save" && just_signed_in.page && await page_restored(just_signed_in.page)) {
+			// A save sent us to Google, and the drawing came back with us (its session is in the address): carry on
+			// saving — to the account's site, or to the one the dialog is about to make
+			await check_sign_in({ probe: true });
+			fresh_visit_loading?.();
+			fresh_visit_loading = null;
+			save_page_to_site(just_signed_in.page);
+			return;
+		}
 		// Back from Google: the account's site (its front page), or — no site yet — the dialog that makes one
 		if (await check_sign_in({ probe: true })) {
 			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); } else { show_my_site_dialog(); }
@@ -106,6 +134,12 @@ async function open_site_from_url_inner() {
 		return;
 	}
 	if (!entry || !entry.site) {
+		if (new_site) {
+			// edit.<domain>/new: a new site's first page, for anyone
+			if (is_signed_in() || has_account()) { await check_sign_in(); }
+			await open_starter_page();
+			return;
+		}
 		if (!FRESH_VISIT) {
 			if (is_signed_in() || has_account()) { check_sign_in(); } // (a restored session: still learn the account, drop a stale password)
 			return;
@@ -115,9 +149,9 @@ async function open_site_from_url_inner() {
 			if (await page_exists(load_settings().site, "index.html")) { await open_page_from_site("index.html"); }
 			return;
 		}
-		// Nobody in particular, on the hosted editor: the domain's own front page, as a copy to play with (saving it
-		// means signing in). A dev server or a plain jspaint starts blank.
-		if (is_hosted_editor()) { await open_page_copy(ROOT_SITE, "index.html"); }
+		// Nobody in particular, on the hosted editor: a first page of their own to draw on, and the Welcome window
+		// (the domain's own homepage is at edit.<domain>/~root/). A dev server or a plain jspaint starts blank.
+		if (is_hosted_editor()) { await open_starter_page(); }
 		return;
 	}
 	if (load_settings().site === entry.site && await check_sign_in()) {
@@ -130,6 +164,75 @@ async function open_site_from_url_inner() {
 	if (!await show_sign_in_dialog({ site: entry.site }) || load_settings().site !== entry.site) { return; }
 	if (entry.page && await open_page_from_site(entry.page)) { return; }
 	show_my_site_dialog();
+}
+
+/**
+ * Whether the document is (or, once its session has come back, becomes) that page of the site — a save sent us to
+ * Google and its #local: session is in the address; sessions.js restores it and the sidecar says which page it is.
+ * @param {string} page
+ * @returns {Promise<boolean>}
+ */
+function page_restored(page) {
+	const is_it = () => !!(system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page === page && typeof system_file_handle.copy_of !== "string");
+	if (is_it()) { return Promise.resolve(true); }
+	if (!/^#local:/.test(location.hash)) { return Promise.resolve(false); }
+	return new Promise((resolve) => {
+		const events = "site-page-restored session-update history-update";
+		const done = (/** @type {boolean} */ result) => {
+			clearTimeout(timer);
+			clearInterval(poll);
+			$G.off(events, on);
+			resolve(result);
+		};
+		const timer = setTimeout(() => { done(is_it()); }, 10000);
+		const poll = setInterval(() => { if (is_it()) { done(true); } }, 200); // (the restore may have run between the check above and the listener)
+		const on = () => { if (is_it()) { done(true); } };
+		$G.on(events, on);
+	});
+}
+
+/**
+ * A new site's first page — edit.<domain>/ for someone who isn't signed in, edit.<domain>/new for anyone: a page to
+ * draw on right away; Save puts it on a site of their own (the Welcome window says so). The page is the `templates`
+ * site's start.html when there is one (a site like any other, drawn in Paint by whoever owns it), else a built-in
+ * start: a heading, a section, a visitor counter.
+ */
+async function open_starter_page() {
+	const from_templates = await page_exists(TEMPLATES_SITE, "start.html") && await open_page_copy(TEMPLATES_SITE, "start.html");
+	if (from_templates) {
+		// Not a copy of the template — a fresh page of the site to come
+		file_name = "index.html";
+		system_file_handle = { site_page: "index.html", fresh: true };
+		update_title();
+		$G.triggerHandler("site-settings-changed");
+	} else {
+		new_site_page("index.html", { starter: true });
+	}
+	$status_text.text(localize("A fresh page. Draw on it; Save puts it on a site of your own."));
+	fresh_visit_loading?.();
+	fresh_visit_loading = null;
+	if (!is_signed_in() && !has_account() && !welcome_dismissed()) {
+		const editor = get_site_editor_url();
+		show_welcome({
+			editor,
+			google_url: google_sign_in_url(editor, "index.html"),
+			homepage_url: `${editor}/~${ROOT_SITE}/`,
+			site_host: new URL(public_url("", ROOT_SITE)).host,
+		});
+	}
+}
+
+/**
+ * Where "Sign in with Google" goes — and where Google sends us back: /?signed_in=1, plus, when a save sent us,
+ * what to pick up (`resume=save&page=…`) and the drawing's own #local: session, so it's still there (auth.js
+ * safe_next keeps a same-site path with its query and hash).
+ * @param {string} editor - the editor's address
+ * @param {string} [resume] - the page being saved, if a save is waiting
+ */
+function google_sign_in_url(editor, resume = "") {
+	const hash = resume && /^#local:[a-z0-9]+$/i.test(location.hash) ? location.hash : "";
+	const next = `/?signed_in=1${resume ? `&resume=save&page=${encodeURIComponent(resume)}` : ""}${hash}`;
+	return `${editor.replace(/\/+$/, "")}/auth/google?next=${encodeURIComponent(next)}`;
 }
 
 /**
@@ -390,10 +493,10 @@ async function switch_site(site) {
 /**
  * File > Sign In to My Site… — a Google button when the editor has one (auth.js), or a site name and its password.
  * Signed in with an account, it's the account's sites instead: pick one, make one, or claim one by its password.
- * @param {{ site?: string, password?: boolean }} [options] - `site` prefills the name (an edit.<domain>/~name link); `password`: the password fields even with an account
+ * @param {{ site?: string, password?: boolean, resume?: string }} [options] - `site` prefills the name (an edit.<domain>/~name link); `password`: the password fields even with an account; `resume`: the page a save is waiting to put up (Google's round trip comes back to it)
  * @returns {Promise<boolean>} signed in
  */
-function show_sign_in_dialog({ site: prefill = "", password: password_mode = false } = {}) {
+function show_sign_in_dialog({ site: prefill = "", password: password_mode = false, resume = "" } = {}) {
 	return new Promise((resolve) => {
 		const settings = load_settings();
 		let done = false;
@@ -420,7 +523,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 					// The session is gone, or it's another Google account than this dialog was built for (a stale
 					// picture of who's signed in): a fresh dialog shows who it really is — or the Google button
 					$w.close();
-					show_sign_in_dialog({ site }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
+					show_sign_in_dialog({ site, resume }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
 					return;
 				}
 				$status.text(last_sign_in_problem === "offline" ?
@@ -444,6 +547,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 			} else {
 				// No site yet: the name, right here
 				$(E("p")).addClass("my-site-note").text(localize("No site yet — pick a name. It becomes your address: …/~name/")).appendTo($main);
+				if (resume) { $(E("p")).addClass("my-site-note my-site-resume").text(localize("Your page is saved to it right after.")).appendTo($main); }
 				const form = new_site_form($main, prefill);
 				$status.appendTo($main);
 				const $create = $w.$Button(localize("Create"), async () => {
@@ -455,7 +559,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 			}
 			$w.$Button(localize("Password…"), () => {
 				$w.close();
-				show_sign_in_dialog({ site: prefill, password: true }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
+				show_sign_in_dialog({ site: prefill, password: true, resume }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
 			});
 			$w.$Button(localize("Sign Out"), () => {
 				sign_out();
@@ -488,7 +592,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 		const typed_editor = () => (String($editor.val()).trim() || default_editor_url()).replace(/\/+$/, "");
 		const offer_google = async () => {
 			const at = typed_editor();
-			$button.attr("href", `${at}/auth/google?next=${encodeURIComponent("/?signed_in=1")}`);
+			$button.attr("href", google_sign_in_url(at, resume));
 			if (!is_hosted_editor() && at === default_editor_url()) { $google.hide(); return; } // (a dev Paint pointed at the real editor: don't probe it cross-origin)
 			try {
 				const methods = await (await fetch(`${at}/auth/methods`)).json();
@@ -499,7 +603,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 		};
 		$button.on("click", (e) => {
 			e.preventDefault();
-			location.href = `${typed_editor()}/auth/google?next=${encodeURIComponent("/?signed_in=1")}`;
+			location.href = google_sign_in_url(typed_editor(), resume);
 		});
 		let offer_timer = 0;
 		$editor.on("input change", () => {
@@ -550,9 +654,13 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 }
 
 /** Signed in, asking first if needed. @returns {Promise<boolean>} */
-async function ensure_signed_in() {
+/**
+ * Signed in, or the dialog that gets you there.
+ * @param {{ page?: string }} [options] - `page`: a save is waiting for this page (Google's round trip comes back to it and the save goes on)
+ */
+async function ensure_signed_in({ page = "" } = {}) {
 	if (await check_sign_in()) { return true; }
-	return show_sign_in_dialog();
+	return show_sign_in_dialog({ resume: page });
 }
 
 function sign_out() {
@@ -749,7 +857,12 @@ async function new_site_post(folder, title) {
  * Starts a new page for the site: a fresh 800px canvas with a heading, saved to the site on Ctrl+S.
  * @param {string} path - like about.html
  */
-function new_site_page(path) {
+/**
+ * A fresh page of the site (New Page…, or the starter page).
+ * @param {string} path
+ * @param {{ starter?: boolean }} [options] - `starter`: something to change right away — a heading, a section, a visitor counter
+ */
+function new_site_page(path, { starter = false } = {}) {
 	are_you_sure(async () => {
 		await before_leaving_page(); // autosave the old session, and send its last changes to its room
 		new_local_session();
@@ -760,7 +873,13 @@ function new_site_page(path) {
 		file_name = path;
 		file_format = HTML_FORMAT_ID;
 		system_file_handle = { site_page: path, fresh: true }; // fresh: saving asks before replacing a page of that name
-		add_block("heading", { x: 40, y: 30 }, { html: `<font face="Comic Sans MS" color="#ff1493">${path.replace(/\.html?$/i, "")}</font>` });
+		if (starter) {
+			add_block("heading", { x: 40, y: 30 }, { html: '<font face="Comic Sans MS" color="#ff1493">My cool site</font>' });
+			add_block("section", { x: 40, y: 120 }, { html: "<p>Write anything here. Draw around it. Drop GIFs on it.</p>", edit: false });
+			add_block("x-counter", { x: 40, y: 300 });
+		} else {
+			add_block("heading", { x: 40, y: 30 }, { html: `<font face="Comic Sans MS" color="#ff1493">${path.replace(/\.html?$/i, "")}</font>` });
+		}
 		saved = false;
 		update_title();
 		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: true, reason: "new" }]);
@@ -774,7 +893,7 @@ function new_site_page(path) {
  */
 async function save_page_to_site(path) {
 	const guest = system_file_handle && typeof system_file_handle === "object" ? system_file_handle.guest : null;
-	if (!guest && !await ensure_signed_in()) { return false; }
+	if (!guest && !await ensure_signed_in({ page: path })) { return false; }
 	return show_publish_dialog({ auto: true, page: path });
 }
 

@@ -290,7 +290,8 @@ function init_page_label() {
 			rendered = "";
 			const text = guest ? `~${guest.site}/${page || "…"} ${localize("(guest)")}` :
 				page && copy_of ? localize("%1 — a copy of ~%2's", page, copy_of) :
-					page ? `${site_label}/${page}` : `${file_name || localize("untitled")} — ${localize("not on a site")}`;
+					page && !settings.site ? `${page} — ${localize("not saved to a site yet")}` : // (the starter page, before signing in)
+						page ? `${site_label}/${page}` : `${file_name || localize("untitled")} — ${localize("not on a site")}`;
 			$label.show().text(text);
 			return;
 		}
