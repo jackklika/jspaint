@@ -256,8 +256,12 @@ async function upload_asset(file) {
  * Checks the stored site name and secret against the server.
  * @returns {Promise<boolean>}
  */
+/** Why the last check_sign_in said no, for the dialogs: "expired" (the account's session is gone), "not-owner", "offline", or "". */
+let last_sign_in_problem = "";
+
 async function check_sign_in({ probe = false } = {}) {
 	const settings = load_settings();
+	last_sign_in_problem = "";
 	if (!is_signed_in() && !settings.account && !probe) { return false; }
 	try {
 		const info = await (await api(`/api/whoami${settings.site ? `?site=${encodeURIComponent(settings.site)}` : ""}`)).json();
@@ -272,10 +276,14 @@ async function check_sign_in({ probe = false } = {}) {
 		if (account || settings.account) { save_settings({ ...settings, site, account, ...(drop_password ? { secret: "", remember_secret: false } : {}) }); }
 		if (site !== settings.site || drop_password) { return check_sign_in(); } // (once more, for the site that is yours / without the password)
 		role = info.role === "user" ? null : info.role || null; // ("user": signed in, but not this site's owner)
+		if (role === null) { last_sign_in_problem = "not-owner"; }
 		refresh_x_element_kinds();
 		return role !== null;
 	} catch (error) {
-		if (settings.account && /** @type {any} */ (error).status === 401) { save_settings({ ...settings, account: null }); } // the session ended
+		const status = /** @type {any} */ (error).status;
+		if (settings.account && status === 401) { save_settings({ ...settings, account: null }); } // the session ended
+		last_sign_in_problem = status === 401 ? "expired" : "offline";
+		window.console?.warn("sign-in check failed:", error);
 		return false;
 	}
 }
@@ -406,7 +414,18 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 			const use_site = async (site) => {
 				$status.text(localize("Checking…"));
 				save_settings({ ...load_settings(), site });
-				if (await check_sign_in()) { finish(); } else { $status.text(localize("That site isn't yours.")); }
+				if (await check_sign_in()) { finish(); return; }
+				const now = load_settings().account;
+				if (last_sign_in_problem === "expired" || !now || now.email !== account.email) {
+					// The session is gone, or it's another Google account than this dialog was built for (a stale
+					// picture of who's signed in): a fresh dialog shows who it really is — or the Google button
+					$w.close();
+					show_sign_in_dialog({ site }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
+					return;
+				}
+				$status.text(last_sign_in_problem === "offline" ?
+					localize("Couldn't reach the editor. Try again in a moment.") :
+					localize("~%1 isn't yours — you're signed in as %2, and it belongs to another account.", site, now.email || now.name));
 			};
 			if (account.sites.length) {
 				// Their sites: pick one (the globe's window switches between them later)

@@ -11,6 +11,7 @@
 //   POST /auth/sites {name}               a signed-in user takes a site nobody has (no owner, no password, no files)
 //   POST /auth/sites/:name/claim {password}  …or one that has a password, by proving it (once; then it's theirs)
 //   POST /auth/sites/:name/assign {email}    the master key hands a site (root included) to the account with that email
+//   GET  /auth/sites/:name/owner             support (master key): who owns a site, and every account with that email
 //   GET  /auth/favorites                     the signed-in account's favorite GIFs (the picker's ♥), newest first
 //   POST /auth/favorites {add, remove}       hearts and un-hearts (add: [{id, width, height, at}], remove: [id]) → the list;
 //                                            an id is `source:id-in-that-source` (`gifcities:ABC…`; a bare GifCities id still counts)
@@ -307,6 +308,19 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		}
 		await accounts.update_favorites(session.id, add, remove);
 		return json({ favorites: await accounts.favorites_of(session.id) });
+	}
+	const owner_match = /^\/auth\/sites\/([^/]+)\/owner$/.exec(path);
+	if (owner_match) {
+		// Support, by hand: whose is this site, and are there several accounts with that email (a sign-in gone wrong)
+		if (request.method !== "GET") { return json({ error: "Method not allowed" }, 405); }
+		const site = owner_match[1];
+		if (!valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
+		if ((await role_of(request, env, site)) !== "master") { return json({ error: "Unauthorized: send Authorization: Bearer <master key>" }, 401); }
+		const accounts = accounts_of(env);
+		const owner_id = await accounts.owner_of(site);
+		const owner = owner_id ? await accounts.get_user(owner_id) : null;
+		const same_email = owner && owner.email ? await accounts.users_by_email(owner.email) : [];
+		return json({ site, owner: owner ? { ...owner, sites: await accounts.sites_of(owner.id) } : null, accounts_with_that_email: await Promise.all(same_email.map(async (user) => ({ ...user, sites: await accounts.sites_of(user.id) }))) });
 	}
 	const assign_match = /^\/auth\/sites\/([^/]+)\/assign$/.exec(path);
 	if (assign_match) {

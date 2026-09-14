@@ -86,6 +86,11 @@ export class Accounts extends DurableObject {
 		const row = this.ctx.storage.sql.exec("SELECT id FROM users WHERE email = ?", email.toLowerCase()).toArray()[0];
 		return row ? this.get_user(String(row.id)) : null;
 	}
+	/** Every account with an email (there should be one; support looks when a sign-in seems to have split). @param {string} email */
+	users_by_email(email) {
+		return this.ctx.storage.sql.exec("SELECT id, email, name FROM users WHERE LOWER(email) = ? ORDER BY created", email.toLowerCase()).toArray()
+			.map((row) => ({ id: String(row.id), email: String(row.email || ""), name: String(row.name || "") }));
+	}
 	/** @param {string} hash - SHA-256 of the session token @param {string} user_id @param {number} expires - ms */
 	create_session(hash, user_id, expires) {
 		const sql = this.ctx.storage.sql;

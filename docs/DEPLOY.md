@@ -43,6 +43,12 @@ The editor's Google sign-in (`worker/editor/auth.js`) needs an OAuth client from
 curl -X POST https://edit.coolpaint.world/auth/sites/<site>/assign -H "Authorization: Bearer $(cat worker/editor/.secret.txt)" -H "Content-Type: application/json" -d '{"email":"person@example.com"}'
 ```
 
+Who owns a site (and whether several accounts share that email):
+
+```sh
+curl https://edit.coolpaint.world/auth/sites/<site>/owner -H "Authorization: Bearer $(cat worker/editor/.secret.txt)"
+```
+
 Locally, `worker/editor/.dev.vars` points `GOOGLE_AUTH_URL`/`GOOGLE_TOKEN_URL`/`GOOGLE_USERINFO_URL` at the fake Google that `test/site-builder/google-auth.test.mjs` runs on `:8790`, and `AUTH_ORIGIN=http://localhost:8787` (wrangler dev reports the custom domain as the request host, so the callback address comes from config).
 
 ## Custom domains: the one rule
