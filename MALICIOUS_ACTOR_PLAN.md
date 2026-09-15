@@ -5,8 +5,16 @@ publish phishing pages, to spam guestbooks, or simply because a client of ours h
 by accident. This plan lists what such an actor can do today, what it costs or harms, and the change that stops it,
 in the order to build. Every mitigation is sized so that a person painting normally never notices it.
 
-Status: **plan only** (2026-09-14). Nothing below is built yet. Facts about the current code carry file references so
-each item can be checked before it is started.
+Status (2026-09-15): **phases 0 and 1 are built** (Jack: "implement MALICIOUS_ACTOR_PLAN.md stages 0 and 1"), with
+these differences from the text below — view counting keeps every reload (the fun of a hit counter) but tallies in
+memory and writes every 15 s with one view row per visitor per page per flush, so a reload loop costs nothing
+extra, instead of the "one counted view per minute" rate limit; the day's version budget makes a page's write
+bucket crawl (2 a second) rather than refuse, because a refused version would be lost on the client's next snapshot;
+the room's brake never drops a version, only cursors, stroke pieces, pings, and history reads; the failed-token brake
+counts failures (an address over the line is refused for a minute from isolate memory); the presence route consults
+20 pages, not 50. Tests: `limits`, `rate-limits`, `room-limits`, `quota` (and `gif-stats`, `page-cache`).
+Phases 2 and 3 are still the plan. Facts about the code below are as of 2026-09-14; the built items name their files
+in docs/DESIGN.md ("Brakes", "Quotas").
 
 ## Principles
 
@@ -97,7 +105,7 @@ Shared helper, new file `worker/shared/limits.js`:
 Zone-level, set in the dashboard (no code): Bot Fight Mode on the `coolpaint.world` zone; the one free WAF
 rate-limiting rule on `edit.coolpaint.world/api/*` at something generous like 600 requests per minute per IP.
 
-## Phase 0 — stop the budget burns (small, this week)
+## Phase 0 — stop the budget burns (small, this week) — built 2026-09-15
 
 Each item is a few lines behind the helper above. Ship together with the bindings.
 
@@ -141,7 +149,7 @@ session is 401; `x/preview` from a foreign `Origin` is 403; `/presence` twice wi
 via a header `X-Cache: hit`). `wrangler dev` supports `ratelimits` bindings locally; if a binding is missing in a
 test environment the helper treats it as unlimited so the rest of the suite is unaffected.
 
-## Phase 1 — quotas (exact accounting in Durable Objects)
+## Phase 1 — quotas (exact accounting in Durable Objects) — built 2026-09-15
 
 1. **Per-site storage quota.** `Accounts` gains a `usage` table `(site, bytes, files, updated)`. `handle_site_files`
    adjusts it on `PUT` (new size minus the old object's size, from the `head` it already effectively does in

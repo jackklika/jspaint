@@ -24,8 +24,39 @@ export class Accounts extends DurableObject {
 			sql.exec("CREATE TABLE IF NOT EXISTS favorites (user_id TEXT NOT NULL, gif TEXT NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL, PRIMARY KEY (user_id, gif))");
 			// `gif` is `source:id` (gifcities:ABC…); rows from before stores were named are bare GifCities ids
 			sql.exec("UPDATE favorites SET gif = 'gifcities:' || gif WHERE gif NOT LIKE '%:%'");
+			// What each site holds in the bucket (every object under sites/<name>/, archives included) against its quota;
+			// null limits mean the defaults (index.js QUOTA_*). Kept in step by every write, recounted from a listing after.
+			sql.exec("CREATE TABLE IF NOT EXISTS usage (site TEXT PRIMARY KEY, bytes INTEGER NOT NULL DEFAULT 0, files INTEGER NOT NULL DEFAULT 0, limit_bytes INTEGER, limit_files INTEGER, updated INTEGER NOT NULL DEFAULT 0)");
+			// What each share key's guests uploaded per UTC day (the key as a hash)
+			sql.exec("CREATE TABLE IF NOT EXISTS guest_uploads (key_hash TEXT NOT NULL, day INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (key_hash, day))");
 			return Promise.resolve();
 		});
+	}
+	// ---- storage: what each site holds, against its quota ----
+	/** @param {string} site @returns {{ bytes: number, files: number, limit_bytes: number | null, limit_files: number | null, updated: number }} */
+	usage_of(site) {
+		const row = this.ctx.storage.sql.exec("SELECT bytes, files, limit_bytes, limit_files, updated FROM usage WHERE site = ?", site).toArray()[0];
+		if (!row) { return { bytes: 0, files: 0, limit_bytes: null, limit_files: null, updated: 0 }; }
+		return { bytes: Number(row.bytes), files: Number(row.files), limit_bytes: row.limit_bytes === null ? null : Number(row.limit_bytes), limit_files: row.limit_files === null ? null : Number(row.limit_files), updated: Number(row.updated) };
+	}
+	/** @param {string} site @param {number} bytes @param {number} files */
+	set_usage(site, bytes, files) {
+		this.ctx.storage.sql.exec("INSERT INTO usage (site, bytes, files, updated) VALUES (?, ?, ?, ?) ON CONFLICT(site) DO UPDATE SET bytes = excluded.bytes, files = excluded.files, updated = excluded.updated", site, Math.max(0, Math.round(bytes)), Math.max(0, Math.round(files)), Date.now());
+	}
+	/** The master raises (or lowers) a site's limits; null puts a default back. @param {string} site @param {number | null} limit_bytes @param {number | null} limit_files */
+	set_quota(site, limit_bytes, limit_files) {
+		this.ctx.storage.sql.exec("INSERT INTO usage (site, bytes, files, limit_bytes, limit_files, updated) VALUES (?, 0, 0, ?, ?, 0) ON CONFLICT(site) DO UPDATE SET limit_bytes = excluded.limit_bytes, limit_files = excluded.limit_files", site, limit_bytes, limit_files);
+	}
+	/** Adds a guest's upload to its share key's day and returns the day's total. @param {string} key_hash @param {number} day @param {number} bytes */
+	add_guest_upload(key_hash, day, bytes) {
+		const sql = this.ctx.storage.sql;
+		sql.exec("INSERT INTO guest_uploads (key_hash, day, bytes) VALUES (?, ?, ?) ON CONFLICT(key_hash, day) DO UPDATE SET bytes = bytes + excluded.bytes", key_hash, day, bytes);
+		if (Math.random() < 0.02) { sql.exec("DELETE FROM guest_uploads WHERE day < ?", day - 2); }
+		return Number(sql.exec("SELECT bytes FROM guest_uploads WHERE key_hash = ? AND day = ?", key_hash, day).one().bytes);
+	}
+	/** How many sites were claimed since `since` (ms): the platform-wide pace, for the surge brake. @param {number} since */
+	claims_since(since) {
+		return Number(this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM owners WHERE claimed > ?", since).one().n);
 	}
 	/** @param {string} name @returns {string | null} the stored password hash, if the site has one */
 	get_hash(name) {

@@ -39,6 +39,13 @@ export { GifStats } from "./gif-stats.js";
 export { PageRoom } from "./page-room.js";
 
 const MAX_FILE_BYTES = 24 * 1024 * 1024; // a phone photo is 3–12 MB; the page shows a smaller copy (pictures.js)
+// Quotas (MALICIOUS_ACTOR_PLAN.md phase 1): what a site may hold in the bucket, archives included — exact accounting in
+// the Accounts object (usage_of), kept in step by every write and recounted from a listing after. The master raises
+// a site's limits (POST /api/sites/:name/quota). Guests through a share key are held to a day's worth besides.
+const QUOTA_BYTES = 200 * 1024 * 1024;
+const QUOTA_FILES = 1000;
+const GUEST_DAILY_BYTES = 32 * 1024 * 1024;
+const BITMAP_ARCHIVES_KEPT = 20; // per page, whatever the kept versions refer to
 const CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*", // bearer auth, no cookies, so a permissive origin is fine
 	"Access-Control-Allow-Methods": "GET, HEAD, PUT, DELETE, OPTIONS",
@@ -423,10 +430,14 @@ async function prune_versions(bucket, prefix, page) {
 		for (const match of (html || "").matchAll(/\?v=([0-9a-f]{12})/g)) { referenced.add(match[1]); }
 	}
 	const listing = await bucket.list({ prefix: `${prefix}versions/bitmaps/${base}.` });
+	const kept = [];
 	for (const object of listing.objects) {
 		const hash = /\.([0-9a-f]{12})\.png$/.exec(object.key)?.[1];
-		if (hash && !referenced.has(hash)) { await bucket.delete(object.key); }
+		if (hash && !referenced.has(hash)) { await bucket.delete(object.key); } else { kept.push(object); }
 	}
+	// And never more than BITMAP_ARCHIVES_KEPT pictures per page, whatever refers to them (the newest stay)
+	kept.sort((a, b) => b.uploaded.getTime() - a.uploaded.getTime());
+	for (const object of kept.slice(BITMAP_ARCHIVES_KEPT)) { await bucket.delete(object.key); }
 }
 
 /**
@@ -468,9 +479,10 @@ async function restore_version(bucket, prefix, page, version) {
  * @param {Request} request
  * @param {URL} url
  * @param {{ SITES: R2Bucket, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
- * @param {{ page: string } | null} [invite] - the request is a guest's, allowed only within their page
+ * @param {{ page: string, key: string } | null} [invite] - the request is a guest's (their share key), allowed only within their page
  */
 async function handle_site_files(request, url, env, invite = null, ctx = null) {
+	const accounts = accounts_of(env);
 	const match = /^\/api\/sites\/([^/]+)\/files(?:\/(.+))?$/.exec(url.pathname);
 	if (!match) { return json({ error: "Not found" }, 404); }
 	const name = match[1];
@@ -517,13 +529,36 @@ async function handle_site_files(request, url, env, invite = null, ctx = null) {
 		return json({ error: "This share key only allows saving its own page (and adding GIFs or music)." }, 403);
 	}
 	if (request.method === "DELETE") {
+		const existing = await env.SITES.head(key);
 		await env.SITES.delete(key);
+		if (existing) {
+			const usage = await site_usage(env, name);
+			await accounts.set_usage(name, usage.bytes - existing.size, usage.files - 1);
+			if (ctx) { ctx.waitUntil(recount_usage(env, name)); }
+		}
 		await notify_published(env, ctx, name, path);
 		return json({ ok: true, deleted: path });
 	}
 	if (request.method === "PUT") {
 		const bytes = new Uint8Array(await request.arrayBuffer());
 		if (bytes.length > MAX_FILE_BYTES) { return json({ error: `Files are limited to ${MAX_FILE_BYTES / 1024 / 1024} MB` }, 413); }
+		// A page written is a publish: a few per 10 s per site is plenty for a person (uploads of pictures aren't counted)
+		if (is_html_path(path) && await limited(env.LIMIT_PUBLISH, `publish:${name}`)) { report_limited(env, ctx, { kind: "publish", worker: "jspaint-editor" }); return too_many(10, CORS_HEADERS); }
+		// The site's quota: what it holds now (archives included), less what this write replaces, plus this file
+		const existing = await env.SITES.head(key);
+		const usage = await site_usage(env, name);
+		const limit_bytes = usage.limit_bytes ?? QUOTA_BYTES;
+		const limit_files = usage.limit_files ?? QUOTA_FILES;
+		const after_bytes = usage.bytes - (existing?.size || 0) + bytes.length;
+		const after_files = usage.files + (existing ? 0 : 1);
+		if (after_bytes > limit_bytes || after_files > limit_files) {
+			return json({ error: `This site is full (${Math.round(limit_bytes / 1024 / 1024)} MB, ${limit_files} files). Delete something in My Site to make room.`, code: "quota", usage: { bytes: usage.bytes, files: usage.files, limit_bytes, limit_files } }, 413);
+		}
+		if (invite) {
+			// A guest's share key uploads a day's worth at most (the site's quota holds it too)
+			const total = await accounts.add_guest_upload(await sha256_hex_of(invite.key), Math.floor(Date.now() / 86400000), bytes.length);
+			if (total > GUEST_DAILY_BYTES) { return json({ error: "This share link has uploaded all it can today.", code: "quota" }, 413); }
+		}
 		/** @type {ArrayBuffer | string} */
 		let body = bytes.buffer;
 		const content_type = content_type_for(path);
@@ -553,10 +588,52 @@ async function handle_site_files(request, url, env, invite = null, ctx = null) {
 		}
 		await archive_before_overwrite(env.SITES, prefix, path, key, bytes);
 		const object = await env.SITES.put(key, body, { httpMetadata: { contentType: content_type } });
+		await accounts.set_usage(name, after_bytes, after_files); // (the archive just made is counted by the recount)
+		if (ctx) { ctx.waitUntil(recount_usage(env, name)); }
 		await notify_published(env, ctx, name, path);
 		return json({ ok: true, path, size: object.size, etag: object.httpEtag, url: public_url(path) });
 	}
 	return json({ error: "Method not allowed" }, 405);
+}
+
+/** @param {string} text */
+async function sha256_hex_of(text) {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * What a site holds, from Accounts — counted from the bucket first if it was never counted.
+ * @param {any} env @param {string} site
+ * @returns {Promise<{ bytes: number, files: number, limit_bytes: number | null, limit_files: number | null, updated: number }>}
+ */
+async function site_usage(env, site) {
+	const usage = await accounts_of(env).usage_of(site);
+	return usage.updated ? usage : recount_usage(env, site);
+}
+
+/**
+ * Counts every object under the site (pages, media, archives) and stores the total. One listing per thousand
+ * objects; runs after each write (off the response) and whenever a site has never been counted.
+ * @param {any} env @param {string} site
+ */
+async function recount_usage(env, site) {
+	const prefix = `sites/${site}/`;
+	let bytes = 0, files = 0, cursor;
+	do {
+		const listing = await env.SITES.list({ prefix, cursor });
+		for (const object of listing.objects) { bytes += object.size; files += 1; }
+		cursor = listing.truncated ? listing.cursor : undefined;
+	} while (cursor);
+	const accounts = accounts_of(env);
+	await accounts.set_usage(site, bytes, files);
+	const usage = await accounts.usage_of(site);
+	return usage;
+}
+
+/** A site's usage as the API reports it (the defaults filled in). @param {string} site @param {{ bytes: number, files: number, limit_bytes: number | null, limit_files: number | null }} usage */
+function usage_report(site, usage) {
+	return { site, bytes: usage.bytes, files: usage.files, limit_bytes: usage.limit_bytes ?? QUOTA_BYTES, limit_files: usage.limit_files ?? QUOTA_FILES };
 }
 
 /**
@@ -801,6 +878,24 @@ const editor = {
 				const answer = presence_cache.set(name, { site: name, editing: counts.reduce((sum, entry) => sum + entry.editing, 0), pages: counts.filter((entry) => entry.editing > 0) });
 				return json(answer, 200, { "Cache-Control": "no-store", "X-Cache": "miss" });
 			}
+			const usage_match = /^\/api\/sites\/([^/]+)\/(usage|quota)$/.exec(url.pathname);
+			if (usage_match) {
+				// What the site holds against its quota (the owner, for My Site's storage line); the master sets the quota
+				const name = usage_match[1];
+				if (!valid_site_name(name)) { return json({ error: "Bad site name" }, 400); }
+				const role = await role_of(request, env, name);
+				if (!role) { return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401); }
+				if (usage_match[2] === "quota") {
+					if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
+					if (role !== "master") { return json({ error: "Unauthorized: send Authorization: Bearer <master key>" }, 401); }
+					const body = await request.json().catch(() => ({}));
+					const limit = (/** @type {unknown} */ value) => (value === null || value === undefined ? null : Math.max(0, Math.round(Number(value) || 0)) || null);
+					await accounts_of(env).set_quota(name, limit(body.bytes), limit(body.files));
+					return json(usage_report(name, await site_usage(env, name)));
+				}
+				if (request.method !== "GET") { return json({ error: "Method not allowed" }, 405); }
+				return json(usage_report(name, url.searchParams.has("recount") ? await recount_usage(env, name) : await site_usage(env, name)));
+			}
 			const password_match = /^\/api\/sites\/([^/]+)\/password$/.exec(url.pathname);
 			if (password_match) {
 				// The master key gives a site a fresh random password (or takes it away). The password is returned exactly once.
@@ -855,7 +950,7 @@ const editor = {
 				// A guest with a share key may list the site and save their page (handle_site_files scopes the writes).
 				const guest_page = request.headers.get("X-Invite-Page") || "";
 				if (valid_path(guest_page) && is_html_path(guest_page) && await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, guest_page)) {
-					return handle_site_files(request, url, env, { page: guest_page }, ctx);
+					return handle_site_files(request, url, env, { page: guest_page, key: invite_key_of(request) }, ctx);
 				}
 				return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401);
 			}

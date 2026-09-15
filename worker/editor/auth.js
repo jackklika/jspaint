@@ -27,11 +27,13 @@
 // rides back on the response. Signing out deletes the session row and clears both; a claims cookie can outlive
 // that by at most its hour. Routes that need the account's email or name ask for a fresh lookup.
 import { valid_site_name } from "../shared/names.js";
+import { report_limited } from "../shared/limits.js";
 
 const SESSION_COOKIE = "coolpaint_session";
 const CLAIMS_COOKIE = "coolpaint_id";
 const CLAIMS_TTL_S = 60 * 60;
 const MAX_SITES = 5; // per account (the master key can hand out more)
+const SITE_CREATION_HOURLY = 50; // platform-wide: more new sites than this in an hour is a farm, and new ones wait (the master key still may)
 const STATE_COOKIE = "coolpaint_auth_state";
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const STATE_TTL_S = 10 * 60;
@@ -359,6 +361,10 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		if (owner === session.id) { return json({ ok: true, site, yours: true }); }
 		if (owner) { return json({ error: "That name is taken" }, 409); }
 		if ((await accounts.sites_of(session.id)).length >= MAX_SITES) { return json({ error: `An account can have up to ${MAX_SITES} sites`, limit: MAX_SITES }, 409); }
+		if ((await accounts.claims_since(Date.now() - 60 * 60 * 1000)) >= SITE_CREATION_HOURLY && (await role_of(request, env)) !== "master") {
+			report_limited(env, ctx, { kind: "site-creation-surge", worker: "jspaint-editor" }, { always: true });
+			return json({ error: "New sites are paused for a little while. Please try again in an hour.", code: "surge" }, 429);
+		}
 		if (await site_hash(env, site, { fresh: true })) { return json({ error: "That site has a password: claim it with the password", claimable: true }, 409); }
 		const listing = await env.SITES.list({ prefix: `sites/${site}/`, limit: 1 });
 		if (listing.objects.length) { return json({ error: "That name is taken" }, 409); }

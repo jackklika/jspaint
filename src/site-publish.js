@@ -84,6 +84,17 @@ function request_error(status, server_message) {
 }
 
 /**
+ * The editor asked us to slow down (a 429 with Retry-After): wait that long (10 s at most) and try once more; the
+ * answer to that try is what the caller sees, so a second 429 shows its plain sentence.
+ * @param {Response} response @param {() => Promise<Response>} again
+ */
+async function retry_after(response, again) {
+	const seconds = Math.min(10, Math.max(1, Number(response.headers.get("Retry-After")) || 2));
+	await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+	return again();
+}
+
+/**
  * An error the app handled but a person still felt (a failed request, an error dialog) → PostHog's Error tracking,
  * through the app's own funnel (app-analytics.js, which uses posthog.captureException). Best effort: no analytics
  * here (a dev server, a browser that blocks it, the module missing) and nothing happens.
@@ -162,7 +173,9 @@ async function publish_collage(settings, log) {
 
 	/** @param {string} path @param {Blob | string} body @param {string} type */
 	const upload = async (path, body, type) => {
-		const response = await fetch(`${api}/${path}`, { method: "PUT", credentials: "include", headers: { ...headers, "Content-Type": type }, body });
+		const send = () => fetch(`${api}/${path}`, { method: "PUT", credentials: "include", headers: { ...headers, "Content-Type": type }, body });
+		let response = await send();
+		if (response.status === 429) { response = await retry_after(response, send); } // (the editor's brake: once, quietly)
 		const data = await response.json().catch(() => ({}));
 		if (!response.ok) {
 			throw request_error(response.status, data.error || `Upload of ${path} failed (HTTP ${response.status})`);
@@ -392,4 +405,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { authorized, current_site, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog, SERVER_ERROR_TEXT, request_error, report_error };
+export { authorized, current_site, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog, SERVER_ERROR_TEXT, request_error, report_error, retry_after };

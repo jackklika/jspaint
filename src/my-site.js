@@ -16,7 +16,7 @@ import { begin_loading } from "./loading-veil.js";
 import { is_index, is_page, kb, render_page_tiles } from "./page-tiles.js";
 import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, is_hosted_editor, site_public_url } from "./site-constants.js";
 import { show_welcome, welcome_dismissed } from "./welcome.js";
-import { SERVER_ERROR_TEXT, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, request_error, save_settings, show_publish_dialog } from "./site-publish.js";
+import { SERVER_ERROR_TEXT, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, request_error, save_settings, show_publish_dialog, retry_after } from "./site-publish.js";
 
 /** @type {string | null} learned from /api/whoami */
 let sites_url = null;
@@ -332,6 +332,7 @@ async function api(path, init = {}) {
 	let response;
 	try {
 		response = await fetch(`${get_site_editor_url()}${path}`, { ...init, credentials: "include", headers });
+		if (response.status === 429) { response = await retry_after(response, () => fetch(`${get_site_editor_url()}${path}`, { ...init, credentials: "include", headers })); }
 	} catch (error) {
 		throw request_error(0, /** @type {Error} */ (error).message); // (no answer at all: the same plain sentence)
 	}
@@ -1146,6 +1147,11 @@ async function show_my_site_dialog({ tab = "site" } = {}) {
 		fact(localize("Updated:"), updated ? new Date(updated).toLocaleString() : "—");
 		fact(localize("Pages:"), pages.length ? `${pages.length}${pages.some((file) => is_index(file.path)) ? "" : ` — ${localize("no front page (index.html) yet")}`}` : localize("none yet"));
 		fact(localize("Files:"), `${files.length} (${kb(bytes)})`);
+		// Storage against the site's quota (archives count too); an older Worker has no answer, and the line is skipped
+		const quota = await api(`/api/sites/${encodeURIComponent(site)}/usage`).then((response) => response.json()).catch(() => null);
+		if (quota && typeof quota.limit_bytes === "number") {
+			fact(localize("Storage:"), `${kb(quota.bytes)} of ${kb(quota.limit_bytes)} · ${quota.files} of ${quota.limit_files} ${localize("files")}`);
+		}
 		if (posts_folders.length) { fact(localize("Posts:"), posts_folders.map((folder) => `${folder}/ (RSS: ${folder}/feed.xml)`).join(", ")); }
 		fact(localize("Signed in:"), load_settings().account ? `${load_settings().account.email} (Google)` : role === "master" ? localize("with the master key") : localize("with this site's password"));
 		$(E("p")).addClass("my-site-note").text(site === ROOT_SITE ? localize("The front page of the domain: its pages live at the root address, other sites at ~name.") : localize("Pages shows your pages as thumbnails; Files, everything on the site.")).appendTo($summary);
