@@ -60,6 +60,26 @@ function save_settings(settings) {
 	$G.triggerHandler("site-settings-changed"); // e.g. the toolbox globe's tooltip
 }
 
+/** What a person sees when the server, not they, failed (the detail goes to PostHog and the logs — never to the screen). */
+const SERVER_ERROR_TEXT = "Something went wrong on our side. Please try again in a little while.";
+
+/**
+ * The error to show for a failed editor request: the server's own words for a 4xx (a name that's taken, a bad path —
+ * something the person can act on), one plain sentence for a 5xx or no reply at all. The server's text rides along
+ * as `detail`, for the console.
+ * @param {number} status - 0 when the request never got an answer
+ * @param {string} server_message
+ */
+function request_error(status, server_message) {
+	const server_trouble = status === 0 || status >= 500;
+	const error = /** @type {Error & { status: number, detail: string, server: boolean }} */ (new Error(server_trouble ? SERVER_ERROR_TEXT : status === 401 ? "The password was rejected." : server_message || `HTTP ${status}`));
+	error.status = status;
+	error.detail = server_message;
+	error.server = server_trouble;
+	if (server_trouble) { window.console?.warn("editor request failed:", status, server_message); }
+	return error;
+}
+
 /** The editor Worker URL, for other modules (the GIF picker uses its proxy). */
 function get_site_editor_url() {
 	return load_settings().editor_url.replace(/\/+$/, "");
@@ -129,7 +149,7 @@ async function publish_collage(settings, log) {
 		const response = await fetch(`${api}/${path}`, { method: "PUT", credentials: "include", headers: { ...headers, "Content-Type": type }, body });
 		const data = await response.json().catch(() => ({}));
 		if (!response.ok) {
-			throw new Error(data.error || `Upload of ${path} failed (HTTP ${response.status})`);
+			throw request_error(response.status, data.error || `Upload of ${path} failed (HTTP ${response.status})`);
 		}
 		return data;
 	};
@@ -141,7 +161,8 @@ async function publish_collage(settings, log) {
 		throw new Error(settings.invite ? "This share link has expired or doesn't cover this page." : "The password was rejected.");
 	}
 	if (!listing.ok) {
-		throw new Error(`Couldn't reach the editor at ${base} (HTTP ${listing.status}).`);
+		const data = await listing.json().catch(() => ({}));
+		throw request_error(listing.status, data.error || `Couldn't reach the editor at ${base} (HTTP ${listing.status}).`);
 	}
 	const existing = new Set((await listing.json()).files.map((/** @type {{ path: string }} */ file) => file.path));
 	// A brand-new page (New Page…, New Post…, the starter page) or a copy of someone's page, named like one already
@@ -308,7 +329,13 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			$w.$Button(localize("Open Page"), () => { window.open(url, "_blank", "noopener"); }).focus();
 		} catch (error) {
 			log(String(error.message || error));
-			if (!/^Not saved:/.test(String(error.message || ""))) { show_error_message("Couldn't save to the site.", error); } // (a declined "Replace?" is a choice, not a failure)
+			if (/^Not saved:/.test(String(error.message || ""))) {
+				// (a declined "Replace?" is a choice, not a failure)
+			} else if (error && error.server) {
+				show_error_message(error.message); // (plain: the detail is in the console and in PostHog, not for the screen)
+			} else {
+				show_error_message("Couldn't save to the site.", error);
+			}
 		} finally {
 			$save.prop("disabled", false);
 		}
@@ -349,4 +376,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { authorized, current_site, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog };
+export { authorized, current_site, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog, SERVER_ERROR_TEXT, request_error };

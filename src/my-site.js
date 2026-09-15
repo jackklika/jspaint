@@ -16,7 +16,7 @@ import { begin_loading } from "./loading-veil.js";
 import { is_index, is_page, kb, render_page_tiles } from "./page-tiles.js";
 import { DEFAULT_SITES_URL, ROOT_SITE, default_editor_url, is_hosted_editor, site_public_url } from "./site-constants.js";
 import { show_welcome, welcome_dismissed } from "./welcome.js";
-import { get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, save_settings, show_publish_dialog } from "./site-publish.js";
+import { SERVER_ERROR_TEXT, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, request_error, save_settings, show_publish_dialog } from "./site-publish.js";
 
 /** @type {string | null} learned from /api/whoami */
 let sites_url = null;
@@ -329,15 +329,18 @@ async function api(path, init = {}) {
 	const { secret } = load_settings();
 	const headers = new Headers(init.headers || {});
 	if (secret) { headers.set("Authorization", `Bearer ${secret}`); }
-	const response = await fetch(`${get_site_editor_url()}${path}`, { ...init, credentials: "include", headers });
+	let response;
+	try {
+		response = await fetch(`${get_site_editor_url()}${path}`, { ...init, credentials: "include", headers });
+	} catch (error) {
+		throw request_error(0, /** @type {Error} */ (error).message); // (no answer at all: the same plain sentence)
+	}
 	if (!response.ok) {
 		let message = `HTTP ${response.status}`;
 		try {
 			message = (await response.json()).error || message;
 		} catch (_error) { /* not JSON */ }
-		const error = new Error(response.status === 401 ? "The password was rejected." : message);
-		/** @type {any} */ (error).status = response.status;
-		throw error;
+		throw request_error(response.status, message); // (a 5xx: one plain sentence; the detail stays off the screen)
 	}
 	return response;
 }
@@ -562,9 +565,8 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 					show_sign_in_dialog({ site, resume }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
 					return;
 				}
-				const problem = last_sign_in_problem === "offline" ? localize("Couldn't reach the editor. Try again in a moment.") :
-					last_sign_in_problem === "quota" ? localize("The editor's storage is over its daily limit (Cloudflare's free tier). It resets at midnight UTC.") :
-						localize("~%1 isn't yours — you're signed in as %2, and it belongs to another account.", site, now.email || now.name);
+				const problem = last_sign_in_problem === "offline" || last_sign_in_problem === "quota" ? localize(SERVER_ERROR_TEXT) : // (what went wrong is in the console and PostHog, not here)
+					localize("~%1 isn't yours — you're signed in as %2, and it belongs to another account.", site, now.email || now.name);
 				$status.text(problem);
 			};
 			if (account.sites.length) {

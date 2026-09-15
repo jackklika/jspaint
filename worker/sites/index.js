@@ -336,10 +336,8 @@ export default {
 			const quota = /Durable Objects free tier/i.test(message);
 			// The server's own failures are $exception events too (PostHog Error tracking), when the sites Worker has a key
 			capture_exception(/** @type {any} */ (env), ctx, error, { worker: "jspaint-sites", route: new URL(request.url).pathname, method: request.method, status: quota ? 503 : 500, ...(quota ? { code: "storage-quota" } : {}) });
-			const body = quota ?
-				"<h1>Back soon</h1><p>This site's counters and guestbook are over their daily limit (Cloudflare's free tier); they come back at midnight UTC.</p>" :
-				"<h1>Something went wrong</h1>";
-			return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${quota ? "Back soon" : "Error"}</title></head><body style="font-family:'Courier New',monospace;text-align:center;padding-top:80px">${body}</body></html>`, quota ? 503 : 500);
+			// A plain page for visitors; what actually happened is in Error tracking and the logs
+			return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Back soon</title></head><body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding-top:80px"><h1>Back soon</h1><p>This page is taking a little break. Please try again in a little while.</p><p><marquee>~*~ be right back ~*~</marquee></p></body></html>`, quota ? 503 : 500);
 		}
 	},
 	/**

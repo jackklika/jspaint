@@ -798,12 +798,11 @@ const editor = {
 			const quota = /Durable Objects free tier/i.test(message);
 			// The server's own failures are $exception events too (PostHog Error tracking) — the browser never sees them as errors
 			capture_exception(env, ctx, error, { worker: "jspaint-editor", route: url.pathname, method: request.method, status: quota ? 503 : 500, ...(quota ? { code: "storage-quota" } : {}) });
-			if (quota) {
-				// The Workers Free plan meters Durable Object rows per day; over the line, nothing DO-backed works until
-				// midnight UTC (docs/DEPLOY.md). Say so — Paint shows this instead of "couldn't reach the editor".
-				return json({ error: "The editor's storage is over its daily limit (Cloudflare's free tier). It resets at midnight UTC.", code: "storage-quota", detail: message }, 503, { "Retry-After": "3600" });
-			}
-			return json({ error: message }, 500);
+			// Clients get a plain message and a code; the detail lives in PostHog and the Worker logs (a person editing
+			// their page needn't read about Cloudflare's tiers or a stack trace). The Durable Objects quota (the Workers
+			// Free plan meters rows per day; docs/DEPLOY.md) is a 503 with Retry-After so Paint knows it's temporary.
+			if (quota) { return json({ error: "Something went wrong on our side. Please try again in a little while.", code: "storage-quota" }, 503, { "Retry-After": "3600" }); }
+			return json({ error: "Something went wrong on our side. Please try again in a little while.", code: "server-error" }, 500);
 		}
 	},
 };

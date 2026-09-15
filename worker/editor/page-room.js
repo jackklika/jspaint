@@ -359,7 +359,7 @@ export class PageRoom extends DurableObject {
 			const message = /** @type {any} */ (error)?.message || String(error);
 			const quota = /Durable Objects free tier/i.test(message);
 			capture_exception(/** @type {any} */ (this.env), null, error, { worker: "jspaint-editor", route: "PageRoom.webSocketMessage", ...(quota ? { code: "storage-quota" } : {}) });
-			this.send(ws, { type: "error", message: quota ? "The editor's storage is over its daily limit (Cloudflare's free tier). It resets at midnight UTC." : message });
+			this.send(ws, { type: "error", message: "Something went wrong on our side. Please try again in a little while.", code: quota ? "storage-quota" : "server-error" }); // (the detail went to Error tracking, not to the person painting)
 		}
 	}
 	/**
