@@ -47,6 +47,9 @@ let retry_count = 0;
 let retry_timer = null;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let sync_timer = null;
+/** Until when the room asked us to slow down (ms): cursors and stroke pieces wait, the next sync is put off. */
+let slow_until = 0;
+let slow_warned_at = 0;
 let syncing = false;
 let applying_remote = false;
 let full_picture_in_flight = false;
@@ -328,6 +331,16 @@ function handle_message(message) {
 		case "error":
 			window.console?.warn("live sync:", message.message);
 			set_status("live", message.message);
+			break;
+		case "slow-down":
+			// The room's brake: we're sending faster than it takes (a burst, a bug, or the page's busy day). Cursors and
+			// stroke pieces wait it out; the next sync is put off; nothing is dropped here.
+			slow_until = Date.now() + Math.min(60_000, Math.max(250, Number(message.retry_in_ms) || 1000));
+			if (Date.now() - slow_warned_at > 30_000) {
+				slow_warned_at = Date.now();
+				set_status("live", message.code === "daily-budget" ? localize("This page has been very busy today: syncing slowly.") : localize("Syncing a little slower…"));
+			}
+			if (sync_timer) { schedule_sync(); }
 			break;
 		default:
 			break;
@@ -669,7 +682,7 @@ async function replace_room_document(seed = false, label = "") {
 function schedule_sync() {
 	if (!connected || applying_remote) { return; }
 	if (sync_timer) { clearTimeout(sync_timer); }
-	sync_timer = setTimeout(() => { sync_local_changes(); }, SYNC_DELAY_MS);
+	sync_timer = setTimeout(() => { sync_local_changes(); }, Math.max(SYNC_DELAY_MS, slow_until - Date.now()));
 }
 
 /** Diffs the document against what the room has and sends the difference. */
@@ -849,7 +862,7 @@ function restore_version(id) {
 function send_presence(now = false) {
 	// Alone in the room, there's nobody to show a cursor to: send nothing. When someone joins, the "join" handler
 	// calls send_presence(true) so they see us at once. (The room only relays presence; it never stores it.)
-	if (!connected || remote_clients.size === 0) { return; }
+	if (!connected || remote_clients.size === 0 || Date.now() < slow_until) { return; }
 	presence_dirty = true;
 	if (presence_timer && !now) { return; }
 	const flush = () => {
@@ -1135,7 +1148,7 @@ function begin_local_stroke(e) {
 	if (!connected || !selected_tool || !STROKE_TOOLS.has(selected_tool.id) || (e.button !== 0 && e.button !== 2)) { return; }
 	// Decided once per stroke: alone, the stroke isn't relayed at all (someone joining mid-stroke sees the finished
 	// patch, which is what matters); with company, every phase goes out.
-	if (remote_clients.size === 0) { return; }
+	if (remote_clients.size === 0 || Date.now() < slow_until) { return; }
 	const start = to_canvas_coords(e);
 	const id = `${client_id()}-${Date.now().toString(36)}`;
 	const color = (/** @type {string | CanvasPattern} */ c) => typeof c === "string" ? c : "#000000";
@@ -1152,6 +1165,7 @@ function begin_local_stroke(e) {
 	const stroke = local_stroke = { id, pending: [], timer: 0, last: start };
 	const flush = () => {
 		stroke.timer = 0;
+		if (Date.now() < slow_until && local_stroke === stroke) { stroke.timer = window.setTimeout(flush, slow_until - Date.now()); return; } // (the room asked for a pause)
 		if (stroke.pending.length && local_stroke === stroke) {
 			send({ type: "stroke", id, phase: "move", points: stroke.pending.splice(0, 64) });
 			if (stroke.pending.length) { stroke.timer = window.setTimeout(flush, STROKE_SEND_INTERVAL_MS); }

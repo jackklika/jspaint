@@ -53,10 +53,11 @@ const last_reported = new Map();
  * @param {{ POSTHOG_API_KEY?: string }} env
  * @param {ExecutionContext | null | undefined} ctx
  * @param {{ kind: string, worker: string, [key: string]: string | number }} properties
+ * @param {{ always?: boolean }} [options] - `always`: not sampled (a rare, important event — a page past its day's budget)
  */
-function report_limited(env, ctx, properties) {
+function report_limited(env, ctx, properties, { always = false } = {}) {
 	const api_key = env.POSTHOG_API_KEY;
-	if (!api_key || Math.random() >= 0.1) { return; }
+	if (!api_key || (!always && Math.random() >= 0.1)) { return; }
 	const now = Date.now();
 	if ((last_reported.get(properties.kind) || 0) > now - 60_000) { return; }
 	last_reported.set(properties.kind, now);

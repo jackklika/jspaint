@@ -33,6 +33,7 @@
 //                   state {id, doc, patches} (or {id, error}) · restored {version, client_id, name} (to everyone, the restorer too)
 import { DurableObject } from "cloudflare:workers";
 import { capture_exception } from "../shared/exceptions.js";
+import { report_limited } from "../shared/limits.js";
 
 const KINDS = new Set(["blocks", "stickers", "text_layers"]);
 const MAX_PATCHES = 60; // then ask a client for a fresh full picture
@@ -44,6 +45,24 @@ const MAX_HISTORY_BYTES = 48 * 1024 * 1024; // of bitmap patches in the history
 const CHECKPOINT_EVERY = 25; // versions between full copies of the document (layers), for rebuilding old versions
 const PRUNE_EVERY = 50; // versions between looks at the table's size (each look reads every row — Durable Objects meter those)
 const MAX_LABEL = 60;
+// Brakes (MALICIOUS_ACTOR_PLAN.md phase 0): per connection, a token bucket for messages of any kind and a smaller one
+// for the expensive kinds (a version written, a history read, a hello's snapshot). Ten times a fast human: three
+// strokes a second is thirty messages, each a version. Over budget, the ephemeral kinds (cursors, stroke pieces) are
+// dropped and a `slow-down` says for how long; someone's work (a version) still goes through — but every ten
+// over-budget messages in a minute is a strike, and three strikes close the socket (1013: the client reconnects
+// with its backoff). Past DAILY_WRITES versions in a UTC day the page's write bucket runs at a crawl for the rest
+// of the day, and PostHog hears about it once.
+const BUCKET_RATE = 30; // messages a second, sustained
+const BUCKET_BURST = 120;
+const WRITE_RATE = 10; // versions (and history reads, hellos) a second
+const WRITE_BURST = 40;
+const SLOW_WRITE_RATE = 2; // …past the day's budget
+const SLOW_WRITE_BURST = 10;
+const DAILY_WRITES = 5000; // versions per page per UTC day before the crawl (ten hours of fast painting)
+const STRIKE_EXCESS = 10; // over-budget messages within a minute = a strike
+const STRIKES_TO_CLOSE = 3;
+const WRITE_KINDS = new Set(["hello", "seed", "replace", "props", "ops", "bitmap", "restore", "checkout", "history"]);
+const DROPPABLE_KINDS = new Set(["presence", "stroke", "ping", "history", "checkout"]); // nobody's work: over budget, these are dropped
 /** What a change is called when the client doesn't say. @type {Record<string, string>} */
 const KIND_LABELS = { seed: "First draft", replace: "Draft replaced", ops: "Elements changed", props: "Page changed", bitmap: "Painted" };
 
@@ -112,10 +131,12 @@ export class PageRoom extends DurableObject {
 	 */
 	constructor(ctx, env) {
 		super(ctx, env);
+		/** @type {WeakMap<WebSocket, { tokens: number, write_tokens: number, at: number, excess: number, excess_at: number, strikes: number, warned_at: number }>} each connection's brake (allow) */
+		this.buckets = new WeakMap();
 		/**
 		 * The document at the head. `version` is the last version id given out (ids only ever grow); `head` is the
 		 * version this document is the state of — the newest, unless someone went back in the history.
-		 * @type {{ version: number, head?: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] }, patch_count?: number, patch_bytes?: number }}
+		 * @type {{ version: number, head?: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] }, patch_count?: number, patch_bytes?: number, writes_day?: number, writes_today?: number }}
 		 */
 		this.doc = { version: 0, width: 0, height: 0, page_properties: {}, layers: { blocks: [], stickers: [], text_layers: [] } };
 		this.head = 0;
@@ -181,6 +202,11 @@ export class PageRoom extends DurableObject {
 	record(info, kind, label, extra = {}) {
 		const id = ++this.doc.version;
 		const parent = this.head;
+		// The day's versions, for the budget (they ride along in the doc row)
+		const day = Math.floor(Date.now() / 86400000);
+		if (this.doc.writes_day !== day) { this.doc.writes_day = day; this.doc.writes_today = 0; }
+		this.doc.writes_today = (this.doc.writes_today || 0) + 1;
+		if (this.doc.writes_today === DAILY_WRITES + 1) { report_limited(/** @type {any} */ (this.env), null, { kind: "room-daily-budget", worker: "jspaint-editor", room: this.ctx.id.name || "" }, { always: true }); }
 		const text = extra.part ? "" : typeof label === "string" && label.trim() ? label.trim().slice(0, MAX_LABEL) : KIND_LABELS[kind] || kind;
 		const patch = extra.patch;
 		const checkpoint = kind === "seed" || kind === "replace" || !!patch?.reset || id % CHECKPOINT_EVERY === 0;
@@ -310,6 +336,55 @@ export class PageRoom extends DurableObject {
 			bytes -= Number(row.bytes);
 		}
 	}
+	// ---- brakes ----
+	/** Past the day's budget of versions? */
+	over_daily_budget() {
+		return this.doc.writes_day === Math.floor(Date.now() / 86400000) && (this.doc.writes_today || 0) > DAILY_WRITES;
+	}
+	/**
+	 * Whether this message may be handled now. Over budget: a `slow-down` (at most one a second), the ephemeral kinds
+	 * dropped, the rest let through; repeated excess closes the socket.
+	 * @param {WebSocket} ws @param {string} type
+	 */
+	allow(ws, type) {
+		const now = Date.now();
+		let bucket = this.buckets.get(ws);
+		if (!bucket) {
+			bucket = { tokens: BUCKET_BURST, write_tokens: WRITE_BURST, at: now, excess: 0, excess_at: now, strikes: 0, warned_at: 0 };
+			this.buckets.set(ws, bucket);
+		}
+		const slow = this.over_daily_budget();
+		const write_rate = slow ? SLOW_WRITE_RATE : WRITE_RATE;
+		const write_burst = slow ? SLOW_WRITE_BURST : WRITE_BURST;
+		const elapsed = (now - bucket.at) / 1000;
+		bucket.at = now;
+		bucket.tokens = Math.min(BUCKET_BURST, bucket.tokens + elapsed * BUCKET_RATE);
+		bucket.write_tokens = Math.min(write_burst, bucket.write_tokens + elapsed * write_rate);
+		const write = WRITE_KINDS.has(type);
+		if (bucket.tokens >= 1 && (!write || bucket.write_tokens >= 1)) {
+			bucket.tokens -= 1;
+			if (write) { bucket.write_tokens -= 1; }
+			return true;
+		}
+		if (now - bucket.excess_at > 60_000) { bucket.excess = 0; bucket.excess_at = now; }
+		bucket.excess += 1;
+		const short = Math.max(1 - bucket.tokens, write ? 1 - bucket.write_tokens : 0);
+		const retry_in_ms = Math.max(250, Math.ceil(short / (write && bucket.write_tokens < 1 ? write_rate : BUCKET_RATE) * 1000));
+		if (now - bucket.warned_at >= 1000) {
+			bucket.warned_at = now;
+			this.send(ws, { type: "slow-down", retry_in_ms, ...(slow ? { code: "daily-budget" } : {}) });
+		}
+		if (bucket.excess >= STRIKE_EXCESS) {
+			bucket.excess = 0;
+			bucket.strikes += 1;
+			if (bucket.strikes >= STRIKES_TO_CLOSE) {
+				report_limited(/** @type {any} */ (this.env), null, { kind: "room-flood", worker: "jspaint-editor" });
+				try { ws.close(1013, "slow down"); } catch (_error) { /* already closing */ }
+				return false;
+			}
+		}
+		return !DROPPABLE_KINDS.has(type);
+	}
 	// ---- connections ----
 /** @param {Request} request */
 	fetch(request) {
@@ -385,6 +460,7 @@ export class PageRoom extends DurableObject {
 			this.send(ws, { type: "error", message: "Bad JSON" });
 			return;
 		}
+		if (!this.allow(ws, String(message.type || ""))) { return; }
 		const info = ws.deserializeAttachment() || {};
 		if (message.type === "hello") {
 			const client_id = String(message.client_id || "").slice(0, 40) || crypto.randomUUID();
