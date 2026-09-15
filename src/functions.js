@@ -1383,6 +1383,11 @@ function please_enter_a_number() {
  * @param {Error | string} [error]
  */
 function show_error_message(message, error) {
+	// Every error dialog with an error behind it reaches PostHog's Error tracking too (site-publish.js report_error) —
+	// except the global handlers' "Internal application error." dialog, which error-handling-enhanced.js reports itself
+	if (error && !/^Internal application error/.test(String(message))) {
+		import("./site-publish.js").then((site_publish) => { site_publish.report_error("dialog", error); }).catch(() => { /* no analytics */ });
+	}
 	// Test global error handling resiliency by enabling one or both of these:
 	// Promise.reject(new Error("EMIT EMIT EMIT"));
 	// throw new Error("EMIT EMIT EMIT");

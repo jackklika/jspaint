@@ -76,8 +76,24 @@ function request_error(status, server_message) {
 	error.status = status;
 	error.detail = server_message;
 	error.server = server_trouble;
-	if (server_trouble) { window.console?.warn("editor request failed:", status, server_message); }
+	if (server_trouble) {
+		window.console?.warn("editor request failed:", status, server_message);
+		report_error("request", Object.assign(new Error(`Editor request failed (${status}): ${server_message}`), { status }));
+	}
 	return error;
+}
+
+/**
+ * An error the app handled but a person still felt (a failed request, an error dialog) → PostHog's Error tracking,
+ * through the app's own funnel (app-analytics.js, which uses posthog.captureException). Best effort: no analytics
+ * here (a dev server, a browser that blocks it, the module missing) and nothing happens.
+ * @param {string} kind
+ * @param {unknown} error
+ */
+function report_error(kind, error) {
+	import("./app-analytics.js").then((analytics) => {
+		analytics.track_app_error(/** @type {any} */ (kind), /** @type {any} */ (error));
+	}).catch(() => { /* no analytics */ });
 }
 
 /** The editor Worker URL, for other modules (the GIF picker uses its proxy). */
@@ -376,4 +392,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { authorized, current_site, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog, SERVER_ERROR_TEXT, request_error };
+export { authorized, current_site, get_site_editor_url, get_site_files_base, has_account, is_signed_in, load_settings, publish_collage, save_settings, show_publish_dialog, SERVER_ERROR_TEXT, request_error, report_error };

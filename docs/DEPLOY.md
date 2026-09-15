@@ -85,3 +85,14 @@ Commit as you go with a message that says what changed for whom; push `live-sync
 ## Cloudflare limits (Durable Objects)
 
 The `Accounts`, `PageRoom`, `SiteState` and `GifStats` Durable Objects use SQLite storage, which the **Workers Free** plan meters per day: 5 million rows read, 100,000 rows written. When a limit is hit every request that touches a DO fails with `Exceeded allowed rows read in Durable Objects free tier.` until midnight UTC — in Paint that shows as "Couldn't reach the editor" / "The editor's storage is over its daily limit", "viewers unknown", and live rooms that won't connect; static pages, the files API and the master key keep working. This happened on 2026-09-14. **Workers Paid** ($5/month) lifts both limits (billed per million rows beyond a large allowance). The live room writes a row per stroke and the code avoids per-stroke table scans (`page-room.js`: counters instead of `patch_stats` queries, `PRUNE_EVERY`), but a busy day of live painting on the free plan can still reach the write limit.
+
+## Is Error tracking wired up?
+
+The editor Worker sends its own failures to PostHog as `$exception` events (`worker/shared/exceptions.js`) when it has the `POSTHOG_API_KEY` secret; the browser sends the app's error dialogs and failed requests through `app-analytics.js`. To prove the server side end to end:
+
+```sh
+curl -X POST https://edit.coolpaint.world/api/debug/exception -H "Authorization: Bearer $(cat worker/editor/.secret.txt)"
+# → {"reported":true,"posthog_status":200,"configured":true}; then look for "Test exception from the editor Worker" in PostHog › Error tracking
+```
+
+The sites Worker (`coolpaint.world`) reports only once it has the key too: `cd worker && npx wrangler secret put POSTHOG_API_KEY -c sites/wrangler.jsonc`.

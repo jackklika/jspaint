@@ -6,7 +6,16 @@ const editor = "http://localhost:8799"; // nothing listens there: every request 
 const site = "stubbed";
 const PLAIN = "Something went wrong on our side. Please try again in a little while.";
 const DETAIL = "Exceeded allowed rows read in Durable Objects free tier.";
-const { page, close } = await open_paint({ init: (arg) => { localStorage.setItem("jspaint site publish settings", JSON.stringify(arg)); }, init_arg: { editor_url: editor, site, secret: "", remember_secret: false, page: "index.html", account: { email: "pat@example.com", name: "Pat", via: "google", sites: [site] } } });
+const { page, close } = await open_paint({
+	// (a stand-in PostHog: the browser funnel — app-analytics.js track_app_error → posthog.captureException — is what the
+	// app's own error reports go through; here it just records them)
+	init: (arg) => {
+		localStorage.setItem("jspaint site publish settings", JSON.stringify(arg));
+		window.__caught = [];
+		window.posthog = { captureException: (error, props) => { window.__caught.push({ message: String(error && error.message || error), ...props }); }, capture: () => {} };
+	},
+	init_arg: { editor_url: editor, site, secret: "", remember_secret: false, page: "index.html", account: { email: "pat@example.com", name: "Pat", via: "google", sites: [site] } },
+});
 await page.waitForTimeout(800);
 const console_lines = [];
 page.on("console", (m) => { console_lines.push(m.text()); });
@@ -37,6 +46,15 @@ const dialogs = await page.evaluate(() => [...document.querySelectorAll(".window
 assert.doesNotMatch(dialogs, /Exceeded|Durable|Cloudflare/, "the error dialog is plain too");
 // …while the detail did reach the console, for anyone looking
 assert.ok(console_lines.some((line) => line.includes("editor request failed") && line.includes(DETAIL)), console_lines.filter((l) => /request failed/.test(l)).join("\n"));
+
+// …and reached PostHog through the app's funnel, as an exception with the detail
+await page.waitForFunction(() => window.__caught.some((c) => /Exceeded allowed rows/.test(c.message) && c.error_kind === "request"), null, { timeout: 5000 });
+const caught = await page.evaluate(() => window.__caught);
+assert.ok(caught.some((c) => c.error_kind === "request" && /\(500\)/.test(c.message)), JSON.stringify(caught));
+// (that dialog was plain on purpose — the request itself was already reported; a dialog that carries an error reports it)
+await page.evaluate(async () => { (await import("/src/functions.js")).show_error_message("Couldn't do the thing.", new Error("the thing broke")); });
+await page.waitForFunction(() => window.__caught.some((c) => c.error_kind === "dialog" && /the thing broke/.test(c.message)), null, { timeout: 5000 });
+await page.evaluate(() => { [...document.querySelectorAll(".window button")].find((b) => b.textContent === "OK")?.click(); });
 
 // A 4xx the person can act on keeps the server's words
 await page.evaluate(() => { for (const w of document.querySelectorAll(".window .window-close-button")) { w.click(); } });

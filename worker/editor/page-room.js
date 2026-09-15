@@ -9,6 +9,8 @@
 // ordered list of PNG patches (a full picture is sent as horizontal bands with `reset` on the first).
 // Stickers reference site files (gifs/<hash>.gif); clients upload before they send.
 //
+// Every stored change writes two rows — its version, and the document row (layers, counters, and the head pointer)
+// — Durable Objects meter rows written, so nothing else is written per stroke.
 // History: every change is kept as a version — who, when, what, and its parent (the version it was made on) —
 // so the page's history is a tree, like Paint's own undo tree but shared: `restore {id}` moves the room's head
 // to an older version (the document becomes that state, everyone re-fetches), and the next change branches
@@ -113,7 +115,7 @@ export class PageRoom extends DurableObject {
 		/**
 		 * The document at the head. `version` is the last version id given out (ids only ever grow); `head` is the
 		 * version this document is the state of — the newest, unless someone went back in the history.
-		 * @type {{ version: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] }, patch_count?: number, patch_bytes?: number }}
+		 * @type {{ version: number, head?: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] }, patch_count?: number, patch_bytes?: number }}
 		 */
 		this.doc = { version: 0, width: 0, height: 0, page_properties: {}, layers: { blocks: [], stickers: [], text_layers: [] } };
 		this.head = 0;
@@ -126,9 +128,16 @@ export class PageRoom extends DurableObject {
 			if (row) {
 				this.doc = JSON.parse(String(row.value));
 			}
-			const head = sql.exec("SELECT value FROM state WHERE key = 'head'").toArray()[0];
-			if (head) {
-				this.head = Number(head.value) || 0;
+			// The head pointer rides inside the document row (one row written per change, not two). Rooms from before
+			// kept it in its own row: fold it in once.
+			const head_row = sql.exec("SELECT value FROM state WHERE key = 'head'").toArray()[0];
+			if (typeof this.doc.head === "number") {
+				this.head = this.doc.head;
+				if (head_row) { sql.exec("DELETE FROM state WHERE key = 'head'"); }
+			} else if (head_row) {
+				this.head = Number(head_row.value) || 0;
+				sql.exec("DELETE FROM state WHERE key = 'head'");
+				this.save_doc();
 			} else if (this.doc.version > 0) {
 				this.migrate();
 			}
@@ -136,11 +145,10 @@ export class PageRoom extends DurableObject {
 		});
 	}
 	// ---- storage ----
+	/** The document and the head pointer, in one row (Durable Objects meter every row written). */
 	save_doc() {
+		this.doc.head = this.head;
 		this.ctx.storage.sql.exec("INSERT INTO state (key, value) VALUES ('doc', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(this.doc));
-	}
-	save_head() {
-		this.ctx.storage.sql.exec("INSERT INTO state (key, value) VALUES ('head', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(this.head));
 	}
 	/** The document without its counter: what a version's checkpoint holds, and what a snapshot sends. */
 	doc_state() {
@@ -161,8 +169,7 @@ export class PageRoom extends DurableObject {
 		if (has_patches) { sql.exec("DROP TABLE patches"); }
 		this.doc.version = id;
 		this.head = id;
-		this.save_doc();
-		this.save_head();
+		this.save_doc(); // (the head pointer rides along)
 	}
 	/**
 	 * Keeps a change as a version on the head (the new head), with a checkpoint of the document when it's due.
@@ -191,8 +198,7 @@ export class PageRoom extends DurableObject {
 			checkpoint ? JSON.stringify(this.doc_state()) : null,
 		);
 		this.head = id;
-		this.save_doc();
-		this.save_head();
+		this.save_doc(); // (the head pointer rides along)
 		if (id % PRUNE_EVERY === 0) { this.prune(); } // (a scan of the table: rarely)
 		return id;
 	}
@@ -423,8 +429,7 @@ export class PageRoom extends DurableObject {
 				if (!state) { this.send(ws, { type: "state", id, error: "That version is too old to bring back." }); return; }
 				this.doc = { version: this.doc.version, ...state.doc, patch_count: undefined, patch_bytes: undefined }; // (the chain is recounted on the next look)
 				this.head = id;
-				this.save_doc();
-				this.save_head();
+				this.save_doc(); // (the head pointer rides along)
 				this.broadcast({ type: "restored", version: id, client_id: info.client_id, name: info.name });
 				break;
 			}

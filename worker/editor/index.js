@@ -2,6 +2,7 @@
 // jspaint-editor: serves the Paint app (static assets) and the API Paint uses to publish to a site.
 //
 //   GET    /api/sites/:name/presence                 how many are editing the site right now (its pages' live rooms; no auth)
+//   POST   /api/debug/exception                     master key: sends a test $exception to PostHog, answers with PostHog's status
 //   GET    /api/whoami[?site=name]                  checks the bearer (master key, or that site's password); returns role, created, URLs
 //   POST   /api/sites/:name/password                master key only: gives the site a new random password → { site, password, rotated }
 //   DELETE /api/sites/:name/password                master key only: removes the site's password
@@ -709,6 +710,13 @@ const editor = {
 			// Reading site files needs no secret: they're public on the sites Worker anyway. Writing does.
 			if ((request.method === "GET" || request.method === "HEAD") && /^\/api\/sites\/[^/]+\/files\/./.test(url.pathname)) {
 				return handle_site_files(request, url, env);
+			}
+			if (url.pathname === "/api/debug/exception" && request.method === "POST") {
+				// Support: proves the error pipeline end to end — sends a test $exception to PostHog and answers with
+				// PostHog's status (master key only; docs/DEPLOY.md). Look for "Test exception from the editor Worker" in Error tracking.
+				if ((await role_of(request, env)) !== "master") { return json({ error: "Unauthorized: send Authorization: Bearer <master key>" }, 401); }
+				const posthog_status = await capture_exception(env, ctx, new Error(`Test exception from the editor Worker (${new Date().toISOString()})`), { worker: "jspaint-editor", route: url.pathname, method: request.method, status: 500, test: true });
+				return json({ reported: posthog_status === 200, posthog_status, configured: !!env.POSTHOG_API_KEY });
 			}
 			if (url.pathname === "/api/whoami") {
 				// Paint's sign-in check: the master (any site) or the site's password (needs ?site=).
