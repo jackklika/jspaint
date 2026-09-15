@@ -93,17 +93,17 @@ await page.waitForFunction(() => document.querySelectorAll(".block-layer").lengt
 await click_menu_item(page, "My Site...");
 await page.waitForSelector(".my-site-window", { timeout: 10000 });
 await page.waitForFunction(() => /\d+ files?/.test(document.querySelector(".my-site-window .my-site-status")?.textContent || ""), null, { timeout: 15000 });
-// Pages: a tile per page, its thumbnail the bitmap the site holds for it; the summary counts it
+// Pages: a tile per page, its thumbnail the whole page as the site holds it (thumbs/, made at publish); the summary counts it
 await page.click(".my-site-window .my-site-tab[data-tab=pages]");
 assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".my-site-window .my-site-tile")].map((el) => el.querySelector(".my-site-tile-name").textContent)), ["about.html", "New Page"]);
-assert.match(await page.getAttribute(".my-site-window .my-site-tile[data-path='about.html'] img", "src"), new RegExp(`^${sites}/~${site}/collages/about\\.png\\?v=\\d+$`));
+assert.match(await page.getAttribute(".my-site-window .my-site-tile[data-path='about.html'] img", "src"), new RegExp(`^${sites}/~${site}/thumbs/about\\.png\\?v=\\d+$`));
 assert.equal(await page.evaluate(() => { const img = document.querySelector(".my-site-window .my-site-tile img"); return img.complete && img.naturalWidth > 0; }), true, "the thumbnail loaded");
 await page.click(".my-site-window .my-site-tab[data-tab=site]");
 assert.match(await page.$eval(".my-site-window .my-site-facts", (el) => el.textContent), /Pages:1 — no front page \(index\.html\) yet/);
 await page.click(".my-site-window .my-site-tab[data-tab=files]");
 await page.waitForSelector(".my-site-window .my-site-row", { timeout: 5000 });
 const names = await page.evaluate(() => [...document.querySelectorAll(".my-site-name")].map((el) => el.textContent));
-assert.ok(names.includes("about.html") && names.includes("collages/about.png"), names.join(","));
+assert.ok(names.includes("about.html") && names.includes("collages/about.png") && names.includes("thumbs/about.png"), names.join(","));
 await page.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((row) => row.querySelector(".my-site-name").textContent === "about.html").dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
 await page.waitForFunction(() => document.querySelectorAll(".block-layer").length === 2, null, { timeout: 15000 });
 assert.equal(await page.evaluate(() => file_name), "about.html");

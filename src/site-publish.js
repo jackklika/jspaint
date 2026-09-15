@@ -12,7 +12,7 @@ import { show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { showMessageBox } from "./msgbox.js";
 import { default_editor_url } from "./site-constants.js";
-import { preview_path, render_share_preview } from "./share-preview.js";
+import { preview_path, render_collage_frame, render_page_thumbnail, render_share_preview, thumb_path } from "./share-preview.js";
 
 const SETTINGS_KEY = "jspaint site publish settings";
 const LEGACY_EDITOR_URLS = new Set(["https://coolpaint.world", "https://www.coolpaint.world"]);
@@ -235,9 +235,12 @@ async function publish_collage(settings, log) {
 	});
 	const result = await upload(`${page_base}.html`, html, "text/html");
 	log(`Saved ${page_base}.html — ${uploaded} asset${uploaded === 1 ? "" : "s"} uploaded, ${reused} reused.`);
-	// The link preview card (share links unfurl with it in messaging apps) shows the page as just saved.
+	// The link preview card (share links unfurl with it in messaging apps) and the thumbnail (My Site › Pages) show the
+	// page as just saved — the whole page, elements and GIFs included, from one still
 	try {
-		await upload(preview_path(`${page_base}.html`), await render_share_preview(), "image/png");
+		const frame = await render_collage_frame();
+		await upload(preview_path(`${page_base}.html`), await render_share_preview(frame), "image/png");
+		await upload(thumb_path(`${page_base}.html`), await render_page_thumbnail(frame), "image/png");
 	} catch (error) {
 		log(`(No link preview: ${error.message})`);
 	}

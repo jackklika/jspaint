@@ -69,7 +69,7 @@ const windows = (page) => page.evaluate(() => [...document.querySelectorAll(".wi
 	await maker.waitForFunction(() => /Done!/.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
 	await close_maker();
 	// (the site's page also stands in for the root site's front page, copied over with the master key)
-	for (const path of ["index.html", "collages/index.png"]) {
+	for (const path of ["index.html", "collages/index.png", "thumbs/index.png", "previews/index.png"]) {
 		const body = await (await fetch(`${editor}/api/sites/${site}/files/${path}`)).blob();
 		assert.equal((await fetch(`${editor}/api/sites/root/files/${path}`, { method: "PUT", headers: { ...headers, "Content-Type": body.type }, body })).status, 200);
 	}
@@ -119,7 +119,7 @@ const windows = (page) => page.evaluate(() => [...document.querySelectorAll(".wi
 		await newcomer.waitForSelector(".welcome-window", { timeout: 10000 });
 		await close_newcomer();
 	}
-	for (const path of ["index.html", "collages/index.png", "welcome.html"]) { await fetch(`${editor}/api/sites/root/files/${path}`, { method: "DELETE", headers }); }
+	for (const path of ["index.html", "collages/index.png", "thumbs/index.png", "previews/index.png", "welcome.html"]) { await fetch(`${editor}/api/sites/root/files/${path}`, { method: "DELETE", headers }); }
 }
 
 // Clean up

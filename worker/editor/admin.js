@@ -265,7 +265,8 @@ const ADMIN_PAGE = `<!DOCTYPE html>
 	const sites_url = ${JSON.stringify("__SITES_URL__")};
 	const live = (site, page) => (site === "root" ? "" : "/~" + site) + "/" + (page === "index.html" ? "" : page.replace(/\\.html$/, ""));
 	const editor = (site, page) => "/~" + site + "/" + page;
-	const thumb = (site, page) => "/api/sites/" + encodeURIComponent(site) + "/files/collages/" + encodeURIComponent(page.replace(/\\.html?$/i, "")) + ".png";
+	const asset = (site, kind, page) => "/api/sites/" + encodeURIComponent(site) + "/files/" + kind + "/" + encodeURIComponent(page.replace(/\\.html?$/i, "")) + ".png";
+	const thumb = (site, page) => asset(site, "thumbs", page); // (the whole page; a page saved before thumbnails falls back to its bitmap — see the img's onerror)
 	let data = null, tab = "sites", filter = "";
 	const status = (text) => { $("#status").textContent = text; };
 	async function api(path, init) {
@@ -313,7 +314,7 @@ const ADMIN_PAGE = `<!DOCTYPE html>
 				(site.name === "root" ? "" : '<button class="act danger" data-act="site-delete" data-site="' + esc(site.name) + '">delete site…</button>') +
 				'</td></tr>');
 			for (const page of site.pages) {
-				rows.push('<tr class="page' + (page.hidden ? " hidden-row" : "") + '"><td><img class="thumb" loading="lazy" src="' + esc(thumb(site.name, page.path)) + '" alt="" onerror="this.style.visibility=\\'hidden\\'"> ' +
+				rows.push('<tr class="page' + (page.hidden ? " hidden-row" : "") + '"><td><img class="thumb" loading="lazy" src="' + esc(thumb(site.name, page.path)) + '" alt="" data-fallback="' + esc(asset(site.name, "collages", page.path)) + '" onerror="if(this.dataset.fallback){this.src=this.dataset.fallback;delete this.dataset.fallback}else{this.style.visibility=\\'hidden\\'}"> ' +
 					'<a href="' + esc(sites_url + live(site.name, page.path)) + '" target="_blank" rel="noopener">' + esc(page.path) + '</a>' + (page.hidden ? '<span class="badge hid">hidden</span>' : "") +
 					'</td><td></td><td></td><td>' + kb(page.size) + '</td><td>' + when(page.uploaded) + '</td><td></td><td>' +
 					'<a href="' + esc(editor(site.name, page.path)) + '" target="_blank" rel="noopener">edit</a> ' +

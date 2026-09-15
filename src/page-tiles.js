@@ -1,7 +1,8 @@
 // @ts-check
 // Pages as tiles — Windows 98 "large icons": each page's saved bitmap in a 3D frame with its name under it, the
 // front page (index.html ★) first. My Site › Pages browses them; the link dialog picks one. The thumbnail is the
-// site's own copy of the page's bitmap (collages/<page>.png), so it's the published look.
+// site's own thumbnail of the page (thumbs/<page>.png: the whole page, elements and GIFs included, made at publish —
+// share-preview.js), so it's the published look; a page saved before thumbnails shows its bitmap (collages/).
 import { E } from "./helpers.js";
 
 /** @typedef {{ path: string, size: number, uploaded: string, url: string }} SiteFile - one entry of the site's listing */
@@ -28,7 +29,8 @@ function render_page_tiles($box, files, { on_pick, on_open, plus, empty } = {}) 
 		$(E("div")).addClass("my-site-empty my-site-pages-empty").text(empty).appendTo($box);
 	}
 	for (const file of pages) {
-		const bitmap = by_path.get(`collages/${file.path.replace(/\.html?$/i, "")}.png`);
+		const base = file.path.replace(/\.html?$/i, "");
+		const bitmap = by_path.get(`thumbs/${base}.png`) || by_path.get(`collages/${base}.png`);
 		const $tile = $(E("div")).addClass("my-site-tile").attr({ role: "option", tabindex: "0", "data-path": file.path, title: `${file.path} · ${kb(file.size)} · ${new Date(file.uploaded).toLocaleString()}` }).appendTo($box);
 		const $thumb = $(E("div")).addClass("my-site-thumb").appendTo($tile);
 		if (bitmap) {

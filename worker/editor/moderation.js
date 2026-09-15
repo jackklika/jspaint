@@ -94,7 +94,7 @@ function page_hidden(moderation, page) {
  * @param {{ SITES_URL?: string }} env @param {ExecutionContext | null} ctx @param {string} site @param {string} path
  */
 async function notify_published(env, ctx, site, path) {
-	if (!env.SITES_URL || /^(gifs|midi|collages|previews|versions)\//.test(path)) { return; }
+	if (!env.SITES_URL || /^(gifs|midi|collages|previews|thumbs|versions)\//.test(path)) { return; }
 	try {
 		await fetch(`${env.SITES_URL}/~${site}/x/published`, { method: "POST", signal: AbortSignal.timeout(3000) });
 	} catch (error) {

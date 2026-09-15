@@ -280,7 +280,7 @@ function invite_key_of(request) {
  */
 function invite_may_write(page, path) {
 	const base = page.replace(/\.html?$/i, "");
-	return path === page || path === `collages/${base}.png` || path === `previews/${base}.png` || /^(gifs|midi)\/[A-Za-z0-9._-]+$/.test(path);
+	return path === page || path === `collages/${base}.png` || path === `previews/${base}.png` || path === `thumbs/${base}.png` || /^(gifs|midi)\/[A-Za-z0-9._-]+$/.test(path);
 }
 
 const SHARE_JOIN = /^([a-z0-9-]+)\/(.+)\/(\d+\.[A-Za-z0-9_-]+)$/;
