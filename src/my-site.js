@@ -393,7 +393,7 @@ async function upload_asset(file) {
  * Checks the stored site name and secret against the server.
  * @returns {Promise<boolean>}
  */
-/** Why the last check_sign_in said no, for the dialogs: "expired" (the account's session is gone), "not-owner", "offline", or "". */
+/** Why the last check_sign_in said no, for the dialogs: "expired" (the account's session is gone), "not-owner", "offline", "quota" (Durable Objects over the free tier's daily limit), or "". */
 let last_sign_in_problem = "";
 
 async function check_sign_in({ probe = false } = {}) {
@@ -421,7 +421,7 @@ async function check_sign_in({ probe = false } = {}) {
 	} catch (error) {
 		const status = /** @type {any} */ (error).status;
 		if (settings.account && status === 401) { save_settings({ ...settings, account: null }); } // the session ended
-		last_sign_in_problem = status === 401 ? "expired" : "offline";
+		last_sign_in_problem = status === 401 ? "expired" : status === 503 ? "quota" : "offline";
 		window.console?.warn("sign-in check failed:", error);
 		return false;
 	}
@@ -562,9 +562,10 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 					show_sign_in_dialog({ site, resume }).then((ok) => { if (ok) { finish(); } else { resolve(false); } });
 					return;
 				}
-				$status.text(last_sign_in_problem === "offline" ?
-					localize("Couldn't reach the editor. Try again in a moment.") :
-					localize("~%1 isn't yours — you're signed in as %2, and it belongs to another account.", site, now.email || now.name));
+				const problem = last_sign_in_problem === "offline" ? localize("Couldn't reach the editor. Try again in a moment.") :
+					last_sign_in_problem === "quota" ? localize("The editor's storage is over its daily limit (Cloudflare's free tier). It resets at midnight UTC.") :
+						localize("~%1 isn't yours — you're signed in as %2, and it belongs to another account.", site, now.email || now.name);
+				$status.text(problem);
 			};
 			if (account.sites.length) {
 				// Their sites: pick one (the globe's window switches between them later)

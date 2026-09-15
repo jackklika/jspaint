@@ -793,7 +793,13 @@ const editor = {
 			return json({ error: "Not found" }, 404);
 		} catch (error) {
 			console.error(error);
-			return json({ error: error.message || String(error) }, 500);
+			const message = error.message || String(error);
+			if (/Durable Objects free tier/i.test(message)) {
+				// The Workers Free plan meters Durable Object rows per day; over the line, nothing DO-backed works until
+				// midnight UTC (docs/DEPLOY.md). Say so — Paint shows this instead of "couldn't reach the editor".
+				return json({ error: "The editor's storage is over its daily limit (Cloudflare's free tier). It resets at midnight UTC.", code: "storage-quota", detail: message }, 503, { "Retry-After": "3600" });
+			}
+			return json({ error: message }, 500);
 		}
 	},
 };

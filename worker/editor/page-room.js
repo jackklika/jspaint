@@ -39,6 +39,7 @@ const MAX_CLIENTS = 16;
 const MAX_VERSIONS = 500; // of history, per page
 const MAX_HISTORY_BYTES = 48 * 1024 * 1024; // of bitmap patches in the history
 const CHECKPOINT_EVERY = 25; // versions between full copies of the document (layers), for rebuilding old versions
+const PRUNE_EVERY = 50; // versions between looks at the table's size (each look reads every row — Durable Objects meter those)
 const MAX_LABEL = 60;
 /** What a change is called when the client doesn't say. @type {Record<string, string>} */
 const KIND_LABELS = { seed: "First draft", replace: "Draft replaced", ops: "Elements changed", props: "Page changed", bitmap: "Painted" };
@@ -111,7 +112,7 @@ export class PageRoom extends DurableObject {
 		/**
 		 * The document at the head. `version` is the last version id given out (ids only ever grow); `head` is the
 		 * version this document is the state of — the newest, unless someone went back in the history.
-		 * @type {{ version: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] } }}
+		 * @type {{ version: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] }, patch_count?: number, patch_bytes?: number }}
 		 */
 		this.doc = { version: 0, width: 0, height: 0, page_properties: {}, layers: { blocks: [], stickers: [], text_layers: [] } };
 		this.head = 0;
@@ -175,6 +176,13 @@ export class PageRoom extends DurableObject {
 		const text = extra.part ? "" : typeof label === "string" && label.trim() ? label.trim().slice(0, MAX_LABEL) : KIND_LABELS[kind] || kind;
 		const patch = extra.patch;
 		const checkpoint = kind === "seed" || kind === "replace" || !!patch?.reset || id % CHECKPOINT_EVERY === 0;
+		// The head's bitmap chain, counted as it grows (no scan per stroke: Durable Objects meter every row read)
+		if (patch) {
+			if (patch.reset) { this.doc.patch_count = 0; this.doc.patch_bytes = 0; }
+			this.doc.patch_count = (this.doc.patch_count || 0) + 1;
+			this.doc.patch_bytes = (this.doc.patch_bytes || 0) + patch.png.length;
+		}
+		if (kind === "seed" || kind === "replace") { this.doc.patch_count = 0; this.doc.patch_bytes = 0; }
 		this.ctx.storage.sql.exec(
 			"INSERT INTO versions (id, parent, client_id, name, color, at, kind, label, payload, x, y, width, height, reset, png, doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			id, parent, info.client_id || "", info.name || "", info.color || "", Date.now(), kind, text, extra.payload === undefined ? null : JSON.stringify(extra.payload),
@@ -184,7 +192,7 @@ export class PageRoom extends DurableObject {
 		this.head = id;
 		this.save_doc();
 		this.save_head();
-		if (id % 10 === 0) { this.prune(); }
+		if (id % PRUNE_EVERY === 0) { this.prune(); } // (a scan of the table: rarely)
 		return id;
 	}
 	/**
@@ -234,11 +242,15 @@ export class PageRoom extends DurableObject {
 		if (!this.head) { return []; }
 		return this.base_path(this.head, "reset").rows.filter((row) => row.kind === "bitmap").map((row) => patch_of(row));
 	}
-	/** How much a newcomer would have to replay for the head's bitmap. */
+	/** How much a newcomer would have to replay for the head's bitmap (counted in `record`; recounted after a restore). */
 	patch_stats() {
 		if (!this.head) { return { count: 0, bytes: 0 }; }
-		const rows = this.base_path(this.head, "reset").rows.filter((row) => row.kind === "bitmap");
-		return { count: rows.length, bytes: rows.reduce((sum, row) => sum + (row.png ? /** @type {ArrayBuffer} */ (row.png).byteLength : 0), 0) };
+		if (typeof this.doc.patch_count !== "number") {
+			const rows = this.base_path(this.head, "reset").rows.filter((row) => row.kind === "bitmap");
+			this.doc.patch_count = rows.length;
+			this.doc.patch_bytes = rows.reduce((sum, row) => sum + (row.png ? /** @type {ArrayBuffer} */ (row.png).byteLength : 0), 0);
+		}
+		return { count: this.doc.patch_count, bytes: this.doc.patch_bytes || 0 };
 	}
 	/** Every version, oldest first, with whether it can still be brought back (its bases are here). */
 	history() {
@@ -392,7 +404,7 @@ export class PageRoom extends DurableObject {
 				if (id === this.head) { this.send(ws, { type: "restored", version: id, client_id: info.client_id, name: info.name }); return; }
 				const state = this.state_at(id);
 				if (!state) { this.send(ws, { type: "state", id, error: "That version is too old to bring back." }); return; }
-				this.doc = { version: this.doc.version, ...state.doc };
+				this.doc = { version: this.doc.version, ...state.doc, patch_count: undefined, patch_bytes: undefined }; // (the chain is recounted on the next look)
 				this.head = id;
 				this.save_doc();
 				this.save_head();
