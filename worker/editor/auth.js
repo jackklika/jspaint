@@ -19,9 +19,18 @@
 // A user = { id, email, name }; identities = (provider, subject) → user, joined by verified email so a Google
 // sign-in and a later email sign-in land on the same person; owners = site → user. Sessions are random tokens
 // stored as SHA-256 hashes (a leaked table isn't a set of sessions), 90 days, HttpOnly, SameSite=Lax.
+//
+// Beside the session cookie rides a signed *claims* cookie (coolpaint_id, an hour): who you are, the session it
+// belongs to, and the sites you own, HMAC-signed by the Worker. Any request that carries a valid one is known
+// without asking the Accounts Durable Object — one global object that every API call and room join used to hit
+// twice. When it's missing or an hour old, the session cookie is looked up as before and a fresh claims cookie
+// rides back on the response. Signing out deletes the session row and clears both; a claims cookie can outlive
+// that by at most its hour. Routes that need the account's email or name ask for a fresh lookup.
 import { valid_site_name } from "../shared/names.js";
 
 const SESSION_COOKIE = "coolpaint_session";
+const CLAIMS_COOKIE = "coolpaint_id";
+const CLAIMS_TTL_S = 60 * 60;
 const MAX_SITES = 5; // per account (the master key can hand out more)
 const STATE_COOKIE = "coolpaint_auth_state";
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -54,6 +63,92 @@ function random_token(bytes = 32) {
 async function sha256_hex(text) {
 	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
 	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Constant-time string comparison (no early exit on the first differing character). @param {string} a @param {string} b */
+function same_string(a, b) {
+	const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+	let diff = x.length ^ y.length;
+	for (let i = 0; i < Math.max(x.length, y.length); i++) { diff |= (x[i] || 0) ^ (y[i] || 0); }
+	return diff === 0;
+}
+
+/** @param {Uint8Array} bytes */
+function b64url(bytes) {
+	return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+/** @param {string} text */
+function b64url_decode(text) {
+	return atob(text.replace(/-/g, "+").replace(/_/g, "/"));
+}
+
+/** @param {string} secret @param {string} message @returns {Promise<string>} HMAC-SHA256, base64url */
+async function hmac_b64url(secret, message) {
+	const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+	return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message))));
+}
+
+/**
+ * The key the claims cookie is signed with: SESSION_SIGNING_KEY when set (so it can rotate on its own, which signs
+ * everyone out of the fast path for an hour and nothing else), else one derived from the master key.
+ * @param {any} env
+ */
+function signing_secret(env) {
+	return env.SESSION_SIGNING_KEY || (env.SITE_EDIT_SECRET ? `${env.SITE_EDIT_SECRET}|claims` : "");
+}
+
+/**
+ * @typedef {{ u: string, h: string, s: string[], e: number }} Claims - user id, session hash, sites owned, expiry (ms)
+ */
+
+/** `v1.<claims>.<signature>` @param {any} env @param {Claims} claims */
+async function sign_claims(env, claims) {
+	const payload = b64url(new TextEncoder().encode(JSON.stringify(claims)));
+	return `v1.${payload}.${await hmac_b64url(signing_secret(env), `v1.${payload}`)}`;
+}
+
+/** The claims a cookie carries, if its signature is ours and it hasn't expired. @param {any} env @param {string} cookie @returns {Promise<Claims | null>} */
+async function verify_claims(env, cookie) {
+	const match = /^v1\.([A-Za-z0-9_-]{1,2000})\.([A-Za-z0-9_-]{43})$/.exec(cookie);
+	const secret = signing_secret(env);
+	if (!match || !secret) { return null; }
+	if (!same_string(await hmac_b64url(secret, `v1.${match[1]}`), match[2])) { return null; }
+	try {
+		const claims = JSON.parse(b64url_decode(match[1]));
+		if (typeof claims.u !== "string" || typeof claims.h !== "string" || !Array.isArray(claims.s) || typeof claims.e !== "number") { return null; }
+		return claims.e > Date.now() ? claims : null;
+	} catch (_error) {
+		return null;
+	}
+}
+
+/** A fresh claims cookie for a user (asks Accounts which sites are theirs). @param {URL} url @param {any} env @param {string} user_id @param {string} hash */
+async function claims_cookie(url, env, user_id, hash) {
+	const sites = (await accounts_of(env).sites_of(user_id)).slice(0, 50);
+	return set_cookie(url, env, CLAIMS_COOKIE, await sign_claims(env, { u: user_id, h: hash, s: sites, e: Date.now() + CLAIMS_TTL_S * 1000 }), CLAIMS_TTL_S);
+}
+
+/** Requests whose response should carry a fresh claims cookie (a session was looked up, or a site changed hands). @type {WeakMap<Request, Promise<string>>} */
+const pending_claims = new WeakMap();
+
+/** Have the response to this request set a fresh claims cookie. @param {Request} request @param {any} env @param {string} user_id @param {string} hash */
+function refresh_claims(request, env, user_id, hash) {
+	pending_claims.set(request, claims_cookie(new URL(request.url), env, user_id, hash).catch(() => ""));
+}
+
+/**
+ * The exported fetch wraps every response in this: a pending claims cookie rides along (never on a WebSocket
+ * handshake, whose response can't be touched).
+ * @param {Request} request @param {Response} response
+ */
+async function with_refreshed_claims(request, response) {
+	const pending = pending_claims.get(request);
+	if (!pending || response.status === 101) { return response; }
+	const cookie = await pending;
+	if (!cookie) { return response; }
+	const out = new Response(response.body, response);
+	out.headers.append("Set-Cookie", cookie);
+	return out;
 }
 
 /** @param {Request} request @param {string} name */
@@ -110,17 +205,27 @@ function capture_event(env, ctx, event, distinct_id, properties) {
 }
 
 /**
- * The signed-in user behind the request's session cookie, if any (and if the request looks like our own page's —
- * a cross-site request can't act with the cookie; see cookie_request_allowed).
- * @param {Request} request @param {any} env
- * @returns {Promise<{ id: string, email: string, name: string, hash: string } | null>}
+ * The signed-in user behind the request's cookies, if any (and if the request looks like our own page's — a
+ * cross-site request can't act with the cookie; see cookie_request_allowed). A valid claims cookie answers on its
+ * own (`sites` filled in, `email`/`name` empty, `claimed: true`); otherwise the session cookie is looked up in
+ * Accounts and the response gets a fresh claims cookie. `fresh: true` skips the claims (routes that need the
+ * email or name, or must see a sign-out at once).
+ * @param {Request} request @param {any} env @param {{ fresh?: boolean }} [options]
+ * @returns {Promise<{ id: string, email: string, name: string, hash: string, sites: string[] | null, claimed: boolean } | null>}
  */
-async function session_of(request, env) {
+async function session_of(request, env, { fresh = false } = {}) {
+	if (!cookie_request_allowed(request, env)) { return null; }
+	if (!fresh) {
+		const claims = await verify_claims(env, cookie_of(request, CLAIMS_COOKIE));
+		if (claims) { return { id: claims.u, email: "", name: "", hash: claims.h, sites: claims.s, claimed: true }; }
+	}
 	const token = cookie_of(request, SESSION_COOKIE);
-	if (!token || !/^[0-9a-f]{64}$/.test(token) || !cookie_request_allowed(request, env)) { return null; }
+	if (!token || !/^[0-9a-f]{64}$/.test(token)) { return null; }
 	const hash = await sha256_hex(token);
 	const session = await accounts_of(env).get_session(hash);
-	return session ? { ...session.user, hash } : null;
+	if (!session) { return null; }
+	refresh_claims(request, env, session.user.id, hash); // the next hour of requests won't need this lookup
+	return { ...session.user, hash, sites: null, claimed: false };
 }
 
 /**
@@ -144,13 +249,15 @@ function cookie_request_allowed(request, env) {
 }
 
 /**
- * A fresh session for a user: the cookie to set.
+ * A fresh session for a user: the cookies to set (the session, and the claims beside it).
  * @param {URL} url @param {any} env @param {string} user_id
+ * @returns {Promise<string[]>}
  */
 async function issue_session(url, env, user_id) {
 	const token = random_token(32);
-	await accounts_of(env).create_session(await sha256_hex(token), user_id, Date.now() + SESSION_TTL_MS);
-	return set_cookie(url, env, SESSION_COOKIE, token, SESSION_TTL_MS / 1000);
+	const hash = await sha256_hex(token);
+	await accounts_of(env).create_session(hash, user_id, Date.now() + SESSION_TTL_MS);
+	return [set_cookie(url, env, SESSION_COOKIE, token, SESSION_TTL_MS / 1000), await claims_cookie(url, env, user_id, hash)];
 }
 
 /** Only a path on the editor itself (with its query), never another site. @param {string} next */
@@ -223,22 +330,25 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		if (created) {
 			capture_event(env, ctx, "signup", user.id, { email: user.email || "", name: user.name || "", provider: name });
 		}
-		const session_cookie = await issue_session(url, env, user.id);
 		const headers = new Headers({ Location: safe_next(next), "Cache-Control": "no-store" });
-		headers.append("Set-Cookie", session_cookie);
+		for (const cookie of await issue_session(url, env, user.id)) { headers.append("Set-Cookie", cookie); }
 		headers.append("Set-Cookie", clear_state);
 		return new Response(null, { status: 302, headers });
 	}
 	if (path === "/auth/sign-out") {
 		if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
-		const session = await session_of(request, env);
+		const session = await session_of(request, env, { fresh: true });
 		if (session) { await accounts_of(env).delete_session(session.hash); }
-		return json({ ok: true }, 200, { "Set-Cookie": set_cookie(url, env, SESSION_COOKIE, "", 0) });
+		pending_claims.delete(request); // (the lookup above would have sent a fresh claims cookie along)
+		const response = json({ ok: true });
+		response.headers.append("Set-Cookie", set_cookie(url, env, SESSION_COOKIE, "", 0));
+		response.headers.append("Set-Cookie", set_cookie(url, env, CLAIMS_COOKIE, "", 0));
+		return response;
 	}
 	if (path === "/auth/sites") {
 		// A signed-in user takes a site that nobody has
 		if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
-		const session = await session_of(request, env);
+		const session = await session_of(request, env, { fresh: true });
 		if (!session) { return json({ error: "Sign in first" }, 401); }
 		const body = await request.json().catch(() => ({}));
 		const site = String(body.name || "").trim().toLowerCase();
@@ -253,6 +363,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const listing = await env.SITES.list({ prefix: `sites/${site}/`, limit: 1 });
 		if (listing.objects.length) { return json({ error: "That name is taken" }, 409); }
 		await accounts.claim_site(site, session.id);
+		refresh_claims(request, env, session.id, session.hash); // (the claims cookie names the new site at once)
 		capture_event(env, ctx, "site_claimed", session.id, { site, email: session.email || "" });
 		return json({ ok: true, site, yours: true });
 	}
@@ -260,7 +371,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 	if (claim_match) {
 		// A site that has a password becomes the signed-in user's by proving the password (once)
 		if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
-		const session = await session_of(request, env);
+		const session = await session_of(request, env, { fresh: true });
 		if (!session) { return json({ error: "Sign in first" }, 401); }
 		const site = claim_match[1];
 		if (!valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
@@ -276,6 +387,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const is_master = (await role_of(request, env, site)) === "master";
 		if (!is_master && (!stored || !given || given !== stored)) { return json({ error: "The password was rejected" }, 401); }
 		await accounts.claim_site(site, session.id);
+		refresh_claims(request, env, session.id, session.hash);
 		capture_event(env, ctx, "site_claimed", session.id, { site, email: session.email || "" });
 		return json({ ok: true, site, yours: true });
 	}
@@ -343,4 +455,4 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 	return json({ error: "Not found" }, 404);
 }
 
-export { SESSION_COOKIE, accounts_of, cookie_request_allowed, editor_origin, handle_auth, session_of };
+export { CLAIMS_COOKIE, SESSION_COOKIE, accounts_of, cookie_request_allowed, editor_origin, handle_auth, session_of, with_refreshed_claims };

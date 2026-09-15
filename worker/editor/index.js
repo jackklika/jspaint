@@ -30,7 +30,7 @@
 import { inject_analytics } from "../shared/analytics.js";
 import { capture_exception } from "../shared/exceptions.js";
 import { ROOT_SITE, content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
-import { accounts_of, editor_origin, handle_auth, session_of } from "./auth.js";
+import { accounts_of, editor_origin, handle_auth, session_of, with_refreshed_claims } from "./auth.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { x_elements } from "../shared/x-elements/index.js";
 export { Accounts } from "./accounts.js";
@@ -158,9 +158,12 @@ async function role_of(request, env, site = "") {
 		stored = await site_hash(env, site, { fresh: true });
 		if (stored && same_string(given, stored)) { return "site"; }
 	}
-	// No (good) bearer: a signed-in account (auth.js session cookie) that owns the site edits it like the site's password does
+	// No (good) bearer: a signed-in account (auth.js cookies) that owns the site edits it like the site's password does.
+	// The claims cookie names the sites; a site claimed since it was signed is asked about (Accounts knows).
 	const session = await session_of(request, env);
-	return session && (await accounts_of(env).owner_of(site)) === session.id ? "site" : null;
+	if (!session) { return null; }
+	if (session.sites && session.sites.includes(site)) { return "site"; }
+	return (await accounts_of(env).owner_of(site)) === session.id ? "site" : null;
 }
 
 // --- share keys: a guest's pass to one page ---
@@ -723,7 +726,7 @@ const editor = {
 				const site = url.searchParams.get("site") || "";
 				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
 				const role = await role_of(request, env, site);
-				const session = await session_of(request, env); // (reported even beside a password: Paint then knows the account and can drop the password)
+				const session = await session_of(request, env, { fresh: true }); // (reported even beside a password: Paint then knows the account and can drop the password; fresh: it names the account, and a sign-out must show)
 				if (!role && !session) { return json({ error: "Unauthorized: the password was rejected" }, 401); }
 				// `created`: when the site got its password (My Site's summary); null for a site the master key alone edits
 				const accounts = accounts_of(env);
@@ -834,8 +837,8 @@ function with_dev_cors(request, response, env) {
 }
 
 export default {
-	/** @param {Request} request @param {any} env */
-	async fetch(request, env) {
-		return with_dev_cors(request, await editor.fetch(request, env), env);
+	/** @param {Request} request @param {any} env @param {ExecutionContext} ctx */
+	async fetch(request, env, ctx) {
+		return with_dev_cors(request, await with_refreshed_claims(request, await editor.fetch(request, env, ctx)), env);
 	},
 };

@@ -95,6 +95,10 @@ try {
 	assert.ok(session && /^[0-9a-f]{64}$/.test(session.value), "a session cookie");
 	assert.ok(session.attrs.includes("HttpOnly") && session.attrs.includes("SameSite=Lax") && session.attrs.some((a) => /^Max-Age=7776000$/.test(a)), JSON.stringify(session.attrs));
 	assert.equal(cookie_from(response, "coolpaint_auth_state")?.attrs.some((a) => a === "Max-Age=0"), true, "the state cookie is cleared");
+	// …and a signed claims cookie beside it: an hour, HttpOnly, `v1.<claims>.<signature>`
+	const first_claims = cookie_from(response, "coolpaint_id");
+	assert.ok(first_claims && /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(first_claims.value), `a claims cookie: ${JSON.stringify(first_claims)}`);
+	assert.ok(first_claims.attrs.includes("HttpOnly") && first_claims.attrs.includes("SameSite=Lax") && first_claims.attrs.includes("Max-Age=3600"), JSON.stringify(first_claims.attrs));
 	const cookies = { coolpaint_session: session.value };
 
 	// whoami with the cookie: an account, no sites yet, and no role on any site
@@ -122,6 +126,10 @@ try {
 	response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: site }) });
 	assert.equal(response.status, 401, "no session, no site");
 	response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: site }) }, cookies);
+	// Taking a site refreshes the claims cookie, which now names it
+	const claims = cookie_from(response, "coolpaint_id");
+	assert.ok(claims && claims.attrs.includes("Max-Age=3600"), "claiming a site sends a fresh claims cookie");
+	assert.deepEqual(JSON.parse(Buffer.from(claims.value.split(".")[1], "base64url").toString()).s, [site], "…naming the site");
 	assert.deepEqual(await response.json(), { ok: true, site, yours: true });
 	me = await (await call(`/api/whoami?site=${site}`, {}, cookies)).json();
 	assert.equal(me.role, "site");
@@ -130,6 +138,19 @@ try {
 	response = await call(`/api/sites/${site}/files/index.html`, { method: "PUT", headers: { "Content-Type": "text/html" }, body: page }, cookies);
 	assert.equal(response.status, 200, await response.text());
 	assert.equal((await call(`/api/sites/${site}/files`, {}, cookies)).status, 200, "listing");
+	// The claims cookie alone is enough for the site it names (Accounts isn't asked); a forged one is nothing; a
+	// session cookie alone still works, and its answer carries a fresh claims cookie for the next hour
+	response = await call(`/api/sites/${site}/files/index.html`, { method: "PUT", headers: { "Content-Type": "text/html" }, body: page }, { coolpaint_id: claims.value });
+	assert.equal(response.status, 200, `claims alone: ${await response.text()}`);
+	assert.equal(cookie_from(response, "coolpaint_id"), null, "nothing to refresh when the claims were good");
+	const forged = claims.value.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+	assert.equal((await call(`/api/sites/${site}/files/index.html`, { method: "PUT", headers: { "Content-Type": "text/html" }, body: page }, { coolpaint_id: forged })).status, 401, "a bad signature");
+	const [v, payload] = claims.value.split(".");
+	const other_site = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload, "base64url").toString()), s: [`${site}-not-mine`] })).toString("base64url");
+	assert.equal((await call(`/api/sites/${site}-not-mine/files/index.html`, { method: "PUT", headers: { "Content-Type": "text/html" }, body: page }, { coolpaint_id: `${v}.${other_site}.${claims.value.split(".")[2]}` })).status, 401, "edited claims fail the signature");
+	response = await call(`/api/sites/${site}/files`, {}, cookies);
+	assert.equal(response.status, 200);
+	assert.ok(cookie_from(response, "coolpaint_id")?.attrs.includes("Max-Age=3600"), "a session lookup sends fresh claims along");
 	// …but not someone else's site, and not from another website (a cross-site request with the cookie)
 	assert.equal((await call(`/api/sites/${site}-not-mine/files/index.html`, { method: "PUT", headers: { "Content-Type": "text/html" }, body: page }, cookies)).status, 401);
 	response = await fetch(`${editor}/api/sites/${site}/files/index.html`, { method: "PUT", headers: { "Content-Type": "text/html", Cookie: `coolpaint_session=${session.value}`, "Sec-Fetch-Site": "cross-site" }, body: page });
@@ -214,7 +235,10 @@ try {
 	response = await call("/auth/sign-out", { method: "POST" }, cookies);
 	assert.equal(response.status, 200);
 	assert.equal(cookie_from(response, "coolpaint_session")?.attrs.includes("Max-Age=0"), true);
+	assert.equal(cookie_from(response, "coolpaint_id")?.attrs.includes("Max-Age=0"), true, "the claims cookie is cleared too");
 	assert.equal((await call("/api/whoami", {}, cookies)).status, 401, "the old cookie is dead");
+	// (a claims cookie someone kept outlives the sign-out by at most its hour: the price of not asking Accounts)
+	assert.equal((await call(`/api/sites/${site}/files`, {}, { coolpaint_id: claims.value })).status, 200);
 
 	// A newcomer at the editor: the starter page, a stroke, Save → Sign In → Google → back on the same drawing, with
 	// the save waiting: a site name → the page goes up as that site's index.html

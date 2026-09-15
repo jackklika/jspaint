@@ -27,6 +27,7 @@ npm run deploy                                 # = deploy:sites, then deploy:edi
 - Deploy only what changed: a client-only change needs `npm run deploy:editor`; a change under `worker/shared/` needs both.
 - Wrangler prints the version id and the hostnames it attached. A transient `fetch failed` from wrangler means retry that one script.
 - Secrets never go through git: `SITE_EDIT_SECRET` (the master key) is a Worker secret on `jspaint-editor` (`npx wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`; the value is kept in the gitignored `worker/editor/.secret.txt`); locally it lives in the gitignored `worker/editor/.dev.vars`. Site passwords are minted with `npm run site-password <site>` and written to the gitignored `worker/editor/.passwords/<site>.txt` — never printed.
+- Optional: `SESSION_SIGNING_KEY` signs the hour-long claims cookie that spares the Accounts object a lookup per request (docs/DESIGN.md §9). Without it the key is derived from `SITE_EDIT_SECRET`, so nothing needs setting; set one (`npx wrangler secret put SESSION_SIGNING_KEY -c editor/wrangler.jsonc`, any long random string) to be able to rotate it on its own — a rotation only costs every signed-in browser one session lookup.
 - Durable Object classes need a migration entry in `worker/editor/wrangler.jsonc` (`migrations`: v1 `PageRoom`, v2 `GifStats`, v3 `Accounts`); add a new tag for a new class, never edit an old one.
 
 ## Sign in with Google (once)
