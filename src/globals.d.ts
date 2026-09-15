@@ -690,6 +690,8 @@ type ToolID =
 	"TOOL_GIF_PICKER" |
 	"TOOL_IMAGE_UPLOAD" |
 	"TOOL_LINK" |
+	"TOOL_SELECT_ELEMENTS" |
+	"TOOL_PAGE_STYLE" |
 	`TOOL_BLOCK_${string}`;
 
 // This is very silly!

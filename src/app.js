@@ -24,6 +24,7 @@ import { delete_selected_text_layer, deselect_text_layer, get_selected_text_laye
 import { delete_selected_block, deselect_block, edit_selected_block, end_block_editing, get_selected_block, init_blocks, is_editing_block, nudge_selected_block } from "./blocks.js";
 import { init_live_session } from "./live-session.js";
 import { init_x_previews } from "./x-preview.js";
+import { init_element_selection } from "./element-selection.js";
 import { fit_page_width, init_page_scroll } from "./page-scroll.js";
 import { init_pan_joystick } from "./pan-joystick.js";
 import { init_quick_buttons } from "./quick-buttons.js";
@@ -549,6 +550,7 @@ const $status_size = $(E("div")).addClass("status-coordinates status-field inset
 window.$status_size = $status_size;
 init_live_session(); // the live sync indicator lives in the status bar
 init_x_previews(); // <x-*> elements on the canvas show what the site shows for them
+init_element_selection(); // Select Elements: a box picks several page elements to move or delete together
 
 // #region News Indicator
 const news_seen_key = "jspaint latest news seen";

@@ -1,16 +1,19 @@
 // @ts-check
 /* global localize */
 // The page tools: the second half of the toolbox. A Pointer for selecting, moving, and editing elements,
-// one tool per kind of page element (text box, section, divider, GIF, image, table, guestbook, counter,
-// last updated, folder view, contents), and Link, which links the selected element or words. Element tools
+// Select Elements (a box over the page picks several elements: element-selection.js), one tool per kind of page
+// element (text box, section, divider, GIF, image, table, guestbook, counter, last updated, folder view, contents),
+// Link, which links the selected element or words, and Page Style (the page's colors and column). Element tools
 // work like the Text tool: click, or drag out a box, where the element should go. See blocks.js for what an
 // element is and block-kinds.js for the kinds. Kept to an even count: the toolbox is two columns.
 // (Colored Box, Music, and raw HTML lost their tools on 2026-09-13 — Jack; the kinds stay for pages that have them,
 // and Page › Insert › Raw HTML remains for the determined.)
 import { add_block } from "./blocks.js";
 import { link_tool } from "./element-link.js";
-import { E } from "./helpers.js";
+import { TOOL_SELECT_ELEMENTS } from "./element-selection.js";
+import { $G, E } from "./helpers.js";
 import { LINK_ICON_SVG } from "./icons.js";
+import { show_page_properties_dialog } from "./page-properties.js";
 import { toggle_gif_picker } from "./gif-picker.js";
 import { show_pictures_window } from "./pictures.js";
 
@@ -18,6 +21,7 @@ const TOOL_POINTER = "TOOL_POINTER";
 const TOOL_GIF_PICKER = "TOOL_GIF_PICKER";
 const TOOL_IMAGE_UPLOAD = "TOOL_IMAGE_UPLOAD";
 const TOOL_LINK = "TOOL_LINK";
+const TOOL_PAGE_STYLE = "TOOL_PAGE_STYLE";
 
 /** Element tools are `TOOL_BLOCK_<kind id>`. @param {string} kind_id */
 const block_tool_id = (kind_id) => /** @type {ToolID} */ (`TOOL_BLOCK_${kind_id}`);
@@ -55,6 +59,27 @@ const ICONS = {
 	html: svg('<path d="M5 4v1H4v1H3v1H2v2h1v1h1v1h1v1H4v-1H3v-1H2V9H1V7h1V6h1V5h1V4zM11 4v1h1v1h1v1h1v2h-1v1h-1v1h-1v1h1v-1h1v-1h1V9h1V7h-1V6h-1V5h-1V4z" fill="#000080"/><path d="M9 3h1L7 13H6z" fill="#000"/>'),
 	// two chain links (the Font toolbar's link button wears the same glyph — icons.js)
 	link: LINK_ICON_SVG,
+	// a dashed box with an arrow in it: select elements
+	select_elements: svg(`${pixel_rects([
+		"#.#.#.#.#.#.#.#.",
+		"................",
+		"#..............#",
+		"................",
+		"#..............#",
+		"................",
+		"#..............#",
+		"................",
+		"#..............#",
+		"................",
+		"#..............#",
+		"................",
+		"#..............#",
+		"................",
+		"#.#.#.#.#.#.#.#.",
+		"................",
+	], 0, 0, "#000")}<path d="M5 3v9l2.5-2.5 1.5 3.5 1.5-.5-1.5-3.5H12z" fill="#fff" stroke="#000" stroke-width="1"/>`),
+	// a page with a paint splash: page style
+	page_style: svg('<path d="M3.5 1.5h7l3 3v10h-10z" fill="#fff" stroke="#000"/><path d="M10.5 1.5v3h3" fill="none" stroke="#000"/><rect x="5" y="7" width="6" height="5" fill="#ff69b4"/><rect x="7" y="6" width="2" height="1" fill="#ff69b4"/><rect x="4" y="9" width="1" height="2" fill="#ff69b4"/><rect x="11" y="8" width="1" height="2" fill="#ff69b4"/><rect x="6" y="12" width="2" height="1" fill="#ff69b4"/>'),
 	// a clock: "last updated"
 	updated: svg('<circle cx="8" cy="8" r="6.5" fill="#fff" stroke="#000"/><rect x="8" y="3" width="1" height="5" fill="#000"/><rect x="8" y="8" width="4" height="1" fill="#000080"/><rect x="7" y="7" width="2" height="2" fill="#000"/>'),
 	// a contents list: a title line, then indented entries
@@ -105,6 +130,21 @@ const page_tools = [
 		pointerdown() { },
 		$options: $(E("div")),
 	},
+	{
+		id: TOOL_SELECT_ELEMENTS,
+		name: localize("Select Elements"),
+		speech_recognition: ["select elements", "select several elements", "select multiple elements", "box select", "marquee select", "rubber band"],
+		help_icon: "",
+		icon_svg: data_url(ICONS.select_elements),
+		description: localize("Selects the page elements inside a box you drag (Shift adds). Drag them to move together, arrow keys nudge, Delete removes, Ctrl+A selects every element."),
+		cursor: ["precise", [16, 16], "crosshair"],
+		page_tool: true,
+		// tools.js gives select-box tools the drag rectangle; the pick itself happens in element-selection.js
+		selectBox(rect_x, rect_y, rect_width, rect_height) {
+			$G.triggerHandler("element-select-box", [rect_x, rect_y, rect_width, rect_height]);
+		},
+		$options: $(E("div")),
+	},
 	// (Headings are a paragraph with a bigger font; scrolling text is the Marquee toggle in the Font toolbar. Both
 	// kinds still exist — Page › Insert — for pages that have them.)
 	element_tool("paragraph", "paragraph", localize("Text Box"), localize("Places text on the page. Click or drag a box, then type; the Font toolbar sets font, size, bold, and scrolling (marquee)."), ["paragraph", "add paragraph", "add text block", "body text", "text box", "add text box", "heading", "add heading"]),
@@ -153,6 +193,18 @@ const page_tools = [
 	element_tool("x-updated", "updated", localize("Last Updated"), localize("Places a \"last updated\" stamp that follows your saves."), ["last updated", "updated", "add last updated", "date stamp", "updated stamp"]),
 	element_tool("x-folder", "folder", localize("Folder View"), localize("Lists the pages in a folder of your site (your posts, say), newest first. Double-click it to pick the folder."), ["folder", "folder view", "list of pages", "posts list", "add posts list", "blog index", "add folder view"]),
 	element_tool("x-toc", "toc", localize("Contents"), localize("Lists the page's sections, each a link to it."), ["contents", "table of contents", "add contents", "section list", "toc"]),
+	{
+		id: TOOL_PAGE_STYLE,
+		name: localize("Page Style"),
+		speech_recognition: ["page style", "page properties", "page background", "background color", "page colors"],
+		help_icon: "",
+		icon_svg: data_url(ICONS.page_style),
+		description: localize("The page's background color, wallpaper, and where the sections stack."),
+		cursor: ["default", [1, 1], "default"],
+		page_tool: true,
+		action() { show_page_properties_dialog(); },
+		$options: $(E("div")),
+	},
 ];
 
-export { TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_LINK, TOOL_POINTER, block_tool_id, page_tools };
+export { TOOL_GIF_PICKER, TOOL_IMAGE_UPLOAD, TOOL_LINK, TOOL_PAGE_STYLE, TOOL_POINTER, TOOL_SELECT_ELEMENTS, block_tool_id, page_tools };

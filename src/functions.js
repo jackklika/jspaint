@@ -2962,6 +2962,7 @@ function select_tools(tools) {
 		select_tool(tools[i], i > 0);
 	}
 	update_helper_layer();
+	$G.triggerHandler("tool-changed"); // (element-selection.js lets a group go when its tool is left)
 }
 
 /**
@@ -3007,6 +3008,7 @@ function select_tool(tool, toggle) {
 
 	$toolbox.update_selected_tool();
 	// $toolbox2.update_selected_tool();
+	$G.triggerHandler("tool-changed"); // (element-selection.js lets a group go when its tool is left)
 }
 
 /**
