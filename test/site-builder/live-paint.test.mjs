@@ -56,7 +56,10 @@ const sent = (page) => page.evaluate(() => window.__sent || {});
 await alice.evaluate(() => {
 	window.__sent = {};
 	const send = WebSocket.prototype.send;
-	WebSocket.prototype.send = function (data) { try { const t = JSON.parse(String(data)).type; window.__sent[t] = (window.__sent[t] || 0) + 1; } catch (_e) { /* not JSON */ } return send.call(this, data); };
+	WebSocket.prototype.send = function (data) {
+		try { const t = JSON.parse(String(data)).type; window.__sent[t] = (window.__sent[t] || 0) + 1; } catch (_e) { /* not JSON */ }
+		return send.call(this, data);
+	};
 });
 await select_tool(alice, "Pencil");
 const ac0 = await canvas_box(alice);
