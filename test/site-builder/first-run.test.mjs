@@ -76,7 +76,7 @@ const windows = (page) => page.evaluate(() => [...document.querySelectorAll(".wi
 
 	const { page, close } = await open_paint({ url: `${editor}/new`, init: seed, init_arg: settings });
 	await page.waitForFunction(() => system_file_handle && system_file_handle.fresh === true && location.search === "", null, { timeout: 20000 });
-	assert.deepEqual(await handle(page), { site_page: "index.html", fresh: true });
+	assert.deepEqual(await handle(page), { site_page: "index.html", fresh: true, site }, "a fresh page of the signed-in site");
 	assert.equal(await page.evaluate(() => !!document.querySelector(".welcome-window")), false, "signed in: no Welcome");
 	assert.equal(await page.$eval(".site-globe-name", (el) => el.textContent), `~${site}`);
 	await page.keyboard.press("Control+s");
@@ -98,6 +98,14 @@ const windows = (page) => page.evaluate(() => [...document.querySelectorAll(".wi
 	await copy.waitForFunction(() => /Not saved/.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 10000 });
 	await copy.evaluate(() => { [...document.querySelectorAll(".site-publish-window button")].find((b) => b.textContent === "Cancel")?.click(); });
 	assert.deepEqual(await windows(copy).then((list) => list.filter((t) => /Save|Sign In/.test(t))), []);
+	// A copy stays a copy across a reload (its session remembers): it doesn't turn into your own index.html
+	await copy.waitForFunction(() => /#local:/.test(location.hash), null, { timeout: 5000 });
+	await copy.evaluate(() => { $(window).triggerHandler("session-update"); });
+	await copy.waitForTimeout(600);
+	await copy.reload({ waitUntil: "domcontentloaded" });
+	await copy.waitForFunction(() => system_file_handle && system_file_handle.site_page === "index.html", null, { timeout: 20000 });
+	assert.deepEqual(await copy.evaluate(() => system_file_handle), { site_page: "index.html", copy_of: "root" }, "still a copy of root's after a reload");
+	assert.match(await copy.$eval(".page-path-label", (el) => el.textContent), /a copy of ~root's/);
 	await close_copy();
 
 	// The root site's welcome.html, when it has one, is the starter page for newcomers (the owner draws it at /welcome)

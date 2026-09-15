@@ -98,6 +98,7 @@ async function open_site_from_url() {
 	}
 }
 async function open_site_from_url_inner() {
+	if (is_hosted_editor() && !is_signed_in()) { learn_sites_url(); } // (not awaited: a stranger's or a copy's elements preview once it's known)
 	/** @type {{ site: string, page: string } | null} */
 	let entry = null;
 	try {
@@ -172,10 +173,11 @@ async function open_site_from_url_inner() {
  * Whether the document is (or, once its session has come back, becomes) that page of the site — a save sent us to
  * Google and its #local: session is in the address; sessions.js restores it and the sidecar says which page it is.
  * @param {string} page
+ * @param {number} [timeout] - ms to wait for the restore
  * @returns {Promise<boolean>}
  */
-function page_restored(page) {
-	const is_it = () => !!(system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page === page && typeof system_file_handle.copy_of !== "string");
+function page_restored(page, timeout = 10000) {
+	const is_it = () => !!(system_file_handle && typeof system_file_handle === "object" && system_file_handle.site_page === page && typeof system_file_handle.copy_of !== "string" && (!system_file_handle.site || system_file_handle.site === load_settings().site));
 	if (is_it()) { return Promise.resolve(true); }
 	if (!/^#local:/.test(location.hash)) { return Promise.resolve(false); }
 	return new Promise((resolve) => {
@@ -186,11 +188,30 @@ function page_restored(page) {
 			$G.off(events, on);
 			resolve(result);
 		};
-		const timer = setTimeout(() => { done(is_it()); }, 10000);
+		const timer = setTimeout(() => { done(is_it()); }, timeout);
 		const poll = setInterval(() => { if (is_it()) { done(true); } }, 200); // (the restore may have run between the check above and the listener)
 		const on = () => { if (is_it()) { done(true); } };
 		$G.on(events, on);
 	});
+}
+
+/**
+ * Where the published sites live, learned from the editor without signing in (/auth/methods says; whoami says too, once
+ * signed in): a stranger's page previews its elements from there, and a copy from the site it was copied from.
+ */
+async function learn_sites_url() {
+	if (sites_url) { return; }
+	try {
+		const methods = await (await fetch(`${get_site_editor_url()}/auth/methods`)).json();
+		if (methods && typeof methods.sites_url === "string" && methods.sites_url) {
+			sites_url = methods.sites_url;
+			$G.triggerHandler("site-settings-changed"); // (x-preview.js: the elements can ask the site now)
+		}
+	} catch (_error) { /* the default stands */ }
+}
+/** Whether the published sites' host is known yet (learned from the editor); until then, nothing is asked of it. */
+function sites_url_known() {
+	return !!sites_url;
 }
 
 /**
@@ -200,6 +221,7 @@ function page_restored(page) {
  * built-in start: a heading, a section, a visitor counter.
  */
 async function open_starter_page() {
+	await learn_sites_url();
 	const from_root = await page_exists(STARTER_PAGE.site, STARTER_PAGE.page) && await open_page_copy(STARTER_PAGE.site, STARTER_PAGE.page);
 	if (from_root) {
 		// Not a copy of the template — a fresh page of the site to come
@@ -270,6 +292,7 @@ async function page_exists(site, path) {
  * @returns {Promise<boolean>} opened
  */
 async function open_page_copy(site, path) {
+	await learn_sites_url(); // (the copy's elements preview from that site)
 	const base = `${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/files/`;
 	let response;
 	try {
@@ -290,9 +313,7 @@ async function open_page_copy(site, path) {
 	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: base + page_folder(path), site_page: path });
 	if (opened) {
 		saved = true; // nothing of yours in it yet
-		if (site !== load_settings().site) {
-			system_file_handle = { site_page: path, copy_of: site };
-		}
+		system_file_handle = site !== load_settings().site ? { site_page: path, copy_of: site } : { site_page: path, site };
 		update_title();
 		$G.triggerHandler("site-settings-changed"); // the globe's tooltip: whose page this is
 		$status_text.text(localize("Opened a copy of %1. Save to My Site puts it on your own site.", site_public_url(site, path)));
@@ -381,7 +402,9 @@ async function check_sign_in({ probe = false } = {}) {
 	if (!is_signed_in() && !settings.account && !probe) { return false; }
 	try {
 		const info = await (await api(`/api/whoami${settings.site ? `?site=${encodeURIComponent(settings.site)}` : ""}`)).json();
+		const learned = !sites_url && !!info.sites_url;
 		sites_url = info.sites_url || sites_url;
+		if (learned) { $G.triggerHandler("site-settings-changed"); } // (x-preview.js: the elements can ask the site now)
 		site_created = typeof info.created === "number" ? info.created : null;
 		// An account (a Google sign-in, in the session cookie): remember who, and which sites are theirs
 		const account = info.user ? { email: String(info.user.email || ""), name: String(info.user.name || ""), via: "google", sites: Array.isArray(info.sites) ? info.sites : [] } : null;
@@ -740,7 +763,11 @@ async function switch_page(path) {
 	const session = draft_session(load_settings().site, path);
 	if (session && session !== current_session_id()) {
 		change_url_param("local", session); // sessions.js restores the draft, and its page (site-page-restored)
-		return true;
+		// The draft must turn out to be this page of this site. If it doesn't (a session two pages shared, a page of
+		// another site, a copy, a session that's gone), the page comes from the site instead — in a session of its own.
+		if (await page_restored(path, 4000)) { return true; }
+		saved = true;
+		return open_page_from_site(path);
 	}
 	return open_page_from_site(path);
 }
@@ -780,6 +807,7 @@ async function open_page_from_site(path) {
 	}
 	const opened = await open_collage_from_file(new File([text], path, { type: HTML_FORMAT_ID }), { base_url: get_site_files_base() + page_folder(path), site_page: path });
 	if (opened) {
+		system_file_handle = { site_page: path, site: load_settings().site }; // (the site too: the session's sidecar remembers whose page this is, whatever site is current later)
 		saved = true; // it is what's on the site (restoring the layers after the bitmap had marked it changed)
 		update_title();
 		$G.triggerHandler("site-page-opened", [{ page: path, authoritative: false }]); // live-session.js joins the page's room
@@ -859,7 +887,7 @@ async function new_site_post(folder, title) {
 		set_magnification(1);
 		file_name = path;
 		file_format = HTML_FORMAT_ID;
-		system_file_handle = { site_page: path, fresh: true }; // fresh: saving asks before replacing a page of that name
+		system_file_handle = { site_page: path, fresh: true, ...(load_settings().site ? { site: load_settings().site } : {}) }; // fresh: saving asks before replacing a page of that name
 		add_block("section", { x: 0, y: 0 }, { html: `<h1>${escape_html(title)}</h1><p><small>Posted <x-updated label="">today</x-updated></small></p>`, edit: false });
 		add_block("section", { x: 0, y: 0 }, { html: "Write your post here." });
 		saved = false;
@@ -887,7 +915,7 @@ function new_site_page(path, { starter = false } = {}) {
 		set_magnification(1);
 		file_name = path;
 		file_format = HTML_FORMAT_ID;
-		system_file_handle = { site_page: path, fresh: true }; // fresh: saving asks before replacing a page of that name
+		system_file_handle = { site_page: path, fresh: true, ...(load_settings().site ? { site: load_settings().site } : {}) }; // fresh: saving asks before replacing a page of that name
 		if (starter) {
 			add_block("heading", { x: 40, y: 30 }, { html: '<font face="Comic Sans MS" color="#ff1493">My cool site</font>' });
 			add_block("section", { x: 40, y: 120 }, { html: "<p>Write anything here. Draw around it. Drop GIFs on it.</p>", edit: false });
@@ -1475,4 +1503,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, list_site_folders, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site, upload_asset, write_file };
+export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, list_site_folders, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, sites_url_known, switch_page, switch_site, upload_asset, write_file };

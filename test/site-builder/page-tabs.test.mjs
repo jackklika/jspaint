@@ -61,7 +61,7 @@ await page.click('.page-tab[data-page="index.html"]');
 await page.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
 await page.waitForFunction((painted) => main_ctx.getImageData(100, 100, 1, 1).data.join(",") === painted, painted, { timeout: 30000 });
 assert.equal(await page.evaluate(() => location.hash), index_session, "the same draft session");
-assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "index.html" }, "still that page of the site: Ctrl+S publishes it");
+assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "index.html", site }, "still that page of the site: Ctrl+S publishes it");
 assert.equal(await version(), published_index, "nothing was published by switching");
 
 // Publishing is explicit: Ctrl+S puts the draft on the site
@@ -70,6 +70,22 @@ await page.waitForFunction(() => /Done!|Couldn't|rejected|failed/i.test(document
 assert.match(await page.$eval(".site-publish-log", (el) => el.innerText), /Done!/);
 assert.notEqual(await version(), published_index, "now it's published");
 await page.evaluate(() => { [...document.querySelectorAll(".site-publish-window button")].find((b) => b.textContent === "Cancel")?.click(); });
+
+// A tab whose remembered draft isn't that page (a session shared by two pages, another site's, a session that's gone):
+// the page comes from the site instead, in a session of its own — never "untitled — not on a site"
+await page.evaluate(() => {
+	const drafts = JSON.parse(localStorage.getItem("jspaint site drafts") || "{}");
+	const key = Object.keys(drafts).find((k) => k.endsWith("/about.html"));
+	drafts[key] = { session: "deadbeefdeadbe", at: Date.now() };
+	localStorage.setItem("jspaint site drafts", JSON.stringify(drafts));
+});
+await page.click('.page-tab[data-page="about.html"]');
+await page.waitForFunction(() => file_name === "about.html" && system_file_handle && system_file_handle.site_page === "about.html", null, { timeout: 20000 });
+assert.equal(await page.evaluate(() => !!document.querySelector(".page-path-label") && document.querySelector(".page-path-label").offsetParent !== null), false, "still tabs, not the single label");
+await page.waitForFunction(() => document.querySelector(".page-tab.current")?.textContent === "about.html", null, { timeout: 10000 });
+assert.notEqual(await page.evaluate(() => location.hash), "#local:deadbeefdeadbe", "the broken draft was left behind");
+await page.click('.page-tab[data-page="index.html"]');
+await page.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
 
 // The + tab: a new page, named in the same New Page dialog as My Site › Pages; it opens fresh and becomes the
 // current tab (on the site once saved)

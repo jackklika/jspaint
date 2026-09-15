@@ -67,7 +67,7 @@ const call = (path, init = {}, cookies = {}) => fetch(`${editor}${path}`, {
 
 try {
 	// The editor says which ways in it has
-	assert.deepEqual(await (await call("/auth/methods")).json(), { google: true, password: true, site_limit: 5 });
+	assert.deepEqual(await (await call("/auth/methods")).json(), { google: true, password: true, site_limit: 5, sites_url: process.env.SITE_BUILDER_SITES_URL || "https://coolpaint.world" });
 
 	// Start: off to Google with our client id, the callback address, and a state kept in a cookie
 	let response = await call(`/auth/google?next=${encodeURIComponent("/?signed_in=1")}`);
@@ -244,7 +244,7 @@ try {
 	assert.match(await newcomer.$eval(".site-publish-log", (el) => el.innerText), /Done!/, "saved right after the name");
 	const newcomer_files = (await (await fetch(`${editor}/api/sites/${newcomer_site}/files`, { headers: { Authorization: `Bearer ${master}` } })).json()).files.map((f) => f.path);
 	assert.ok(newcomer_files.includes("index.html") && newcomer_files.includes("collages/index.png"), newcomer_files.join(","));
-	assert.deepEqual(await newcomer.evaluate(() => system_file_handle), { site_page: "index.html" }, "their page now");
+	assert.deepEqual(await newcomer.evaluate(() => system_file_handle), { site_page: "index.html", site: newcomer_site }, "their page now");
 	sites_to_clean.push(newcomer_site);
 	await close_newcomer();
 

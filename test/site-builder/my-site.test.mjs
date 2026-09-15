@@ -107,7 +107,7 @@ assert.ok(names.includes("about.html") && names.includes("collages/about.png"), 
 await page.evaluate(() => [...document.querySelectorAll(".my-site-row")].find((row) => row.querySelector(".my-site-name").textContent === "about.html").dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
 await page.waitForFunction(() => document.querySelectorAll(".block-layer").length === 2, null, { timeout: 15000 });
 assert.equal(await page.evaluate(() => file_name), "about.html");
-assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "about.html" });
+assert.deepEqual(await page.evaluate(() => system_file_handle), { site_page: "about.html", site });
 // The bar above the canvas: the site, and its pages as tabs (this one pressed)
 assert.equal(await page.$eval(".page-path-site", (el) => el.textContent), `~${site}/`);
 await page.waitForFunction(() => document.querySelector(".page-tab.current")?.textContent === "about.html", null, { timeout: 10000 });
@@ -205,7 +205,7 @@ assert.doesNotMatch(await page.evaluate(() => current_history_node.blocks[0].htm
 	await page.evaluate(() => [...document.querySelectorAll("button")].filter((b) => b.textContent === "Close").forEach((b) => b.click()));
 	const { page: back, close: close_back } = await open_paint({ init: seed, init_arg: settings });
 	await back.waitForFunction(() => file_name === "index.html", null, { timeout: 20000 });
-	assert.deepEqual(await back.evaluate(() => system_file_handle), { site_page: "index.html" });
+	assert.deepEqual(await back.evaluate(() => system_file_handle), { site_page: "index.html", site });
 	await close_back();
 }
 // Already signed in as that site: ?site= opens the folder, no dialog

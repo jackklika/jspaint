@@ -177,7 +177,9 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 	const path = url.pathname;
 	if (request.method === "OPTIONS") { return new Response(null, { status: 204, headers: CORS }); }
 	if (path === "/auth/methods") {
-		return json({ google: !!PROVIDERS.google.client(env).id, password: true, site_limit: MAX_SITES });
+		// (plus where the sites live: Paint learns it here before anyone signs in — a stranger's starter page previews
+		// its counter from the domain's own site, and a copy previews from the copied site)
+		return json({ google: !!PROVIDERS.google.client(env).id, password: true, site_limit: MAX_SITES, sites_url: env.SITES_URL || null });
 	}
 	const provider_match = /^\/auth\/([a-z]+)(\/callback)?$/.exec(path);
 	if (provider_match && PROVIDERS[provider_match[1]]) {

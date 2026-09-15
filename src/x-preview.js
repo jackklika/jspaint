@@ -7,7 +7,7 @@
 // into the page and shows while the answer is on its way, or when there's no site to ask (signed out, a copy).
 import { block_markup, get_blocks } from "./blocks.js";
 import { $G } from "./helpers.js";
-import { current_site_page_path, public_url } from "./my-site.js";
+import { current_site_page_path, public_url, sites_url_known } from "./my-site.js";
 import { ROOT_SITE } from "./site-constants.js";
 import { get_site_files_base, load_settings } from "./site-publish.js";
 
@@ -77,7 +77,7 @@ async function refresh_block(block, force = false) {
 	if (!block.tag.startsWith("x-")) { return; }
 	const target = page_of();
 	const { site, page } = target;
-	if (!site || !page) { return; }
+	if (!site || !page || !sites_url_known()) { return; } // (the sites' host comes from the editor; site-settings-changed follows, and asks again)
 	const key = key_of(block, target);
 	const cached = previews.get(key);
 	if (cached) {

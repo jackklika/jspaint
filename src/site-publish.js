@@ -192,7 +192,7 @@ async function publish_collage(settings, log) {
 		log(`(No link preview: ${error.message})`);
 	}
 	// The document now lives on the site: Ctrl+S saves it back there (functions.js file_save).
-	system_file_handle = { site_page: `${page_base}.html`, ...(settings.invite ? { guest: { site: settings.site, key: settings.invite.key } } : {}) };
+	system_file_handle = { site_page: `${page_base}.html`, site: settings.site, ...(settings.invite ? { guest: { site: settings.site, key: settings.invite.key } } : {}) };
 	file_name = `${page_base}.html`;
 	file_format = HTML_FORMAT_ID;
 	saved = true;
