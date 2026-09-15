@@ -22,6 +22,7 @@ import { sanitize_html } from "../shared/sanitize.js";
 import { escape_html, render_x_element, render_x_elements, x_elements } from "../shared/x-elements/index.js";
 import { odometer } from "../shared/x-elements/counter.js";
 import { ShortCache, client_ip, limited, report_limited, too_many } from "../shared/limits.js";
+import { error_page_html, server_page_html } from "../shared/server-page.js";
 
 const PAGE_HEADERS = {
 	"Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -236,14 +237,8 @@ function html_response(body, status = 200) {
  * @param {string} [message]
  */
 function not_found(message = "") {
-	return html_response(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Error 404</title></head>
-<body bgcolor="#ffffff" text="#000000" style="font-family:'Times New Roman',Times,serif;margin:8px">
-<h1>HTTP Error 404</h1>
-<h2>404 Not Found</h2>
-<p>The Web server cannot find the file or script you asked for. Please check the URL to ensure that the path is correct.</p>
-${message && message !== "Not Found" ? `<p>${message}</p>\n` : ""}<p>Please contact the server's administrator if this problem persists.</p>
-</body></html>`, 404);
+	return html_response(error_page_html(404, `<p>The Web server cannot find the file or script you asked for. Please check the URL to ensure that the path is correct.</p>
+${message && message !== "Not Found" ? `<p>${message}</p>\n` : ""}<p>Please contact the server's administrator if this problem persists.</p>`), 404);
 }
 
 /**
@@ -284,7 +279,8 @@ async function handle_action(request, url, env) {
 	if (result.location) {
 		return new Response(null, { status: result.status || 303, headers: { ...PAGE_HEADERS, Location: result.location } });
 	}
-	return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Oops</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>${result.error || "Something went wrong."}</p><p><a href="javascript:history.back()">Go back</a></p></body></html>`.replace('<a href="javascript:history.back()">Go back</a>', `<a href="${site_home(site)}">Go back</a>`), result.status || 400);
+	const status = result.status || 400;
+	return html_response(error_page_html(status, `<p>${result.error || "The Web server could not take what the form sent."}</p>\n<p><a href="${escape_html(site_home(site))}">Go back</a></p>`), status);
 }
 
 /**
@@ -327,11 +323,8 @@ async function handle_preview(request, env, site) {
 
 /** The admin took the site down: one plain page, never cached. */
 function unavailable() {
-	return new Response(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Unavailable</title></head>
-<body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding-top:80px">
-<h1>451</h1><p>This site is unavailable.</p>
-</body></html>`, { status: 451, headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+	return new Response(error_page_html(451, `<p>This site is unavailable.</p>
+<p>Please contact the server's administrator if you believe this is a mistake.</p>`), { status: 451, headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /**
@@ -351,35 +344,35 @@ function with_report_link(html, site, page) {
  */
 async function handle_report(request, url, env, ctx, site) {
 	const page_of = (/** @type {string} */ value) => (valid_path(value) && is_html_path(value) ? value : "index.html");
-	const shell = (/** @type {string} */ title, /** @type {string} */ body, status = 200) => new Response(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape_html(title)}</title></head>
-<body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding:60px 16px">
-${body}
-</body></html>`, { status, headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
+	const headers = { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex" };
+	/** The form and the thanks, in the server's style. @param {string} title @param {string} body @param {number} [status] */
+	const shell = (title, body, status = 200) => new Response(server_page_html({ title, heading: title, body }), { status, headers });
+	/** A refusal: "HTTP Error 400" and why. @param {number} status @param {string} body */
+	const refusal = (status, body) => new Response(error_page_html(status, `${body}\n<p><a href="${escape_html(site_home(site))}">Go back</a></p>`), { status, headers });
 	if (request.method === "GET") {
 		const page = page_of(url.searchParams.get("page") || "");
-		return shell("Report this page", `<h1>Report this page</h1>
-<p>${escape_html(`${site_base(site)}/${page === "index.html" ? "" : page}`)}</p>
-<form method="post" action="${escape_html(`${site_base(site)}/x/report`)}" style="display:inline-block;text-align:left;max-width:480px">
+		return shell("Report this page", `<p>This page: <b>${escape_html(`${site_base(site)}/${page === "index.html" ? "" : page}`)}</b></p>
+<form method="post" action="${escape_html(`${site_base(site)}/x/report`)}">
 <input type="hidden" name="page" value="${escape_html(page)}">
-<p><label>What's wrong with it?<br><textarea name="reason" rows="5" cols="48" maxlength="${MAX_REPORT_CHARS}" required style="width:100%;background:#000;color:#0f0;border:1px solid #0f0;font:inherit"></textarea></label></p>
+<p>What's wrong with it?<br><textarea name="reason" rows="6" cols="60" maxlength="${MAX_REPORT_CHARS}" required></textarea></p>
 <p style="display:none"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></p>
-<p><button type="submit" style="background:#000;color:#0f0;border:1px solid #0f0;font:inherit;padding:4px 12px">Send report</button> <a href="${escape_html(site_home(site))}" style="color:#0f0">never mind</a></p>
-</form>`);
+<p><input type="submit" value="Send report"> <a href="${escape_html(site_home(site))}">Never mind</a></p>
+</form>
+<p>The server's administrator reads every report.</p>`);
 	}
-	if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") || "")) { return shell("Report", "<p>Bad request.</p>", 400); }
+	if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") || "")) { return refusal(400, "<p>The Web server could not read what the form sent.</p>"); }
 	const origin = request.headers.get("Origin");
-	if (origin && origin !== url.origin) { return shell("Report", "<p>Forms only work from the page itself.</p>", 403); }
+	if (origin && origin !== url.origin) { return refusal(403, "<p>Forms only work from the page itself.</p>"); }
 	let form;
 	try {
 		form = await request.formData();
 	} catch (_error) {
-		return shell("Report", "<p>Bad request.</p>", 400);
+		return refusal(400, "<p>The Web server could not read what the form sent.</p>");
 	}
 	const page = page_of(String(form.get("page") || ""));
 	const reason = String(form.get("reason") || "").trim().slice(0, MAX_REPORT_CHARS);
-	if (String(form.get("website") || "")) { return shell("Thanks", "<h1>Thanks</h1><p>Your report was sent.</p>"); } // (the honeypot: pretend)
-	if (reason.length < 3) { return shell("Report", "<p>Say a little about what's wrong.</p>", 400); }
+	if (String(form.get("website") || "")) { return shell("Thank you", "<p>Your report was sent.</p>"); } // (the honeypot: pretend)
+	if (reason.length < 3) { return refusal(400, "<p>Say a little about what's wrong with the page.</p>"); }
 	const ip_hash = await sha256_hex(`view|${request.headers.get("CF-Connecting-IP") || "unknown"}`);
 	let outcome = "sent";
 	if (env.EDITOR_URL) {
@@ -391,9 +384,10 @@ ${body}
 		}
 	}
 	void ctx;
-	if (outcome === "enough") { return shell("Report", `<h1>Thanks</h1><p>You've reported enough for today.</p><p><a href="${escape_html(site_home(site))}" style="color:#0f0">back</a></p>`, 429); }
-	if (outcome === "failed") { return shell("Report", `<p>Something went wrong on our side. Please try again in a little while.</p>`, 503); }
-	return shell("Thanks", `<h1>Thanks</h1><p>Your report was sent. Someone will look at it.</p><p><a href="${escape_html(site_home(site))}" style="color:#0f0">back</a></p>`);
+	if (outcome === "enough") { return refusal(429, "<p>You've reported enough for today. Thank you.</p>"); }
+	if (outcome === "failed") { return refusal(503, "<p>Something went wrong on our side. Please try again in a little while.</p>"); }
+	return shell("Thank you", `<p>Your report was sent. The server's administrator will look at it.</p>
+<p><a href="${escape_html(site_home(site))}">Go back</a></p>`);
 }
 
 /**
@@ -549,7 +543,9 @@ export default {
 			// The server's own failures are $exception events too (PostHog Error tracking), when the sites Worker has a key
 			capture_exception(/** @type {any} */ (env), ctx, error, { worker: "jspaint-sites", route: new URL(request.url).pathname, method: request.method, status: quota ? 503 : 500, ...(quota ? { code: "storage-quota" } : {}) });
 			// A plain page for visitors; what actually happened is in Error tracking and the logs
-			return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Back soon</title></head><body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding-top:80px"><h1>Back soon</h1><p>This page is taking a little break. Please try again in a little while.</p><p><marquee>~*~ be right back ~*~</marquee></p></body></html>`, quota ? 503 : 500);
+			return html_response(error_page_html(quota ? 503 : 500, quota ?
+				`<p>The Web server is temporarily unable to service your request. Please try again in a little while.</p>\n<p>Please contact the server's administrator if this problem persists.</p>` :
+				`<p>The Web server encountered an unexpected condition that prevented it from fulfilling the request. Please try again in a little while.</p>\n<p>Please contact the server's administrator if this problem persists.</p>`), quota ? 503 : 500);
 		}
 	},
 	/**

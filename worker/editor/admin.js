@@ -12,6 +12,7 @@
 //   POST   /api/admin/users/:id/lock                { locked, note? } — a locked account's sessions end and it can't sign in
 //   POST   /api/admin/reports/:id/resolve           { resolved }
 import { ShortCache } from "../shared/limits.js";
+import { error_page_html } from "../shared/server-page.js";
 import { is_html_path, valid_path, valid_site_name } from "../shared/names.js";
 import { accounts_of, session_of } from "./auth.js";
 import { MODERATION_FILE, notify_published, read_moderation, write_moderation } from "./moderation.js";
@@ -139,9 +140,9 @@ async function handle_admin(request, url, env, ctx, role_of) {
 		if (path === "/admin") {
 			const session = await session_of(request, env);
 			const body = session ?
-				`<p>This page is for the site's admin.</p><p><a href="/">Back to Paint</a></p>` :
-				`<p>Sign in as the admin to see this page.</p><p><a href="/auth/google?next=/admin">Sign in with Google</a> · <a href="/">Back to Paint</a></p>`;
-			return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Admin</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px">${body}</body></html>`, { status: session ? 403 : 401, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+				`<p>This page is for the site's admin.</p>\n<p><a href="/">Back to Paint</a></p>` :
+				`<p>Sign in as the admin to see this page.</p>\n<p><a href="/auth/google?next=/admin">Sign in with Google</a> &middot; <a href="/">Back to Paint</a></p>`;
+			return new Response(error_page_html(session ? 403 : 401, body), { status: session ? 403 : 401, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 		}
 		return json({ error: "Unauthorized: the admin only" }, 401);
 	}

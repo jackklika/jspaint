@@ -29,6 +29,7 @@
 import { reserved_site_name, valid_site_name } from "../shared/names.js";
 import { report_limited } from "../shared/limits.js";
 import { write_moderation } from "./moderation.js";
+import { error_page_html } from "../shared/server-page.js";
 
 const SESSION_COOKIE = "coolpaint_session";
 const CLAIMS_COOKIE = "coolpaint_id";
@@ -348,7 +349,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const { user, created } = await accounts_of(env).sign_in_identity({ provider: name, subject: identity.subject, email: identity.email, name: identity.name });
 		if (user.locked) {
 			// The admin locked this account: no session, one plain sentence
-			return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Locked</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>This account is locked.</p><p><a href="/">Back to Paint</a></p></body></html>`, { status: 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Set-Cookie": clear_state } });
+			return new Response(error_page_html(403, `<p>This account is locked.</p>\n<p><a href="/">Back to Paint</a></p>`), { status: 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Set-Cookie": clear_state } });
 		}
 		if (created) {
 			capture_event(env, ctx, "signup", user.id, { email: user.email || "", name: user.name || "", provider: name });
