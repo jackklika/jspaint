@@ -15,7 +15,7 @@ if (!editor || !master) {
 const stamp = Date.now().toString(36);
 
 // The fake Google: any code buys a token; the token names whoever the test says
-let person = { sub: `sub-${stamp}`, email: `jack-${stamp}@example.com`, email_verified: true, name: "Jack Test" };
+let person = { sub: `sub-${stamp}`, email: `pat-${stamp}@example.com`, email_verified: true, name: "Pat Test" };
 const fake = createServer((request, response) => {
 	const url = new URL(request.url || "/", "http://localhost:8790");
 	if (url.pathname === "/token" && request.method === "POST") {
@@ -100,7 +100,7 @@ try {
 	// whoami with the cookie: an account, no sites yet, and no role on any site
 	let me = await (await call("/api/whoami", {}, cookies)).json();
 	assert.equal(me.role, "user");
-	assert.deepEqual(me.user, { id: me.user.id, email: person.email, name: "Jack Test" });
+	assert.deepEqual(me.user, { id: me.user.id, email: person.email, name: "Pat Test" });
 	assert.deepEqual(me.sites, []);
 	assert.match(me.user.id, /^[0-9a-f]{24}$/);
 	const user_id = me.user.id;
@@ -178,7 +178,7 @@ try {
 	response = await fetch(`${editor}/auth/sites/${handed}/assign`, { method: "POST", headers: { Authorization: `Bearer ${master}`, "Content-Type": "application/json" }, body: JSON.stringify({ email: `nobody-${stamp}@example.com` }) });
 	assert.equal(response.status, 404, "an account that never signed in");
 	response = await fetch(`${editor}/auth/sites/${handed}/assign`, { method: "POST", headers: { Authorization: `Bearer ${master}`, "Content-Type": "application/json" }, body: JSON.stringify({ email: my_email.toUpperCase() }) });
-	assert.deepEqual(await response.json(), { ok: true, site: handed, user: { email: my_email, name: "Jack Test" } });
+	assert.deepEqual(await response.json(), { ok: true, site: handed, user: { email: my_email, name: "Pat Test" } });
 	assert.equal((await (await call(`/api/whoami?site=${handed}`, {}, cookies)).json()).role, "site", "…and now the account edits it");
 	// Up to five sites per account: the three so far, two more, then no
 	const extra = [`g-${stamp}-4`, `g-${stamp}-5`];
@@ -218,7 +218,7 @@ try {
 
 	// A newcomer at the editor: the starter page, a stroke, Save → Sign In → Google → back on the same drawing, with
 	// the save waiting: a site name → the page goes up as that site's index.html
-	person = { sub: `sub-${stamp}-newcomer`, email: `newcomer-${stamp}@example.com`, email_verified: true, name: "New Jack" };
+	person = { sub: `sub-${stamp}-newcomer`, email: `newcomer-${stamp}@example.com`, email_verified: true, name: "New Pat" };
 	const { page: newcomer, close: close_newcomer } = await open_paint({ url: `${editor}/` });
 	await newcomer.waitForFunction(() => system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
 	await newcomer.waitForSelector(".welcome-window", { timeout: 10000 });
@@ -250,7 +250,7 @@ try {
 
 	// In the browser, from Paint at the editor: the Sign In dialog's Google button, the round trip, no site yet → pick a
 	// name → My Site opens for it, signed in as the account
-	person = { sub: `sub-${stamp}-browser`, email: `browser-${stamp}@example.com`, email_verified: true, name: "Browser Jack" };
+	person = { sub: `sub-${stamp}-browser`, email: `browser-${stamp}@example.com`, email_verified: true, name: "Browser Pat" };
 	const { page: paint, close } = await open_paint({ url: `${editor}/` });
 	await paint.waitForFunction(() => system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
 	await click_menu_item(paint, "Sign In to My Site...");

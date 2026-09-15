@@ -8,7 +8,7 @@ export { assert };
 
 /**
  * Opens JS Paint in a fresh headless Chromium page and waits for the canvas.
- * @param {{ init?: (arg?: any) => void, init_arg?: any, viewport?: { width: number, height: number }, query?: string, url?: string }} [options] - `init` runs before the page's scripts (e.g. to seed localStorage), with `init_arg`; `query` is appended to the URL (e.g. "?site=jack"); `url` loads Paint from somewhere other than BASE_URL (e.g. the editor Worker)
+ * @param {{ init?: (arg?: any) => void, init_arg?: any, viewport?: { width: number, height: number }, query?: string, url?: string }} [options] - `init` runs before the page's scripts (e.g. to seed localStorage), with `init_arg`; `query` is appended to the URL (e.g. "?site=yourname"); `url` loads Paint from somewhere other than BASE_URL (e.g. the editor Worker)
  */
 export async function open_paint({ init, init_arg, viewport = { width: 1280, height: 800 }, query = "", url = BASE_URL } = {}) {
 	const browser = await chromium.launch();

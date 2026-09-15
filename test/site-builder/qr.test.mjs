@@ -21,7 +21,7 @@ function rasterize(modules, scale = 4, quiet = 4) {
 
 const samples = [
 	"hi",
-	"https://coolpaint.world/?join=jack/index.html/20800.Ab3dE9fGh1kLmNoP",
+	"https://coolpaint.world/?join=yourname/index.html/20800.Ab3dE9fGh1kLmNoP",
 	"https://coolpaint.world/?join=my-longer-site-name/about-the-wedding.html/20800.Ab3dE9fGh1kLmNoPqRsT",
 	"x".repeat(150),
 	"y".repeat(230),

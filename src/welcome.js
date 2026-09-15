@@ -16,10 +16,11 @@ function welcome_dismissed() {
  * @param {object} links
  * @param {string} links.editor - the editor's address (to ask /auth/methods whether Google sign-in is set up)
  * @param {string} links.google_url - where "Sign in with Google" goes (the save resumes on the way back)
+ * @param {() => Promise<void>} [links.before_leave] - runs before the browser goes to Google (the drawing's backup)
  * @param {string} links.homepage_url - the site's own homepage, in Paint (edit.<domain>/~root/)
  * @param {string} links.site_host - coolpaint.world
  */
-function show_welcome({ editor, google_url, homepage_url, site_host }) {
+function show_welcome({ editor, google_url, homepage_url, site_host, before_leave }) {
 	const $w = $DialogWindow(localize("Welcome to Cool Paint World"));
 	$w.addClass("welcome-window squish");
 	const $main = $w.$main;
@@ -37,6 +38,11 @@ function show_welcome({ editor, google_url, homepage_url, site_host }) {
 		.text(localize("Sign in with Google"))
 		.hide()
 		.appendTo($main);
+	$google.on("click", async (e) => {
+		e.preventDefault();
+		if (before_leave) { await before_leave(); }
+		location.href = google_url;
+	});
 	// (98.css draws a checkbox through the <label for> that follows the <input>)
 	const $again = $(E("div")).addClass("welcome-again").appendTo($main);
 	const $checkbox = $(E("input")).attr({ type: "checkbox", name: "welcome-again", id: "welcome-again-checkbox" }).prop("checked", true).appendTo($again);

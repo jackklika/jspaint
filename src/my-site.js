@@ -41,7 +41,9 @@ function public_url(path = "index.html", site = load_settings().site) {
 const SITE_ENTRY_KEY = "jspaint open site"; // sessionStorage
 const SIGNED_IN_KEY = "jspaint signed in"; // sessionStorage: just back from Google (auth.js sends us to /?signed_in=1[&resume=save&page=…])
 const NEW_SITE_KEY = "jspaint new site"; // sessionStorage: edit.<domain>/new — a fresh site's first page (the Worker sends /?new=1)
-const TEMPLATES_SITE = "templates"; // a site like any other: its start.html is the starter page when it has one
+// The starter page (a new site's first page) is the domain's own site's welcome.html when it has one — whoever owns the
+// root site draws it in Paint at edit.<domain>/welcome — else a built-in start (new_site_page's `starter`)
+const STARTER_PAGE = { site: ROOT_SITE, page: "welcome.html" };
 // A plain visit (no #local:… session to restore, captured before sessions.js assigns one): signed in, Paint opens
 // your site's front page rather than a blank picture — edit.<domain> is where you edit your site.
 const FRESH_VISIT = !location.hash;
@@ -193,13 +195,13 @@ function page_restored(page) {
 
 /**
  * A new site's first page — edit.<domain>/ for someone who isn't signed in, edit.<domain>/new for anyone: a page to
- * draw on right away; Save puts it on a site of their own (the Welcome window says so). The page is the `templates`
- * site's start.html when there is one (a site like any other, drawn in Paint by whoever owns it), else a built-in
- * start: a heading, a section, a visitor counter.
+ * draw on right away; Save puts it on a site of their own (the Welcome window says so). The page is the root site's
+ * welcome.html when there is one (drawn in Paint by whoever owns the root site: edit.<domain>/welcome), else a
+ * built-in start: a heading, a section, a visitor counter.
  */
 async function open_starter_page() {
-	const from_templates = await page_exists(TEMPLATES_SITE, "start.html") && await open_page_copy(TEMPLATES_SITE, "start.html");
-	if (from_templates) {
+	const from_root = await page_exists(STARTER_PAGE.site, STARTER_PAGE.page) && await open_page_copy(STARTER_PAGE.site, STARTER_PAGE.page);
+	if (from_root) {
 		// Not a copy of the template — a fresh page of the site to come
 		file_name = "index.html";
 		system_file_handle = { site_page: "index.html", fresh: true };
@@ -216,10 +218,21 @@ async function open_starter_page() {
 		show_welcome({
 			editor,
 			google_url: google_sign_in_url(editor, "index.html"),
+			before_leave: before_leaving_for_google,
 			homepage_url: `${editor}/~${ROOT_SITE}/`,
 			site_host: new URL(public_url("", ROOT_SITE)).host,
 		});
 	}
+}
+
+/**
+ * Before the browser leaves for Google: this session's backup written (sessions.js), so the drawing is there when
+ * Google sends us back to it. (The debounced autosave may not have run yet after the last stroke.)
+ */
+async function before_leaving_for_google() {
+	$G.triggerHandler("session-update");
+	const { flush_session_backup } = await import("./sessions.js"); // (sessions.js imports this module: no static cycle)
+	await flush_session_backup();
 }
 
 /**
@@ -400,7 +413,7 @@ const SITE_LIMIT = 5; // sites per account (auth.js MAX_SITES says the same)
  */
 function new_site_form($into, prefill = "") {
 	const $name_row = $(E("label")).addClass("my-site-row").text(`${localize("Site name:")} `).appendTo($into);
-	const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", autocapitalize: "off", placeholder: "e.g. jack", name: "new-site-name" }).val(prefill).appendTo($name_row);
+	const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", autocapitalize: "off", placeholder: "e.g. yourname", name: "new-site-name" }).val(prefill).appendTo($name_row);
 	const $claim_row = $(E("label")).addClass("my-site-row").text(`${localize("Its password:")} `).hide().appendTo($into);
 	const $claim_password = $(E("input")).attr({ type: "password", autocomplete: "off", name: "claim-password" }).appendTo($claim_row);
 	return {
@@ -582,7 +595,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 			const $row = $(E("label")).addClass("my-site-row").text(`${label} `).appendTo($main);
 			return $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", ...attrs }).val(value).appendTo($row);
 		};
-		const $site = field(localize("Site name:"), prefill || settings.site, { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
+		const $site = field(localize("Site name:"), prefill || settings.site, { placeholder: "e.g. yourname", autocapitalize: "off", name: "site-name" });
 		const $secret = field(localize("Password:"), settings.secret, { type: "password", autocomplete: "current-password", name: "password" });
 		const $editor = field(localize("Editor URL:"), settings.editor_url, { placeholder: default_editor_url(), name: "editor-url" });
 		$status.appendTo($main);
@@ -601,9 +614,11 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 				$google.hide(); // no editor to ask: the password way still works
 			}
 		};
-		$button.on("click", (e) => {
+		$button.on("click", async (e) => {
 			e.preventDefault();
-			location.href = google_sign_in_url(typed_editor(), resume);
+			const at = typed_editor();
+			await before_leaving_for_google();
+			location.href = google_sign_in_url(at, resume);
 		});
 		let offer_timer = 0;
 		$editor.on("input change", () => {
@@ -621,7 +636,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 				return;
 			}
 			if (/^https?:|\//.test(site)) {
-				$status.text("The site name is just the name (like \"jack\"), not a URL.");
+				$status.text("The site name is just the name (like \"yourname\"), not a URL.");
 				$site.focus();
 				return;
 			}

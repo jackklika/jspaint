@@ -1,5 +1,5 @@
 // @ts-check
-// PageRoom: one Durable Object per page of a site ("jack/index.html"), the live draft everyone editing that page
+// PageRoom: one Durable Object per page of a site ("yourname/index.html"), the live draft everyone editing that page
 // shares. Editors connect over a WebSocket (editor Worker: GET /api/sites/:name/rooms/:page?token=…); the room
 // is the single writer: it applies each change to its copy of the document, stamps it with a version, stores
 // it (SQLite), and broadcasts it to everyone else. Joiners get a snapshot. Presence (cursors, who's editing what)

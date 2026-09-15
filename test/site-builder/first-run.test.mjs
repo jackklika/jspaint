@@ -100,7 +100,18 @@ const windows = (page) => page.evaluate(() => [...document.querySelectorAll(".wi
 	assert.deepEqual(await windows(copy).then((list) => list.filter((t) => /Save|Sign In/.test(t))), []);
 	await close_copy();
 
-	for (const path of ["index.html", "collages/index.png"]) { await fetch(`${editor}/api/sites/root/files/${path}`, { method: "DELETE", headers }); }
+	// The root site's welcome.html, when it has one, is the starter page for newcomers (the owner draws it at /welcome)
+	{
+		const body = await (await fetch(`${editor}/api/sites/${site}/files/index.html`)).blob();
+		assert.equal((await fetch(`${editor}/api/sites/root/files/welcome.html`, { method: "PUT", headers: { ...headers, "Content-Type": body.type }, body })).status, 200);
+		const { page: newcomer, close: close_newcomer } = await open_paint({ url: `${editor}/` });
+		await newcomer.waitForFunction(() => system_file_handle && system_file_handle.fresh === true && (current_history_node.blocks || []).length > 0, null, { timeout: 20000 });
+		assert.deepEqual(await handle(newcomer), { site_page: "index.html", fresh: true }, "a fresh page of their own");
+		assert.deepEqual(await blocks(newcomer), ["x-counter"], "…with the welcome page's content, not the built-in start");
+		await newcomer.waitForSelector(".welcome-window", { timeout: 10000 });
+		await close_newcomer();
+	}
+	for (const path of ["index.html", "collages/index.png", "welcome.html"]) { await fetch(`${editor}/api/sites/root/files/${path}`, { method: "DELETE", headers }); }
 }
 
 // Clean up

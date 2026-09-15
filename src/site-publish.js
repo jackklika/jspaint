@@ -231,7 +231,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 		const $input = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", ...attrs }).val(settings[key]).appendTo($label);
 		return $input;
 	};
-	const $site = field(localize("Site name (~name): "), "site", { placeholder: "e.g. jack", autocapitalize: "off", name: "site-name" });
+	const $site = field(localize("Site name (~name): "), "site", { placeholder: "e.g. yourname", autocapitalize: "off", name: "site-name" });
 	const $page = field(localize("Page file: "), "page", { placeholder: "index.html", name: "page-file" });
 	const $secret = field(localize("Password: "), "secret", { type: "password", autocomplete: "current-password", name: "password" });
 	const $remember_row = $(E("div")).addClass("site-publish-row").appendTo($main);
@@ -272,7 +272,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			return;
 		}
 		if (/^https?:|\//.test(current.site)) {
-			log("The site name is just the name (like \"jack\"), not a URL.");
+			log("The site name is just the name (like \"yourname\"), not a URL.");
 			$site.focus();
 			return;
 		}

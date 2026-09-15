@@ -1,5 +1,5 @@
 // @ts-check
-// Validation shared by both Workers: site names (~jack), file paths inside a site, and content types.
+// Validation shared by both Workers: site names (~yourname), file paths inside a site, and content types.
 
 /** A site name is a tilde name: lowercase letters, digits, hyphens; 1–32 chars; no leading/trailing hyphen. */
 const SITE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;

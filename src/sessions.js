@@ -117,6 +117,8 @@ class LocalSession {
 		const ls_key = `image#${session_id}`;
 		log(`Local storage key: ${ls_key}`);
 		// save image to storage
+		/** The last backup write, to await before leaving the page (flush_session_backup). @type {Promise<void>} */
+		this.last_backup = Promise.resolve();
 		this.save_image_to_storage_immediately = () => {
 			const save_paused = handle_data_loss();
 			if (save_paused) {
@@ -125,7 +127,7 @@ class LocalSession {
 			log(`Saving image to storage: ${ls_key}`);
 			// The picture goes to IndexedDB as a PNG blob (layer-storage.js): localStorage's ~5 MB filled up with a few
 			// big pages. Without IndexedDB, localStorage as before.
-			const to_local_storage = () => {
+			const to_local_storage = () => new Promise((resolve) => {
 				localStore.set(ls_key, main_canvas.toDataURL("image/png"), (err) => {
 					if (err) {
 						// @ts-ignore (quotaExceeded is added by storage.js)
@@ -137,21 +139,29 @@ class LocalSession {
 							// @TODO: show warning with "Don't tell me again" type option
 						}
 					}
+					resolve(undefined);
 				});
-			};
-			main_canvas.toBlob((blob) => {
-				if (!blob) { to_local_storage(); return; }
-				put_backup_image(session_id, blob).then(() => {
-					try { localStorage.removeItem(ls_key); } catch (_error) { /* ignore */ } // (an older backup here is superseded — and was taking the room)
-				}, () => { to_local_storage(); });
-			}, "image/png");
-			// Stickers and text layers ride along in a sidecar entry (layer-storage.js).
-			save_layers_sidecar(session_id, (err) => {
-				// @ts-ignore (quotaExceeded is added by storage.js)
-				if (err && err.quotaExceeded) {
-					storage_quota_exceeded();
-				}
 			});
+			const image_done = new Promise((resolve) => {
+				main_canvas.toBlob((blob) => {
+					if (!blob) { to_local_storage().then(resolve); return; }
+					put_backup_image(session_id, blob).then(() => {
+						try { localStorage.removeItem(ls_key); } catch (_error) { /* ignore */ } // (an older backup here is superseded — and was taking the room)
+						resolve(undefined);
+					}, () => { to_local_storage().then(resolve); });
+				}, "image/png");
+			});
+			// Stickers and text layers ride along in a sidecar entry (layer-storage.js).
+			const layers_done = new Promise((resolve) => {
+				save_layers_sidecar(session_id, (err) => {
+					// @ts-ignore (quotaExceeded is added by storage.js)
+					if (err && err.quotaExceeded) {
+						storage_quota_exceeded();
+					}
+					resolve(undefined);
+				});
+			});
+			this.last_backup = Promise.all([image_done, layers_done]).then(() => {});
 		};
 		this.save_image_to_storage_soon = debounce(this.save_image_to_storage_immediately, 100);
 		// While the picture and its layers come back, the canvas area shows "Loading…" rather than a blank page
@@ -1096,7 +1106,19 @@ if (is_discord_embed) {
 // 	console.log("Updated participants:", participants);
 // }
 
-export { new_local_session };
+/**
+ * Writes the current local session's backup now and resolves once it's stored — before the page is left for Google
+ * (my-site.js): the drawing must be in IndexedDB when the browser comes back to this session. Nothing to do for other
+ * kinds of session; never waits more than a few seconds.
+ */
+function flush_session_backup() {
+	if (!(current_session instanceof LocalSession)) { return Promise.resolve(); }
+	current_session.save_image_to_storage_soon.cancel();
+	current_session.save_image_to_storage_immediately();
+	return Promise.race([current_session.last_backup, new Promise((resolve) => { setTimeout(resolve, 3000); })]).then(() => {});
+}
+
+export { flush_session_backup, new_local_session };
 // Temporary globals until all dependent code is converted to ES Modules
 window.new_local_session = new_local_session; // used by functions.js
 

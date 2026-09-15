@@ -2,7 +2,8 @@
 // jspaint-sites: serves user sites from the `sites/<name>/<path>` keys of the R2 bucket — /~name/<path> for a site,
 // and the "root" site at the domain root itself (coolpaint.world/<path> → sites/root/<path>). Pages (.html) are
 // sanitized again and have their <x-*> elements rendered server-side; everything else streams through with a
-// fixed content type. Strict CSP on every response: pages can't run scripts.
+// fixed content type. Strict CSP on every response: pages can't run scripts. /about serves about.html (clean
+// addresses); a folder's bare address redirects to its slash; a site's 404.html, when it has one, is its not-found page.
 // POST /~name/x/<element> (or /x/<element> for root) runs an <x-*> element's action (the guestbook form), also here.
 // POST /~name/x/preview {page, tag, attrs, page_html?} renders one <x-*> element as the page would show it right now
 // (the editor puts that on the canvas: the real count, the folder's pages) — a look, not a visit; CORS open.
@@ -375,20 +376,22 @@ export default {
 			const stats = await env.SITE_STATE.getByName(site).viewers();
 			return new Response(JSON.stringify({ site, ...stats }), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" } });
 		}
+		// Clean addresses: /about is about.html, and /blog (a folder) is blog/ — the address with the slash
+		const clean = !/\.[A-Za-z0-9]+$/.test(path) && valid_path(`${path}.html`) ? path : "";
+		if (clean) { path = `${clean}.html`; }
 		if (!valid_path(path) || path.startsWith("versions/")) {
 			return not_found(); // (versions/: earlier saves, only reachable through the editor)
 		}
-		const object = await env.SITES.get(`sites/${site}/${path}`);
-		if (!object) {
-			if (site === ROOT_SITE && path === "index.html") { return landing_page(env.EDITOR_URL); }
-			return not_found(`There's no <b>${site_base(site)}/${path}</b> here.`);
-		}
-		if (is_html_path(path)) {
+		/**
+		 * A page, rendered: sanitized again, its <x-*> elements filled in, the site's stylesheet linked, the view counted.
+		 * @param {R2ObjectBody} object @param {string} page - the page's path (what the counter counts, what relative addresses are from) @param {number} [status]
+		 */
+		const serve_page = async (object, page, status = 200) => {
 			const files = site_files(env.SITES, site);
 			const sanitized = await sanitize_html(await object.text());
 			let rendered = await render_x_elements(sanitized, {
 				site,
-				page: path,
+				page,
 				page_uploaded: object.uploaded,
 				state: env.SITE_STATE.getByName(site),
 				request,
@@ -396,12 +399,26 @@ export default {
 				page_html: sanitized,
 			});
 			if (await files.has("site.css")) { rendered = await with_stylesheet(rendered, `${site_base(site)}/site.css`); }
-			if (request.method === "GET") {
+			if (request.method === "GET" && status === 200) {
 				// A page load is a view (the visitor by a hash of their address; the count is all that's kept for long)
 				const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-				ctx.waitUntil(sha256_hex(`view|${ip}`).then((ip_hash) => env.SITE_STATE.getByName(site).record_view(ip_hash, path)).catch(() => { /* a miss is fine */ }));
+				ctx.waitUntil(sha256_hex(`view|${ip}`).then((ip_hash) => env.SITE_STATE.getByName(site).record_view(ip_hash, page)).catch(() => { /* a miss is fine */ }));
 			}
-			return html_response(rendered);
+			return html_response(rendered, status);
+		};
+		const object = await env.SITES.get(`sites/${site}/${path}`);
+		if (!object && clean && await env.SITES.head(`sites/${site}/${clean}/index.html`)) {
+			return path_redirect(`${url.pathname}/${url.search}`); // (relative addresses inside the folder's index then resolve right)
+		}
+		if (!object) {
+			if (site === ROOT_SITE && path === "index.html") { return landing_page(env.EDITOR_URL); }
+			// The site's own 404 page, when it has one (404.html, made in Paint like any page), else ours
+			const custom = await env.SITES.get(`sites/${site}/404.html`);
+			if (custom) { return serve_page(custom, "404.html", 404); }
+			return not_found(`There's no <b>${site_base(site)}/${path}</b> here.`);
+		}
+		if (is_html_path(path)) {
+			return serve_page(object, path);
 		}
 		const headers = new Headers(PAGE_HEADERS);
 		headers.set("Content-Type", content_type_for(path));
