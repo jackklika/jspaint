@@ -11,7 +11,7 @@
 // URLs, and how to make a URL from an id.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { track_app_event as track_event } from "./app-analytics.js";
-import { authorized, current_site, get_site_editor_url, has_account } from "./site-publish.js";
+import { authorized, current_site, get_site_editor_url, has_account, load_settings } from "./site-publish.js";
 import { show_error_message } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { is_editing_container } from "./blocks.js";
@@ -45,9 +45,12 @@ const STARTER_QUERIES = ["under construction", "welcome", "sparkle", "dancing", 
 function record_gif_use(url) {
 	const match = /\/api\/gifcities\/gif\/([A-Z0-9]{20,40})/.exec(url);
 	if (!match) { return; }
+	// (as the signed-in account, or with the site's password: a stranger's click doesn't count — index.js)
+	const { secret } = load_settings();
 	fetch(`${proxy_base()}/api/gifs/used`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		credentials: "include",
+		headers: { "Content-Type": "application/json", ...(secret ? { Authorization: `Bearer ${secret}` } : {}) },
 		body: JSON.stringify({ gif: match[1], site: current_site() || "" }),
 		keepalive: true,
 	}).catch(() => { /* ignore */ });

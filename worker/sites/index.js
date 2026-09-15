@@ -18,6 +18,7 @@ import { find_sections, text_of } from "../shared/sections.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { render_x_element, render_x_elements, x_elements } from "../shared/x-elements/index.js";
 import { odometer } from "../shared/x-elements/counter.js";
+import { ShortCache, client_ip, limited, report_limited, too_many } from "../shared/limits.js";
 
 const PAGE_HEADERS = {
 	"Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -40,6 +41,10 @@ async function sha256_hex(text) {
 }
 const GUESTBOOK_MAX_ENTRIES = 2000; // per site
 const PAGE_CACHE_S = 60 * 60; // a rendered page's life in the cache if no change ever bumps the generation (a missed ping)
+const VIEW_FLUSH_MS = 15 * 1000; // views and counter hits are tallied in memory and written this often
+const CRAWLER_UA = /bot|crawl|spider|slurp|facebookexternalhit|linkpreview|headless/i; // a page load by one of these isn't a visit
+/** A site's viewer stats, kept 5 s: the editor's globe asks, and each fresh answer counts every view row of the day. @type {ShortCache<any>} */
+const stats_cache = new ShortCache(5_000);
 
 /** Per-site state for <x-*> elements: visitor counters and guestbook entries. */
 export class SiteState extends DurableObject {
@@ -55,6 +60,34 @@ export class SiteState extends DurableObject {
 		});
 		/** @type {number | undefined} */
 		this.generation_cache = undefined;
+		/** @type {Map<string, number>} `ip_hash|page` → when: views not yet written (one per visitor per page per flush) */
+		this.pending_views = new Map();
+		/** @type {Map<string, number>} page → counter hits not yet written */
+		this.pending_hits = new Map();
+		this.flush_at = 0;
+	}
+	/** Views and hits are written together, VIEW_FLUSH_MS after the first one pending (an alarm), not per page load. */
+	async schedule_flush() {
+		if (this.flush_at) { return; }
+		this.flush_at = Date.now() + VIEW_FLUSH_MS;
+		await this.ctx.storage.setAlarm(this.flush_at);
+	}
+	flush() {
+		const sql = this.ctx.storage.sql;
+		for (const [key, at] of this.pending_views) {
+			const [ip_hash, page] = [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)];
+			sql.exec("INSERT INTO views (ip_hash, page, at) VALUES (?, ?, ?)", ip_hash, page, at);
+		}
+		for (const [page, hits] of this.pending_hits) {
+			sql.exec("INSERT INTO counters (page, hits) VALUES (?, ?) ON CONFLICT(page) DO UPDATE SET hits = hits + excluded.hits", page, hits);
+		}
+		if (this.pending_views.size && Math.random() < 0.05) { sql.exec("DELETE FROM views WHERE at < ?", Date.now() - VIEWS_KEPT_MS); }
+		this.pending_views.clear();
+		this.pending_hits.clear();
+		this.flush_at = 0;
+	}
+	alarm() {
+		this.flush();
 	}
 	/**
 	 * The site's generation: the key its served pages are cached under. Bumped by every publish and delete (the editor
@@ -80,8 +113,8 @@ export class SiteState extends DurableObject {
 	 * @param {string} ip_hash - "" for a look that isn't a visit (HEAD, a 404)
 	 * @param {string} page
 	 */
-	view(ip_hash, page) {
-		if (ip_hash) { this.record_view(ip_hash, page); }
+	async view(ip_hash, page) {
+		if (ip_hash) { await this.record_view(ip_hash, page); }
 		return { generation: this.generation(), hits: this.get_hits(page) };
 	}
 	/**
@@ -89,17 +122,24 @@ export class SiteState extends DurableObject {
 	 * only signal there is: "viewing now" means "loaded a page in the last few minutes". Kept for a day.
 	 * @param {string} ip_hash @param {string} page
 	 */
-	record_view(ip_hash, page) {
-		const now = Date.now();
-		this.ctx.storage.sql.exec("INSERT INTO views (ip_hash, page, at) VALUES (?, ?, ?)", ip_hash, page, now);
-		if (Math.random() < 0.05) { this.ctx.storage.sql.exec("DELETE FROM views WHERE at < ?", now - VIEWS_KEPT_MS); }
+	async record_view(ip_hash, page) {
+		const key = `${ip_hash}|${page}`;
+		if (!this.pending_views.has(key)) { this.pending_views.set(key, Date.now()); } // (a reload loop is one row per flush)
+		await this.schedule_flush();
 	}
-	/** @returns {{ viewing: number, today: number, views_today: number }} distinct visitors in the last VIEWING_WINDOW_MS / day, and page loads today */
+	/** @returns {{ viewing: number, today: number, views_today: number }} distinct visitors in the last VIEWING_WINDOW_MS / day, and page loads today (the unwritten ones included) */
 	viewers() {
 		const now = Date.now();
-		const recent = this.ctx.storage.sql.exec("SELECT COUNT(DISTINCT ip_hash) AS n FROM views WHERE at > ?", now - VIEWING_WINDOW_MS).one();
-		const today = this.ctx.storage.sql.exec("SELECT COUNT(DISTINCT ip_hash) AS n, COUNT(*) AS loads FROM views WHERE at > ?", now - VIEWS_KEPT_MS).one();
-		return { viewing: Number(recent.n), today: Number(today.n), views_today: Number(today.loads) };
+		const since = (/** @type {number} */ ms) => new Set(this.ctx.storage.sql.exec("SELECT DISTINCT ip_hash FROM views WHERE at > ?", now - ms).toArray().map((row) => String(row.ip_hash)));
+		const recent = since(VIEWING_WINDOW_MS);
+		const today = since(VIEWS_KEPT_MS);
+		const loads = Number(this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM views WHERE at > ?", now - VIEWS_KEPT_MS).one().n) + this.pending_views.size;
+		for (const key of this.pending_views.keys()) {
+			const ip_hash = key.slice(0, key.indexOf("|"));
+			recent.add(ip_hash);
+			today.add(ip_hash);
+		}
+		return { viewing: recent.size, today: today.size, views_today: loads };
 	}
 	/**
 	 * Newest first.
@@ -129,14 +169,15 @@ export class SiteState extends DurableObject {
 	 * @param {string} page
 	 * @returns {number}
 	 */
-	hit(page) {
-		this.ctx.storage.sql.exec("INSERT INTO counters (page, hits) VALUES (?, 1) ON CONFLICT(page) DO UPDATE SET hits = hits + 1", page);
-		return this.ctx.storage.sql.exec("SELECT hits FROM counters WHERE page = ?", page).one().hits;
+	async hit(page) {
+		this.pending_hits.set(page, (this.pending_hits.get(page) || 0) + 1);
+		await this.schedule_flush();
+		return this.get_hits(page);
 	}
-	/** @param {string} page */
+	/** @param {string} page @returns {number} the page's hits, the unwritten ones included */
 	get_hits(page) {
 		const row = this.ctx.storage.sql.exec("SELECT hits FROM counters WHERE page = ?", page).toArray()[0];
-		return row ? row.hits : 0;
+		return (row ? Number(row.hits) : 0) + (this.pending_hits.get(page) || 0);
 	}
 }
 
@@ -208,8 +249,11 @@ async function handle_action(request, url, env) {
  * @param {string} site
  */
 async function handle_preview(request, env, site) {
-	const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" };
+	// From the editor (or this host), not from any page on the web: rendering costs, and folder previews list the bucket
+	const origin = request.headers.get("Origin") || "";
+	const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": origin || "*" };
 	const reply = (/** @type {any} */ data, status = 200) => new Response(JSON.stringify(data), { status, headers });
+	if (origin && !preview_origin_allowed(origin, new URL(request.url), env)) { return reply({ error: "Previews are for the editor" }, 403); }
 	let body;
 	try {
 		body = JSON.parse((await request.text()).slice(0, 600 * 1024));
@@ -232,6 +276,18 @@ async function handle_preview(request, env, site) {
 		preview: true,
 	});
 	return reply({ html });
+}
+
+/**
+ * Whose previews we render: the editor's, this host's own, and — when the editor is a localhost one (dev, tests) —
+ * any localhost port's. A request without an Origin (not a browser) is allowed; it can't be a page's script.
+ * @param {string} origin @param {URL} url @param {{ EDITOR_URL?: string, SITES_URL?: string }} env
+ */
+function preview_origin_allowed(origin, url, env) {
+	const editor = env.EDITOR_URL ? new URL(env.EDITOR_URL).origin : "";
+	const sites = env.SITES_URL ? new URL(env.SITES_URL).origin : "";
+	if (origin === url.origin || origin === editor || origin === sites) { return true; }
+	return /^http:\/\/localhost(:\d+)?$/.test(editor) && /^http:\/\/localhost(:\d+)?$/.test(origin);
 }
 
 /** A same-origin redirect. Relative Location on purpose: Response.redirect() rejects relative URLs, and under `wrangler dev` the request's origin is the configured custom domain. @param {string} location @param {number} [status] */
@@ -396,13 +452,17 @@ export default {
 		if (published && request.method === "POST") {
 			const site = published[1] ?? ROOT_SITE;
 			if (!valid_site_name(site)) { return not_found(); }
+			// (anyone may ping — this Worker keeps no secrets — but a site's pages are remade at most a few times per 10 s)
+			if (await limited(env.LIMIT_PUBLISHED, `published:${site}`)) { report_limited(env, ctx, { kind: "published", worker: "jspaint-sites" }); return too_many(10); }
 			await env.SITE_STATE.getByName(site).bump();
 			return new Response(null, { status: 204, headers: PAGE_HEADERS });
 		}
 		const preview = /^(?:\/~([^/]+))?\/x\/preview$/.exec(url.pathname);
 		if (preview && request.method === "POST") {
 			const site = preview[1] ?? ROOT_SITE;
-			return valid_site_name(site) ? handle_preview(request, env, site) : not_found();
+			if (!valid_site_name(site)) { return not_found(); }
+			if (await limited(env.LIMIT_IP_10S, `preview:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "preview", worker: "jspaint-sites" }); return too_many(10, { "Access-Control-Allow-Origin": request.headers.get("Origin") || "*" }); }
+			return handle_preview(request, env, site);
 		}
 		if (request.method === "POST") {
 			return handle_action(request, url, env);
@@ -437,9 +497,13 @@ export default {
 			return rss_feed(site_files(env.SITES, site), site, feed[1], url);
 		}
 		if (path === "x/stats.json") {
-			// Who's looking (the editor's globe shows it): public, cheap, never cached
+			// Who's looking (the editor's globe shows it): public; one fresh answer per site per 5 s, whoever asks
+			const stats_headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" };
+			const cached = stats_cache.get(site);
+			if (cached) { return new Response(cached, { headers: { ...stats_headers, "X-Cache": "hit" } }); }
+			if (await limited(env.LIMIT_IP_10S, `stats:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "stats", worker: "jspaint-sites" }); return too_many(10, { "Access-Control-Allow-Origin": "*" }); }
 			const stats = await env.SITE_STATE.getByName(site).viewers();
-			return new Response(JSON.stringify({ site, ...stats }), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" } });
+			return new Response(stats_cache.set(site, JSON.stringify({ site, ...stats })), { headers: { ...stats_headers, "X-Cache": "miss" } });
 		}
 		// Clean addresses: /about is about.html, and /blog (a folder) is blog/ — the address with the slash
 		const clean = !/\.[A-Za-z0-9]+$/.test(path) && valid_path(`${path}.html`) ? path : "";
@@ -457,7 +521,7 @@ export default {
 		 * @param {string} page @param {boolean} visit
 		 * @returns {Promise<{ generation: number, hits: number }>}
 		 */
-		const look = async (page, visit) => state.view(visit ? await sha256_hex(`view|${request.headers.get("CF-Connecting-IP") || "unknown"}`) : "", page);
+		const look = async (page, visit) => state.view(visit && !CRAWLER_UA.test(request.headers.get("User-Agent") || "") ? await sha256_hex(`view|${client_ip(request)}`) : "", page);
 		/**
 		 * The cached page, answered: the counter's slot gets the count (this visit included, and counted after the answer),
 		 * the visitor's headers go on, HEAD gets no body.

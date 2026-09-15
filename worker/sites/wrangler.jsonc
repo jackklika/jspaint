@@ -26,6 +26,12 @@
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["SiteState"] }
 	],
+	// Rate limits (worker/shared/limits.js, MALICIOUS_ACTOR_PLAN.md): per address for the public JSON routes, per site
+	// for the editor's "published" ping. Periods are 10 or 60 seconds; namespace ids are just unique numbers.
+	"ratelimits": [
+		{ "name": "LIMIT_IP_10S", "namespace_id": "2001", "simple": { "limit": 60, "period": 10 } },
+		{ "name": "LIMIT_PUBLISHED", "namespace_id": "2002", "simple": { "limit": 30, "period": 10 } }
+	],
 	"vars": {
 		"EDITOR_URL": "https://edit.coolpaint.world",
 		"SITES_URL": "https://coolpaint.world"

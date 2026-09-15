@@ -29,6 +29,7 @@
 // says which. Reads of site files are public. Open sign-up / Google OAuth come later (docs/PLAN.md phase 5).
 import { inject_analytics } from "../shared/analytics.js";
 import { capture_exception } from "../shared/exceptions.js";
+import { ShortCache, client_ip, limited, report_limited, too_many } from "../shared/limits.js";
 import { ROOT_SITE, content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
 import { accounts_of, editor_origin, handle_auth, session_of, with_refreshed_claims } from "./auth.js";
 import { sanitize_html } from "../shared/sanitize.js";
@@ -149,14 +150,18 @@ async function role_of(request, env, site = "") {
 	const secret = env.SITE_EDIT_SECRET;
 	if (!secret) { return null; }
 	const token = bearer_of(request);
+	// An address that keeps offering wrong keys or passwords is refused for a minute without a look at anything
+	const ip = token ? client_ip(request) : "";
+	if (token && (auth_blocked.get(ip) || 0) > Date.now()) { return null; }
 	if (token && same_string(token, secret)) { return "master"; }
-	if (!site || !valid_site_name(site)) { return null; }
+	if (!site || !valid_site_name(site)) { return token ? await bad_token(env, ip) : null; }
 	if (token) {
 		const given = await password_hash(secret, site, token);
 		let stored = await site_hash(env, site);
 		if (stored && same_string(given, stored)) { return "site"; }
 		stored = await site_hash(env, site, { fresh: true });
 		if (stored && same_string(given, stored)) { return "site"; }
+		await bad_token(env, ip);
 	}
 	// No (good) bearer: a signed-in account (auth.js cookies) that owns the site edits it like the site's password does.
 	// The claims cookie names the sites; a site claimed since it was signed is asked about (Accounts knows).
@@ -165,6 +170,26 @@ async function role_of(request, env, site = "") {
 	if (session.sites && session.sites.includes(site)) { return "site"; }
 	return (await accounts_of(env).owner_of(site)) === session.id ? "site" : null;
 }
+
+/** @type {Map<string, number>} addresses refused until (ms), after too many bad tokens — this isolate's memory, beside the binding's count */
+const auth_blocked = new Map();
+
+/**
+ * A wrong key or password: counted per address (LIMIT_AUTH); over the limit, the address is refused for a minute.
+ * Always null (the role a bad token gets), so callers can `return await bad_token(...)`.
+ * @param {any} env @param {string} ip
+ */
+async function bad_token(env, ip) {
+	if (await limited(env.LIMIT_AUTH, `auth:${ip}`)) {
+		auth_blocked.set(ip, Date.now() + 60_000);
+		if (auth_blocked.size > 10_000) { auth_blocked.clear(); }
+		report_limited(env, null, { kind: "auth", worker: "jspaint-editor" });
+	}
+	return null;
+}
+
+/** A site's "who's editing" answer, kept 10 s: the globe of every open editor asks, and a flood would fan out to every page room. @type {ShortCache<any>} */
+const presence_cache = new ShortCache(10_000);
 
 // --- share keys: a guest's pass to one page ---
 // key = "<expiry day>.<hmac>" where hmac = HMAC-SHA256(SITE_EDIT_SECRET, "site|page|day") truncated to 12 bytes,
@@ -694,11 +719,13 @@ const editor = {
 					return json({ site: name, page, ...(await make_invite(env.SITE_EDIT_SECRET, name, page, Number(body.days) || 30)) });
 				}
 				if (request.headers.get("Upgrade") !== "websocket") { return json({ error: "The room is a WebSocket endpoint" }, 426); }
+				if (await limited(env.LIMIT_CONNECT, `connect:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "connect", worker: "jspaint-editor" }); return too_many(60, CORS_HEADERS); }
 				const owner = await role_of(request, env, name);
 				if (!owner && !await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, page)) { return json({ error: "Unauthorized: add ?token=<password> or ?invite=<share key>" }, 401); }
 				return env.PAGE_ROOM.getByName(`${name}/${page}`).fetch(request);
 			}
 			if (url.pathname === "/api/gifcities/search") {
+				if (await limited(env.LIMIT_IP_10S, `gif-search:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "gif-search", worker: "jspaint-editor" }); return too_many(10, CORS_HEADERS); }
 				const page_size = Math.min(100, Math.max(1, Number(url.searchParams.get("page_size")) || 40));
 				const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
 				const data = await gifcities_search((url.searchParams.get("q") || "").trim().slice(0, 100), offset, page_size);
@@ -712,15 +739,20 @@ const editor = {
 			}
 			// GIF usage: which GifCities GIFs people use (GifStats Durable Object), for "top GIFs" per site and overall.
 			if (url.pathname === "/api/gifs/used" && request.method === "POST") {
+				// Someone signed in, or holding a site's password or the master key: a stranger's click counts for nothing
+				// (each one used to be a row written by anyone who cared to POST)
+				if (await limited(env.LIMIT_IP_60S, `gifs-used:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "gifs-used", worker: "jspaint-editor" }); return too_many(60, CORS_HEADERS); }
 				const body = await request.json().catch(() => ({}));
 				const gif = String(body.gif || "");
 				const site = String(body.site || "");
 				if (!/^[A-Z0-9]{20,40}$/.test(gif)) { return json({ error: "gif must be a GifCities id" }, 400); }
 				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
+				if (!(await role_of(request, env, site)) && !(await session_of(request, env))) { return json({ error: "Sign in first" }, 401); }
 				await env.GIF_STATS.getByName("global").record(gif, site);
 				return json({ ok: true });
 			}
 			if (url.pathname === "/api/gifs/top") {
+				if (await limited(env.LIMIT_IP_10S, `gifs-top:${client_ip(request)}`)) { return too_many(10, CORS_HEADERS); }
 				const site = url.searchParams.get("site") || "";
 				if (site && !valid_site_name(site)) { return json({ error: "Bad site name" }, 400); }
 				const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit")) || 50));
@@ -759,10 +791,15 @@ const editor = {
 				// Who's editing the site right now: the clients in its pages' live rooms (public: a count, nothing more)
 				const name = presence_match[1];
 				if (!valid_site_name(name)) { return json({ error: "Bad site name" }, 400); }
+				// One answer per site per 10 s, whoever asks (each fresh answer lists the bucket and wakes every page's room)
+				const cached = presence_cache.get(name);
+				if (cached) { return json(cached, 200, { "Cache-Control": "no-store", "X-Cache": "hit" }); }
+				if (await limited(env.LIMIT_IP_10S, `presence:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "presence", worker: "jspaint-editor" }); return too_many(10, CORS_HEADERS); }
 				const listing = await env.SITES.list({ prefix: `sites/${name}/`, limit: 200 });
-				const pages = listing.objects.map((object) => object.key.slice(`sites/${name}/`.length)).filter((path) => is_html_path(path) && !path.startsWith("versions/")).slice(0, 50);
+				const pages = listing.objects.map((object) => object.key.slice(`sites/${name}/`.length)).filter((path) => is_html_path(path) && !path.startsWith("versions/")).slice(0, 20);
 				const counts = await Promise.all(pages.map(async (page) => ({ page, editing: await /** @type {any} */ (env.PAGE_ROOM.getByName(`${name}/${page}`)).client_count() })));
-				return json({ site: name, editing: counts.reduce((sum, entry) => sum + entry.editing, 0), pages: counts.filter((entry) => entry.editing > 0) }, 200, { "Cache-Control": "no-store" });
+				const answer = presence_cache.set(name, { site: name, editing: counts.reduce((sum, entry) => sum + entry.editing, 0), pages: counts.filter((entry) => entry.editing > 0) });
+				return json(answer, 200, { "Cache-Control": "no-store", "X-Cache": "miss" });
 			}
 			const password_match = /^\/api\/sites\/([^/]+)\/password$/.exec(url.pathname);
 			if (password_match) {
