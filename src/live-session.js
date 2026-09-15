@@ -25,7 +25,7 @@ const ENABLED_KEY = "jspaint live sync";
 const NAME_KEY = "jspaint live name";
 const CLIENT_ID_KEY = "jspaint live client id";
 const SYNC_DELAY_MS = 60;
-const PRESENCE_INTERVAL_MS = 80;
+const PRESENCE_INTERVAL_MS = 100; // (every incoming message costs the room 1/20 of a request; nothing is sent when alone)
 const BAND_PIXELS = 90000; // rows per full-picture band = this / width (keeps each PNG message well under 1 MiB)
 const COLORS = ["#e6194b", "#3cb44b", "#0082c8", "#f58231", "#911eb4", "#46f0f0", "#f032e6", "#d2f53c", "#008080", "#aa6e28", "#800000", "#808000", "#000080"];
 const KINDS = /** @type {const} */ (["blocks", "stickers", "text_layers"]);
@@ -847,7 +847,9 @@ function restore_version(id) {
 
 /** @param {boolean} [now=false] */
 function send_presence(now = false) {
-	if (!connected) { return; }
+	// Alone in the room, there's nobody to show a cursor to: send nothing. When someone joins, the "join" handler
+	// calls send_presence(true) so they see us at once. (The room only relays presence; it never stores it.)
+	if (!connected || remote_clients.size === 0) { return; }
 	presence_dirty = true;
 	if (presence_timer && !now) { return; }
 	const flush = () => {
@@ -944,7 +946,7 @@ function clear_remote_clients() {
 
 const STROKE_TOOLS = new Set(["TOOL_PENCIL", "TOOL_BRUSH", "TOOL_AIRBRUSH", "TOOL_ERASER", "TOOL_LINE", "TOOL_RECTANGLE", "TOOL_ROUNDED_RECTANGLE", "TOOL_ELLIPSE", "TOOL_CURVE"]);
 const MULTI_STEP_TOOLS = new Set(["TOOL_CURVE"]); // stay previewed across clicks until the finished patch arrives
-const STROKE_SEND_INTERVAL_MS = 33;
+const STROKE_SEND_INTERVAL_MS = 100; // points are batched, so the remote line is identical; only the preview trails a little
 const STROKE_CLEAR_AFTER_END_MS = 2500; // in case the stroke changed nothing (no patch will come)
 
 /**
@@ -1131,6 +1133,9 @@ function apply_remote_stroke(message) {
  */
 function begin_local_stroke(e) {
 	if (!connected || !selected_tool || !STROKE_TOOLS.has(selected_tool.id) || (e.button !== 0 && e.button !== 2)) { return; }
+	// Decided once per stroke: alone, the stroke isn't relayed at all (someone joining mid-stroke sees the finished
+	// patch, which is what matters); with company, every phase goes out.
+	if (remote_clients.size === 0) { return; }
 	const start = to_canvas_coords(e);
 	const id = `${client_id()}-${Date.now().toString(36)}`;
 	const color = (/** @type {string | CanvasPattern} */ c) => typeof c === "string" ? c : "#000000";

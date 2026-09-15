@@ -50,6 +50,25 @@ await alice.waitForSelector(".block-layer", { timeout: 10000 });
 await alice.keyboard.press("Escape");
 await wait_live(alice, 0);
 assert.deepEqual((await live(alice)).room, { site, page: "about.html" });
+// Alone in the room, Alice's cursor and strokes go nowhere: nothing is relayed until someone else is there
+// (a tally of what her socket sends, by message type)
+const sent = (page) => page.evaluate(() => window.__sent || {});
+await alice.evaluate(() => {
+	window.__sent = {};
+	const send = WebSocket.prototype.send;
+	WebSocket.prototype.send = function (data) { try { const t = JSON.parse(String(data)).type; window.__sent[t] = (window.__sent[t] || 0) + 1; } catch (_e) { /* not JSON */ } return send.call(this, data); };
+});
+await select_tool(alice, "Pencil");
+const ac0 = await canvas_box(alice);
+await alice.mouse.move(ac0.x + 40, ac0.y + 400);
+await alice.mouse.down();
+await alice.mouse.move(ac0.x + 90, ac0.y + 420, { steps: 6 });
+await alice.mouse.up();
+await alice.mouse.move(ac0.x + 120, ac0.y + 440, { steps: 4 });
+await alice.waitForTimeout(400);
+assert.equal((await sent(alice)).presence || 0, 0, "no presence sent while alone");
+assert.equal((await sent(alice)).stroke || 0, 0, "no stroke pieces sent while alone");
+assert.ok(((await sent(alice)).bitmap || 0) >= 1, "the stroke itself still reached the room as a bitmap patch");
 // Save it so Bob can open it from My Site
 await alice.keyboard.press("Control+s");
 await alice.waitForFunction(() => /Done!/.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
@@ -75,6 +94,10 @@ await alice.waitForFunction(() => /\d+ editing/.test(document.querySelector(".si
 assert.match(await alice.$eval(".site-view-presence", (el) => el.textContent), /2 editing/);
 assert.equal(await (await fetch(`${editor}/api/sites/${site}/presence`)).json().then((p) => p.editing), 2);
 await alice.evaluate(() => { [...document.querySelectorAll(".site-view-window button")].find((b) => b.textContent === "Close")?.click(); });
+
+// With Bob here, Alice's cursor goes out (the join made her send presence at once)
+await alice.mouse.move(ac0.x + 150, ac0.y + 450, { steps: 3 });
+await alice.waitForFunction(() => (window.__sent?.presence || 0) >= 1, null, { timeout: 5000 });
 
 // Alice adds a text box (click-to-place) → Bob sees it
 await select_tool(alice, "Text Box");
