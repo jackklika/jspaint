@@ -5,9 +5,10 @@
 // Page properties (Page > Page Properties…): the <body>'s bgcolor, text color, and tiled wallpaper — what
 // shows around and behind the 800px page on the published site. Saved in the page file (collage-format.js);
 // not part of undo history, but they do mark the document unsaved.
+import { choose_color } from "./edit-colors.js";
 import { $DialogWindow } from "./$ToolWindow.js";
 import { update_title } from "./functions.js";
-import { $G, E } from "./helpers.js";
+import { $G, E, get_rgba_from_color } from "./helpers.js";
 import { get_site_files_base } from "./site-publish.js";
 
 /**
@@ -62,6 +63,12 @@ function apply_page_properties_preview() {
 	$canvas_area.toggleClass("page-background-preview", !!(bgcolor || image));
 }
 
+/** A CSS color as #rrggbb (Edit Colors answers in hsl(); the page file wants hex). @param {string} color */
+function to_hex(color) {
+	const [r, g, b] = get_rgba_from_color(color);
+	return `#${[r, g, b].map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("")}`;
+}
+
 function show_page_properties_dialog() {
 	const $w = $DialogWindow(localize("Page Properties"));
 	$w.addClass("page-properties-window squish");
@@ -70,8 +77,31 @@ function show_page_properties_dialog() {
 		const $row = $(E("label")).addClass("page-properties-row").text(`${label} `).appendTo($w.$main);
 		return $(E("input")).attr({ type: "text", spellcheck: "false", placeholder }).val(value).appendTo($row);
 	};
-	const $bgcolor = field(localize("Background color:"), page_properties.bgcolor, "#ffffd9 (empty for white)");
-	const $text = field(localize("Text color:"), page_properties.text_color, "#000000");
+	/**
+	 * A color field with a swatch beside it: the swatch shows the color and opens Paint's Edit Colors dialog (the same
+	 * one as Colors › Edit Colors…); a pick lands in the field as #rrggbb. Typing in the field recolors the swatch.
+	 * @param {string} label @param {string} value @param {string} placeholder @param {string} fallback - the color the swatch shows for an empty field
+	 */
+	const color_field = (label, value, placeholder, fallback) => {
+		const $input = field(label, value, placeholder);
+		const $swatch = $(E("button")).attr({ type: "button", title: localize("Pick a color…"), "aria-label": localize("Pick a color for %1", label.replace(/:$/, "")) }).addClass("page-properties-swatch").insertAfter($input);
+		const paint = () => {
+			const color = String($input.val()).trim() || fallback;
+			$swatch.css({ background: color }).toggleClass("empty", !String($input.val()).trim());
+		};
+		$input.on("input change", paint);
+		$swatch.on("click", () => {
+			choose_color(String($input.val()).trim() || fallback, (color) => {
+				$input.val(to_hex(color));
+				paint();
+				$input.trigger("focus");
+			});
+		});
+		paint();
+		return $input;
+	};
+	const $bgcolor = color_field(localize("Background color:"), page_properties.bgcolor, "#ffffd9 (empty for white)", "#ffffff");
+	const $text = color_field(localize("Text color:"), page_properties.text_color, "#000000", "#000000");
 	const $background = field(localize("Wallpaper (tiled image):"), page_properties.background, "gifs/stars.gif on your site, or a URL");
 	$(E("p")).addClass("page-properties-note").text(localize("The page itself is the picture; these show around it on the published page.")).appendTo($w.$main);
 	const $column_row = $(E("div")).addClass("page-properties-row").appendTo($w.$main);
@@ -112,6 +142,20 @@ $("<style>").text(`
 	.page-properties-row input {
 		flex: 1;
 		min-width: 0;
+	}
+	.page-properties-swatch {
+		flex: none;
+		width: 24px;
+		height: 22px;
+		min-width: 0;
+		padding: 0;
+		border: 1px solid;
+		border-color: var(--ButtonShadow, #808080) var(--ButtonHilight, #fff) var(--ButtonHilight, #fff) var(--ButtonShadow, #808080);
+		box-shadow: inset 0 0 0 1px var(--ButtonFace, #c0c0c0);
+		cursor: pointer;
+	}
+	.page-properties-swatch.empty {
+		background-image: linear-gradient(135deg, transparent 46%, #808080 46%, #808080 54%, transparent 54%);
 	}
 	.page-properties-note {
 		font-size: 11px;

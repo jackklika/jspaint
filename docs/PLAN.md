@@ -75,6 +75,8 @@ The first cut of phase 3 was a fake Win98 desktop (`desktop/`: Page Editor, GIFs
 
 ## Status log
 
+- 2026-09-14 — **Color swatches in Page Properties; Worker failures as PostHog `$exception`s** (Jack): `choose_color` exported from edit-colors.js; `page-properties.js` swatches → hex. `worker/shared/exceptions.js` `capture_exception` from the editor Worker's catch, `PageRoom.webSocketMessage` (now try/catch → `{type:"error"}` to the client), and a new top-level catch in the sites Worker (quota → "Back soon" 503). Sites Worker needs a `POSTHOG_API_KEY` secret to report. Tests: `page-properties.test.mjs`.
+
 - 2026-09-14 — **Select Elements** (Jack: a select tool for html elements like Paint's Select): `src/element-selection.js` — a select-box tool; the group of touched elements moves, nudges, deletes as one step; Shift adds; Ctrl+A; the group lasts while the tool does (`tool-changed` from `select_tools`). Page Style (Page Properties) added as the sixteenth page tool. Test: `element-select.test.mjs`; blocks.test counts 16 icons.
 
 - 2026-09-14 — **Production down: Durable Objects free-tier quota** (Jack: "I can't edit or save pages right now" — "Couldn't reach the editor", "viewers unknown"): every DO-backed request returned 500 `Exceeded allowed rows read in Durable Objects free tier.` Not a code fault as such, but the live room read rows per stroke it didn't need to (`patch_stats` recursive CTE per bitmap, `prune` scans every 10 versions): now counters on the doc and a scan every 50; Paint names the quota (503 → "over its daily limit"), the editor Worker turns the DO error into a 503 with that explanation. The real fix is Workers Paid ($5/mo) — Jack's call; documented in DEPLOY.md.

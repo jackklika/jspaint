@@ -669,5 +669,5 @@ function choose_color(initial_color, callback) {
 	$w.center();
 }
 
-export { show_edit_colors_window };
+export { choose_color, show_edit_colors_window };
 

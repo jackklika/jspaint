@@ -30,6 +30,7 @@
 //                   history {head, versions: [{id, parent, client_id, name, color, at, kind, label, ok}]}
 //                   state {id, doc, patches} (or {id, error}) · restored {version, client_id, name} (to everyone, the restorer too)
 import { DurableObject } from "cloudflare:workers";
+import { capture_exception } from "../shared/exceptions.js";
 
 const KINDS = new Set(["blocks", "stickers", "text_layers"]);
 const MAX_PATCHES = 60; // then ask a client for a fresh full picture
@@ -350,6 +351,22 @@ export class PageRoom extends DurableObject {
 	 * @param {string | ArrayBuffer} raw
 	 */
 	webSocketMessage(ws, raw) {
+		try {
+			this.handle_message(ws, raw);
+		} catch (error) {
+			// A failing message (the storage over its quota, a bug): the client hears why, and so does Error tracking
+			console.error(error);
+			const message = /** @type {any} */ (error)?.message || String(error);
+			const quota = /Durable Objects free tier/i.test(message);
+			capture_exception(/** @type {any} */ (this.env), null, error, { worker: "jspaint-editor", route: "PageRoom.webSocketMessage", ...(quota ? { code: "storage-quota" } : {}) });
+			this.send(ws, { type: "error", message: quota ? "The editor's storage is over its daily limit (Cloudflare's free tier). It resets at midnight UTC." : message });
+		}
+	}
+	/**
+	 * @param {WebSocket} ws
+	 * @param {string | ArrayBuffer} raw
+	 */
+	handle_message(ws, raw) {
 		if (typeof raw !== "string") { return; }
 		if (raw.length > MAX_MESSAGE_BYTES * 1.4) {
 			this.send(ws, { type: "error", message: "Message too large" });

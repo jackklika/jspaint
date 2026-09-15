@@ -9,6 +9,7 @@
 // (the editor puts that on the canvas: the real count, the folder's pages) — a look, not a visit; CORS open.
 import { DurableObject } from "cloudflare:workers";
 import { ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, valid_path, valid_site_name } from "../shared/names.js";
+import { capture_exception } from "../shared/exceptions.js";
 import { find_sections, text_of } from "../shared/sections.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { render_x_element, render_x_elements, x_elements } from "../shared/x-elements/index.js";
@@ -327,6 +328,26 @@ export default {
 	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL?: string }} env
 	 */
 	async fetch(request, env, ctx) {
+		try {
+			return await this.serve(request, env, ctx);
+		} catch (error) {
+			console.error(error);
+			const message = /** @type {any} */ (error)?.message || String(error);
+			const quota = /Durable Objects free tier/i.test(message);
+			// The server's own failures are $exception events too (PostHog Error tracking), when the sites Worker has a key
+			capture_exception(/** @type {any} */ (env), ctx, error, { worker: "jspaint-sites", route: new URL(request.url).pathname, method: request.method, status: quota ? 503 : 500, ...(quota ? { code: "storage-quota" } : {}) });
+			const body = quota ?
+				"<h1>Back soon</h1><p>This site's counters and guestbook are over their daily limit (Cloudflare's free tier); they come back at midnight UTC.</p>" :
+				"<h1>Something went wrong</h1>";
+			return html_response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${quota ? "Back soon" : "Error"}</title></head><body style="font-family:'Courier New',monospace;text-align:center;padding-top:80px">${body}</body></html>`, quota ? 503 : 500);
+		}
+	},
+	/**
+	 * @param {Request} request
+	 * @param {{ SITES: R2Bucket, SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string, SITES_URL?: string }} env
+	 * @param {ExecutionContext} ctx
+	 */
+	async serve(request, env, ctx) {
 		const url = new URL(request.url);
 		const legacy = legacy_host_redirect(url, env.SITES_URL);
 		if (legacy) { return legacy; }

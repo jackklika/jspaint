@@ -27,6 +27,7 @@
 // (random, minted by the master, stored only as a keyed hash in the Accounts Durable Object — accounts.js). role_of()
 // says which. Reads of site files are public. Open sign-up / Google OAuth come later (docs/PLAN.md phase 5).
 import { inject_analytics } from "../shared/analytics.js";
+import { capture_exception } from "../shared/exceptions.js";
 import { ROOT_SITE, content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
 import { accounts_of, editor_origin, handle_auth, session_of } from "./auth.js";
 import { sanitize_html } from "../shared/sanitize.js";
@@ -794,7 +795,10 @@ const editor = {
 		} catch (error) {
 			console.error(error);
 			const message = error.message || String(error);
-			if (/Durable Objects free tier/i.test(message)) {
+			const quota = /Durable Objects free tier/i.test(message);
+			// The server's own failures are $exception events too (PostHog Error tracking) — the browser never sees them as errors
+			capture_exception(env, ctx, error, { worker: "jspaint-editor", route: url.pathname, method: request.method, status: quota ? 503 : 500, ...(quota ? { code: "storage-quota" } : {}) });
+			if (quota) {
 				// The Workers Free plan meters Durable Object rows per day; over the line, nothing DO-backed works until
 				// midnight UTC (docs/DEPLOY.md). Say so — Paint shows this instead of "couldn't reach the editor".
 				return json({ error: "The editor's storage is over its daily limit (Cloudflare's free tier). It resets at midnight UTC.", code: "storage-quota", detail: message }, 503, { "Retry-After": "3600" });
