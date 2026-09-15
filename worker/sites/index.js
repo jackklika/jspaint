@@ -229,11 +229,20 @@ function html_response(body, status = 200) {
 }
 
 /** @param {string} message */
-function not_found(message = "Not Found") {
+/**
+ * The default 404: the web-1.0 server error page, as IIS answered in 2000 (Jack, 2026-09-15) — a white page in the
+ * browser's own serif, "HTTP Error 404", "404 Not Found", and two plain paragraphs. `message` (what's missing, as
+ * HTML) becomes a paragraph of its own. A site's 404.html, when it has one, replaces all this (serve).
+ * @param {string} [message]
+ */
+function not_found(message = "") {
 	return html_response(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>404</title></head>
-<body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding-top:80px">
-<h1>404</h1><p>${message}</p><p><marquee>~*~ this page is under construction ~*~</marquee></p>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Error 404</title></head>
+<body bgcolor="#ffffff" text="#000000" style="font-family:'Times New Roman',Times,serif;margin:8px">
+<h1>HTTP Error 404</h1>
+<h2>404 Not Found</h2>
+<p>The Web server cannot find the file or script you asked for. Please check the URL to ensure that the path is correct.</p>
+${message && message !== "Not Found" ? `<p>${message}</p>\n` : ""}<p>Please contact the server's administrator if this problem persists.</p>
 </body></html>`, 404);
 }
 

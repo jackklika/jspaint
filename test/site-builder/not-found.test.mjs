@@ -35,7 +35,10 @@ assert.match(await (await get("blog/")).text(), /posts/);
 // No page: the default 404
 response = await get("nope");
 assert.equal(response.status, 404);
-assert.match(await response.text(), /under construction/);
+const missing = await response.text();
+assert.match(missing, /<h1>HTTP Error 404<\/h1>\s*<h2>404 Not Found<\/h2>/, "the web-1.0 server error page");
+assert.match(missing, /The Web server cannot find the file or script you asked for/);
+assert.match(missing, /Please contact the server's administrator if this problem persists/);
 assert.equal((await get("nope.html")).status, 404);
 assert.equal((await get("gifs/nothing.gif")).status, 404, "a missing file with an extension is just missing");
 
