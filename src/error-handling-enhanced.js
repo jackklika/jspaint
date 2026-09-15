@@ -1,6 +1,7 @@
 // @ts-check
 /* global localize */
 
+import { track_app_error } from "./app-analytics.js";
 import { show_error_message } from "./functions.js";
 
 // import { localize } from "./app-localization.js";
@@ -35,6 +36,7 @@ window.onerror = function (message, source, lineno, colno, error) {
 		} else {
 			error_details = error;
 		}
+		track_app_error("uncaught", error_details);
 		show_error_message(localize("Internal application error."), error_details);
 	} catch (e) {
 		old_onerror(message, source, lineno, colno, error);
@@ -59,6 +61,7 @@ var new_onunhandledrejection = function (event) {
 	}, 0);
 
 	try {
+		track_app_error("rejection", event.reason);
 		show_error_message(localize("Internal application error.") + "\nUnhandled Rejection.", event.reason);
 	} catch (e) {
 		old_onunhandledrejection.call(window, event);

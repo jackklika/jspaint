@@ -45,12 +45,14 @@
 		// secret). Empty = the button doesn't show. Made in the Google Cloud console (project coolpaintworld):
 		// OAuth consent screen (external, scopes openid/email/profile), then a Web application client with the
 		// redirect URI https://edit.coolpaint.world/auth/google/callback. See docs/DEPLOY.md.
-		"GOOGLE_CLIENT_ID": "417076939978-dr3j0nbdubj42ool8prtqq5h8umhm9ra.apps.googleusercontent.com"
+		"GOOGLE_CLIENT_ID": "417076939978-dr3j0nbdubj42ool8prtqq5h8umhm9ra.apps.googleusercontent.com",
+		// The PostHog api_host: our managed reverse proxy (events + SDK assets route through it).
+		"POSTHOG_HOST": "https://sec.coolpaint.world"
 	}
 	// Secret (not in config): SITE_EDIT_SECRET (the master key) — `wrangler secret put SITE_EDIT_SECRET -c editor/wrangler.jsonc`.
 	// Site passwords are minted with it: `npm run site-password <site>` (writes editor/.passwords/<site>.txt, gitignored).
 	// Optional secret: POSTHOG_API_KEY (a PostHog client key, phc_…) — injects editor-app analytics
 	// (worker/shared/analytics.js; published pages on the sites Worker never carry trackers).
-	// POSTHOG_HOST likewise, for non-US clouds (e.g. https://eu.i.posthog.com).
+	// POSTHOG_UI_HOST (optional): the ui_host for a proxied EU project (https://eu.posthog.com).
 	// Locally: editor/.dev.vars with SITE_EDIT_SECRET=...
 }
