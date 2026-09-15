@@ -411,7 +411,7 @@ async function check_sign_in({ probe = false } = {}) {
 		if (learned) { $G.triggerHandler("site-settings-changed"); } // (x-preview.js: the elements can ask the site now)
 		site_created = typeof info.created === "number" ? info.created : null;
 		// An account (a Google sign-in, in the session cookie): remember who, and which sites are theirs
-		const account = info.user ? { email: String(info.user.email || ""), name: String(info.user.name || ""), via: "google", sites: Array.isArray(info.sites) ? info.sites : [] } : null;
+		const account = info.user ? { email: String(info.user.email || ""), name: String(info.user.name || ""), via: "google", sites: Array.isArray(info.sites) ? info.sites : [], admin: info.admin === true } : null;
 		let site = settings.site;
 		if (account && info.role === "user" && account.sites.length && !account.sites.includes(site)) { site = account.sites[0]; } // (one of yours, not whatever site was last typed)
 		// An account outranks a remembered site password (the master key stays: it's more than the account)
@@ -1154,6 +1154,12 @@ async function show_my_site_dialog({ tab = "site" } = {}) {
 		}
 		if (posts_folders.length) { fact(localize("Posts:"), posts_folders.map((folder) => `${folder}/ (RSS: ${folder}/feed.xml)`).join(", ")); }
 		fact(localize("Signed in:"), load_settings().account ? `${load_settings().account.email} (Google)` : role === "master" ? localize("with the master key") : localize("with this site's password"));
+		if (load_settings().account?.admin) {
+			// The admin's page: every site and account, with the levers (worker/editor/admin.js)
+			const $tr = $(E("tr")).appendTo($facts);
+			$(E("th")).text(localize("Admin:")).appendTo($tr);
+			$(E("a")).attr({ href: `${get_site_editor_url()}/admin`, target: "_blank", rel: "noopener" }).text(localize("Open the admin page")).appendTo($(E("td")).appendTo($tr));
+		}
 		$(E("p")).addClass("my-site-note").text(site === ROOT_SITE ? localize("The front page of the domain: its pages live at the root address, other sites at ~name.") : localize("Pages shows your pages as thumbnails; Files, everything on the site.")).appendTo($summary);
 	};
 

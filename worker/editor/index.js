@@ -22,6 +22,9 @@
 //   POST   /api/gifs/used {gif, site?}                 remember a GifCities GIF was used (GifStats DO); GET /api/gifs/top?site=&limit= lists the most used
 //   GET    /?join=<site>/<page>/<key>                a share link: Paint with link-preview tags for that page (share_landing)
 //   GET    /~name[/page]  and  /page (root site)     → 302 /?site=name[&page=…]: Paint opens that page (site_entry_redirect; ".html" optional)
+//   POST   /api/sites/:name/rooms/:page/invite/revoke  every share key for that page stops working (owner)
+//   POST   /api/reports {site, page, reason, ip_hash}  a visitor's report (the sites Worker forwards its form; three a day per visitor)
+//   GET    /admin  and  /api/admin/*                 the admin's page and its levers (admin.js; ADMIN_EMAILS, or the master key)
 //
 // Auth: `Authorization: Bearer <token>` on whoami, listing, writes, invites, and rooms (?token= on the WebSocket).
 // The token is either the master key (SITE_EDIT_SECRET: every site, plus minting passwords) or one site's password
@@ -31,7 +34,9 @@ import { inject_analytics } from "../shared/analytics.js";
 import { capture_exception } from "../shared/exceptions.js";
 import { ShortCache, client_ip, limited, report_limited, too_many } from "../shared/limits.js";
 import { ROOT_SITE, content_type_for, is_html_path, site_base, sniff_type, valid_path, valid_site_name } from "../shared/names.js";
-import { accounts_of, editor_origin, handle_auth, session_of, with_refreshed_claims } from "./auth.js";
+import { accounts_of, capture_event, editor_origin, handle_auth, session_of, with_refreshed_claims } from "./auth.js";
+import { handle_admin } from "./admin.js";
+import { notify_published, page_hidden, read_moderation } from "./moderation.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { x_elements } from "../shared/x-elements/index.js";
 export { Accounts } from "./accounts.js";
@@ -161,7 +166,11 @@ async function role_of(request, env, site = "") {
 	const ip = token ? client_ip(request) : "";
 	if (token && (auth_blocked.get(ip) || 0) > Date.now()) { return null; }
 	if (token && same_string(token, secret)) { return "master"; }
-	if (!site || !valid_site_name(site)) { return token ? await bad_token(env, ip) : null; }
+	if (!site || !valid_site_name(site)) {
+		if (token) { return bad_token(env, ip); }
+		const session = await session_of(request, env);
+		return session?.admin ? "master" : null; // (an admin's session is the master key — auth.js is_admin)
+	}
 	if (token) {
 		const given = await password_hash(secret, site, token);
 		let stored = await site_hash(env, site);
@@ -174,6 +183,7 @@ async function role_of(request, env, site = "") {
 	// The claims cookie names the sites; a site claimed since it was signed is asked about (Accounts knows).
 	const session = await session_of(request, env);
 	if (!session) { return null; }
+	if (session.admin) { return "master"; }
 	if (session.sites && session.sites.includes(site)) { return "site"; }
 	return (await accounts_of(env).owner_of(site)) === session.id ? "site" : null;
 }
@@ -214,8 +224,8 @@ function base64url(bytes) {
  * @param {string} page
  * @param {number} expiry_day - days since the epoch
  */
-async function invite_signature(secret, site, page, expiry_day) {
-	const mac = await hmac(secret, `${site}|${page}|${expiry_day}`);
+async function invite_signature(secret, site, page, expiry_day, nonce = "") {
+	const mac = await hmac(secret, `${site}|${page}|${expiry_day}${nonce ? `|${nonce}` : ""}`);
 	return base64url(mac.slice(0, 12));
 }
 
@@ -224,10 +234,20 @@ async function invite_signature(secret, site, page, expiry_day) {
  * @param {string} site
  * @param {string} page
  * @param {number} days - how long the key lasts
+ * @param {string} [nonce] - the page's room's (page-room.js nonce): revoking changes it, and every earlier key dies
  */
-async function make_invite(secret, site, page, days) {
+async function make_invite(secret, site, page, days, nonce = "") {
 	const expiry_day = Math.floor(Date.now() / 86400000) + Math.max(1, Math.min(3650, Math.round(days)));
-	return { key: `${expiry_day}.${await invite_signature(secret, site, page, expiry_day)}`, expires: new Date(expiry_day * 86400000).toISOString() };
+	return { key: `${expiry_day}.${await invite_signature(secret, site, page, expiry_day, nonce)}`, expires: new Date(expiry_day * 86400000).toISOString() };
+}
+
+/** Rooms' invite nonces, a minute per isolate (a guest's every request would otherwise wake the room). @type {ShortCache<string>} */
+const nonce_cache = new ShortCache(60_000, 5000);
+/** @param {{ PAGE_ROOM: DurableObjectNamespace }} env @param {string} site @param {string} page */
+async function room_nonce(env, site, page) {
+	const cached = nonce_cache.get(`${site}/${page}`);
+	if (cached !== undefined) { return cached; }
+	return nonce_cache.set(`${site}/${page}`, String(await /** @type {any} */ (env.PAGE_ROOM.getByName(`${site}/${page}`)).nonce()));
 }
 
 /**
@@ -235,14 +255,15 @@ async function make_invite(secret, site, page, days) {
  * @param {string | undefined} secret
  * @param {string} site
  * @param {string} page
+ * @param {string} [nonce]
  */
-async function invite_valid(key, secret, site, page) {
+async function invite_valid(key, secret, site, page, nonce = "") {
 	if (!key || !secret) { return false; }
 	const match = /^(\d{4,7})\.([A-Za-z0-9_-]{16})$/.exec(key);
 	if (!match) { return false; }
 	const expiry_day = Number(match[1]);
 	if (expiry_day * 86400000 < Date.now()) { return false; }
-	return same_string(await invite_signature(secret, site, page, expiry_day), match[2]);
+	return same_string(await invite_signature(secret, site, page, expiry_day, nonce), match[2]);
 }
 
 /** The invite key a request carries (Authorization: Invite <key>, or ?invite= on a WebSocket upgrade). @param {Request} request */
@@ -498,6 +519,7 @@ async function handle_site_files(request, url, env, invite = null, ctx = null) {
 			const listing = await env.SITES.list({ prefix, cursor });
 			for (const object of listing.objects) {
 				const path = object.key.slice(prefix.length);
+				if ((path.split("/").pop() || "").startsWith(".")) { continue; } // (the admin's marker — moderation.js — isn't a file of the site)
 				files.push({ path, size: object.size, uploaded: object.uploaded, url: public_url(path) });
 			}
 			cursor = listing.truncated ? listing.cursor : undefined;
@@ -515,6 +537,9 @@ async function handle_site_files(request, url, env, invite = null, ctx = null) {
 	const key = prefix + path;
 
 	if (request.method === "GET" || request.method === "HEAD") {
+		// A site the admin took down, or a page the admin hid, isn't readable here either — unless you're its owner or the master
+		const moderation = await read_moderation(env, name);
+		if ((moderation.disabled || page_hidden(moderation, path)) && !(await role_of(request, env, name))) { return json({ error: "Not found" }, 404); }
 		const object = await env.SITES.get(key);
 		// ?optional: a probe that may well miss — answer 204 instead of 404 so the browser console stays quiet.
 		if (!object) { return url.searchParams.has("optional") ? new Response(null, { status: 204, headers: CORS_HEADERS }) : json({ error: "Not found" }, 404); }
@@ -544,6 +569,7 @@ async function handle_site_files(request, url, env, invite = null, ctx = null) {
 		if (bytes.length > MAX_FILE_BYTES) { return json({ error: `Files are limited to ${MAX_FILE_BYTES / 1024 / 1024} MB` }, 413); }
 		// A page written is a publish: a few per 10 s per site is plenty for a person (uploads of pictures aren't counted)
 		if (is_html_path(path) && await limited(env.LIMIT_PUBLISH, `publish:${name}`)) { report_limited(env, ctx, { kind: "publish", worker: "jspaint-editor" }); return too_many(10, CORS_HEADERS); }
+		if (is_html_path(path) && (await read_moderation(env, name)).disabled && (await role_of(request, env)) !== "master") { return json({ error: "This site is unavailable.", code: "disabled" }, 403); }
 		// The site's quota: what it holds now (archives included), less what this write replaces, plus this file
 		const existing = await env.SITES.head(key);
 		const usage = await site_usage(env, name);
@@ -579,7 +605,7 @@ async function handle_site_files(request, url, env, invite = null, ctx = null) {
 			if (!/<html[\s>]/i.test(text) || !/<body[\s>]/i.test(text)) {
 				return json({ error: "Pages must be complete HTML documents (<html> … <body> …)" }, 400);
 			}
-			body = await sanitize_html(text);
+			body = await sanitize_html(text, { own_hosts: [env.SITES_URL, env.EDITOR_URL].filter(Boolean).map((u) => new URL(u).host) }); // (links to our own hosts aren't outbound)
 		} else if (!/^text\//.test(content_type)) {
 			const sniffed = sniff_type(bytes.slice(0, 12));
 			if (!sniffed || sniffed !== content_type) {
@@ -634,23 +660,6 @@ async function recount_usage(env, site) {
 /** A site's usage as the API reports it (the defaults filled in). @param {string} site @param {{ bytes: number, files: number, limit_bytes: number | null, limit_files: number | null }} usage */
 function usage_report(site, usage) {
 	return { site, bytes: usage.bytes, files: usage.files, limit_bytes: usage.limit_bytes ?? QUOTA_BYTES, limit_files: usage.limit_files ?? QUOTA_FILES };
-}
-
-/**
- * Tells the sites Worker a site changed, so the served pages it cached are remade: POST /~site/x/published bumps
- * the site's generation (sites/index.js). Media under hashed or per-save names (gifs/, midi/, collages/, previews/,
- * versions/) doesn't change what a page renders to. Awaited, so the page is fresh by the time the save is
- * reported done; a failure only leaves the cache to age out (an hour).
- * @param {{ SITES_URL?: string }} env @param {ExecutionContext | null} ctx @param {string} site @param {string} path
- */
-async function notify_published(env, ctx, site, path) {
-	if (!env.SITES_URL || /^(gifs|midi|collages|previews|versions)\//.test(path)) { return; }
-	try {
-		await fetch(`${env.SITES_URL}/~${site}/x/published`, { method: "POST", signal: AbortSignal.timeout(3000) });
-	} catch (error) {
-		console.warn(`published ping for ${site} failed:`, error);
-		void ctx;
-	}
 }
 
 // --- GifCities proxy (see src/gif-picker.js) ---
@@ -708,7 +717,7 @@ const NEW_SITE_PATH = "/new";
  * @returns {Response | null}
  */
 export function site_entry_redirect(url) {
-	if (APP_FILES.has(url.pathname) || APP_DIRECTORIES.test(url.pathname)) { return null; }
+	if (APP_FILES.has(url.pathname) || APP_DIRECTORIES.test(url.pathname) || url.pathname === "/admin") { return null; }
 	if (url.pathname === NEW_SITE_PATH || url.pathname === `${NEW_SITE_PATH}/`) {
 		return new Response(null, { status: 302, headers: { Location: "/?new=1", "Cache-Control": "no-store" } });
 	}
@@ -755,6 +764,8 @@ const editor = {
 				return json({ error: error.message || String(error) }, 500);
 			}
 		}
+		const admin = await handle_admin(request, url, env, ctx, role_of);
+		if (admin) { return admin; }
 		if (!url.pathname.startsWith("/api/")) {
 			const canonical = canonical_redirect(url, env.EDITOR_URL);
 			if (canonical) { return canonical; }
@@ -777,7 +788,7 @@ const editor = {
 			return new Response(null, { status: 204, headers: CORS_HEADERS });
 		}
 		try {
-			const room_match = /^\/api\/sites\/([^/]+)\/rooms\/(.+?)(\/invite)?$/.exec(url.pathname);
+			const room_match = /^\/api\/sites\/([^/]+)\/rooms\/(.+?)(\/invite(?:\/revoke)?)?$/.exec(url.pathname);
 			if (room_match) {
 				// The live room: one Durable Object per page, WebSocket only; the master key, the site's password, or a share key gets you in.
 				const name = room_match[1];
@@ -789,16 +800,21 @@ const editor = {
 				}
 				if (!valid_site_name(name) || !valid_path(page) || !is_html_path(page)) { return json({ error: "Rooms are per page: /api/sites/<name>/rooms/<page>.html" }, 400); }
 				if (room_match[3]) {
-					// POST …/rooms/<page>/invite: the owner makes a share key for this page.
+					// POST …/rooms/<page>/invite: the owner makes a share key for this page; …/invite/revoke ends every key made so far
 					if (request.method !== "POST") { return json({ error: "Method not allowed" }, 405); }
 					if (!await role_of(request, env, name)) { return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401); }
+					if (room_match[3] === "/invite/revoke") {
+						const nonce = String(await /** @type {any} */ (env.PAGE_ROOM.getByName(`${name}/${page}`)).revoke_invites());
+						nonce_cache.set(`${name}/${page}`, nonce);
+						return json({ site: name, page, revoked: true });
+					}
 					const body = await request.json().catch(() => ({}));
-					return json({ site: name, page, ...(await make_invite(env.SITE_EDIT_SECRET, name, page, Number(body.days) || 30)) });
+					return json({ site: name, page, ...(await make_invite(env.SITE_EDIT_SECRET, name, page, Number(body.days) || 30, await room_nonce(env, name, page))) });
 				}
 				if (request.headers.get("Upgrade") !== "websocket") { return json({ error: "The room is a WebSocket endpoint" }, 426); }
 				if (await limited(env.LIMIT_CONNECT, `connect:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "connect", worker: "jspaint-editor" }); return too_many(60, CORS_HEADERS); }
 				const owner = await role_of(request, env, name);
-				if (!owner && !await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, page)) { return json({ error: "Unauthorized: add ?token=<password> or ?invite=<share key>" }, 401); }
+				if (!owner && !await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, page, await room_nonce(env, name, page))) { return json({ error: "Unauthorized: add ?token=<password> or ?invite=<share key>" }, 401); }
 				return env.PAGE_ROOM.getByName(`${name}/${page}`).fetch(request);
 			}
 			if (url.pathname === "/api/gifcities/search") {
@@ -815,6 +831,21 @@ const editor = {
 				return new Response(upstream.body, { headers: { ...CORS_HEADERS, "Content-Type": "image/gif", "Cache-Control": "public, max-age=86400" } });
 			}
 			// GIF usage: which GifCities GIFs people use (GifStats Durable Object), for "top GIFs" per site and overall.
+			if (url.pathname === "/api/reports" && request.method === "POST") {
+				// A visitor's report of a page, forwarded by the sites Worker's form (worker/sites/index.js handle_report):
+				// kept for the admin (three a day per visitor — accounts.js add_report), and a `site_reported` event
+				const body = await request.json().catch(() => ({}));
+				const site = String(body.site || "");
+				const page = String(body.page || "");
+				const reason = String(body.reason || "").trim().slice(0, 500);
+				const ip_hash = String(body.ip_hash || "");
+				if (!valid_site_name(site) || !valid_path(page) || !is_html_path(page) || reason.length < 3 || !/^[0-9a-f]{64}$/.test(ip_hash)) { return json({ error: "site, page, reason, and ip_hash are needed" }, 400); }
+				if (await limited(env.LIMIT_IP_60S, `report:${ip_hash}`)) { return too_many(60, CORS_HEADERS); }
+				const result = await accounts_of(env).add_report({ site, page, reason, ip_hash });
+				if (!result.ok) { return json({ error: "You've reported enough for today.", code: "rate-limited" }, 429); }
+				capture_event(env, ctx, "site_reported", "visitor", { site, page });
+				return json({ ok: true, id: result.id });
+			}
 			if (url.pathname === "/api/gifs/used" && request.method === "POST") {
 				// Someone signed in, or holding a site's password or the master key: a stranger's click counts for nothing
 				// (each one used to be a row written by anyone who cared to POST)
@@ -860,7 +891,7 @@ const editor = {
 				const accounts = accounts_of(env);
 				const created = site ? await accounts.get_created(site) : null;
 				// A signed-in account: who, and which sites are theirs ("user" = signed in, but not this site's owner)
-				const account = session ? { user: { id: session.id, email: session.email, name: session.name }, sites: await accounts.sites_of(session.id) } : {};
+				const account = session ? { user: { id: session.id, email: session.email, name: session.name }, sites: await accounts.sites_of(session.id), admin: session.admin === true } : {};
 				return json({ ok: true, role: role || "user", site: site || null, created, sites_url: env.SITES_URL, editor_url: url.origin, ...account });
 			}
 			const presence_match = /^\/api\/sites\/([^/]+)\/presence$/.exec(url.pathname);
@@ -949,7 +980,7 @@ const editor = {
 				}
 				// A guest with a share key may list the site and save their page (handle_site_files scopes the writes).
 				const guest_page = request.headers.get("X-Invite-Page") || "";
-				if (valid_path(guest_page) && is_html_path(guest_page) && await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, guest_page)) {
+				if (valid_path(guest_page) && is_html_path(guest_page) && await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, guest_page, await room_nonce(env, name, guest_page))) {
 					return handle_site_files(request, url, env, { page: guest_page, key: invite_key_of(request) }, ctx);
 				}
 				return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401);

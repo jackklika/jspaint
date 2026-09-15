@@ -248,6 +248,8 @@ function handle_message(message) {
 		case "snapshot":
 			connected = true;
 			version = message.version;
+			// The room may have given us a fresh id (ours was another live connection's): it's ours from here on
+			if (message.you?.client_id && message.you.client_id !== client_id()) { try { sessionStorage.setItem(CLIENT_ID_KEY, message.you.client_id); } catch (_error) { /* then strokes carry the old one */ } }
 			remote_clients.clear();
 			for (const client of message.clients || []) { remote_clients.set(client.client_id, client); }
 			if ((message.version === 0 && !room?.guest) || room?.authoritative) {

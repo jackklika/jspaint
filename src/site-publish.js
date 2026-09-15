@@ -17,7 +17,7 @@ import { preview_path, render_share_preview } from "./share-preview.js";
 const SETTINGS_KEY = "jspaint site publish settings";
 const LEGACY_EDITOR_URLS = new Set(["https://coolpaint.world", "https://www.coolpaint.world"]);
 
-/** @typedef {{ email: string, name: string, via: string, sites: string[] }} Account - a signed-in account (a Google sign-in; whoami says which sites are theirs) */
+/** @typedef {{ email: string, name: string, via: string, sites: string[], admin?: boolean }} Account - a signed-in account (a Google sign-in; whoami says which sites are theirs, and whether it's an admin) */
 /** @typedef {{ editor_url: string, site: string, page: string, secret: string, remember_secret: boolean, account?: Account | null, invite?: { key: string, page: string } }} PublishSettings */
 
 /** @returns {PublishSettings} */

@@ -50,6 +50,9 @@
 	"vars": {
 		"EDITOR_URL": "https://edit.coolpaint.world",
 		"SITES_URL": "https://coolpaint.world",
+		// The admin accounts (comma-separated emails; auth.js is_admin): their sessions act as the master key, and /admin
+		// (admin.js) is theirs — every page by site and by account, with the levers. Locally .dev.vars names a test one.
+		"ADMIN_EMAILS": "klikajack@gmail.com",
 		// Sign in with Google (auth.js): the OAuth client's ID (public); its secret is GOOGLE_CLIENT_SECRET (a Worker
 		// secret). Empty = the button doesn't show. Made in the Google Cloud console (project coolpaintworld):
 		// OAuth consent screen (external, scopes openid/email/profile), then a Web application client with the

@@ -123,6 +123,11 @@ try {
 	assert.equal(response.status, 400);
 	response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "root" }) }, cookies);
 	assert.equal(response.status, 403, "root belongs to the master");
+	for (const name of ["paypal", "google-login", "verify-account", "admin"]) {
+		response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }, cookies);
+		assert.equal(response.status, 400, `${name} is reserved`);
+		assert.match((await response.json()).error, /reserved/);
+	}
 	response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: site }) });
 	assert.equal(response.status, 401, "no session, no site");
 	response = await call("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: site }) }, cookies);
@@ -239,6 +244,47 @@ try {
 	assert.equal((await call("/api/whoami", {}, cookies)).status, 401, "the old cookie is dead");
 	// (a claims cookie someone kept outlives the sign-out by at most its hour: the price of not asking Accounts)
 	assert.equal((await call(`/api/sites/${site}/files`, {}, { coolpaint_id: claims.value })).status, 200);
+
+	// A site claimed today is noindex on the sites host (its marker says when it was claimed)
+	const sites_host = (process.env.SITE_BUILDER_SITES_URL || "").replace(/\/+$/, "");
+	if (sites_host) {
+		response = await fetch(`${sites_host}/~${site}/`);
+		assert.equal(response.status, 200);
+		assert.equal(response.headers.get("X-Robots-Tag"), "noindex", "a site's first day");
+	}
+
+	// The admin (ADMIN_EMAILS names admin-test@example.com in the local dev vars): the admin page and its levers; a
+	// locked account is signed out everywhere and can't sign in until it's unlocked
+	person = { sub: `sub-${stamp}-admin`, email: "admin-test@example.com", email_verified: true, name: "Admin Test" };
+	const admin_cookies = await again();
+	assert.equal((await call("/api/admin/overview")).status, 401, "nobody");
+	response = await call("/api/admin/overview", {}, admin_cookies);
+	const overview_text = await response.text();
+	assert.equal(response.status, 200, overview_text);
+	const overview = JSON.parse(overview_text);
+	assert.ok(overview.sites.some((s) => s.name === site && s.owner?.id === user_id), "Pat's site, with Pat as its owner");
+	assert.ok(overview.users.some((u) => u.id === user_id && u.sites.includes(site)), "…and Pat, with the site");
+	assert.equal((await (await call("/api/whoami", {}, admin_cookies)).json()).role, "master", "an admin's session is the master key");
+	assert.equal((await (await call("/api/whoami", {}, admin_cookies)).json()).admin, true);
+	response = await call("/admin", {}, admin_cookies);
+	assert.equal(response.status, 200);
+	assert.match(await response.text(), /coolpaint\.world — admin/);
+	// Lock Pat: Pat's sessions end, Pat can't sign in; unlock, and Pat is back
+	person = { sub: `sub-${stamp}`, email: my_email, email_verified: true, name: "Pat Test" };
+	const pat_again = await again();
+	assert.equal((await call("/api/whoami", {}, pat_again)).status, 200, "Pat, signed in again");
+	response = await call(`/api/admin/users/${user_id}/lock`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locked: true, note: "test lock" }) }, admin_cookies);
+	assert.deepEqual(await response.json(), { ok: true, id: user_id, locked: true });
+	assert.equal((await call("/api/whoami", {}, pat_again)).status, 401, "Pat's session ended");
+	const start_locked = await call("/auth/google");
+	const locked = await call(`/auth/google/callback?code=good-code&state=${new URL(start_locked.headers.get("Location") || "").searchParams.get("state")}`, {}, { coolpaint_auth_state: cookie_from(start_locked, "coolpaint_auth_state")?.value || "" });
+	assert.equal(locked.status, 403, "a locked account can't sign in");
+	assert.match(await locked.text(), /This account is locked/);
+	assert.ok((await (await call("/api/admin/overview?fresh=1", {}, admin_cookies)).json()).users.find((u) => u.id === user_id).locked, "the overview says so");
+	response = await call(`/api/admin/users/${user_id}/lock`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locked: false }) }, admin_cookies);
+	assert.equal(response.status, 200);
+	assert.equal((await call("/api/whoami", {}, await again())).status, 200, "unlocked: Pat signs in again");
+	assert.equal((await call(`/api/admin/users/${user_id}/lock`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locked: true }) }, pat_again)).status, 401, "Pat isn't the admin");
 
 	// A newcomer at the editor: the starter page, a stroke, Save → Sign In → Google → back on the same drawing, with
 	// the save waiting: a site name → the page goes up as that site's index.html

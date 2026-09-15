@@ -11,12 +11,15 @@
 // publish, delete (the editor POSTs /~name/x/published), and guestbook signing bumps: a view is one trip to that
 // object (the visit recorded, the generation and the page's hit count back), then the cached page with the count
 // filled into the counter's slot — no R2 read, no sanitize, no rendering. A miss renders and stores.
+// Moderation (the editor's admin, MALICIOUS_ACTOR_PLAN.md phase 2): a marker the editor writes, `.moderation.json`
+// under the site, re-read at every bump — a disabled site answers 451, a hidden page 404, a site in its first day is
+// noindex. Every page ends with a "report this page" link; /~name/x/report is the form, forwarded to the editor.
 import { DurableObject } from "cloudflare:workers";
 import { ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, valid_path, valid_site_name } from "../shared/names.js";
 import { capture_exception } from "../shared/exceptions.js";
 import { find_sections, text_of } from "../shared/sections.js";
 import { sanitize_html } from "../shared/sanitize.js";
-import { render_x_element, render_x_elements, x_elements } from "../shared/x-elements/index.js";
+import { escape_html, render_x_element, render_x_elements, x_elements } from "../shared/x-elements/index.js";
 import { odometer } from "../shared/x-elements/counter.js";
 import { ShortCache, client_ip, limited, report_limited, too_many } from "../shared/limits.js";
 
@@ -43,6 +46,10 @@ const GUESTBOOK_MAX_ENTRIES = 2000; // per site
 const PAGE_CACHE_S = 60 * 60; // a rendered page's life in the cache if no change ever bumps the generation (a missed ping)
 const VIEW_FLUSH_MS = 15 * 1000; // views and counter hits are tallied in memory and written this often
 const CRAWLER_UA = /bot|crawl|spider|slurp|facebookexternalhit|linkpreview|headless/i; // a page load by one of these isn't a visit
+const MODERATION_FILE = ".moderation.json"; // the editor's marker (worker/editor/moderation.js); never a valid path, so never served
+const NOINDEX_MS = 24 * 60 * 60 * 1000; // a site's first day: noindex
+const MAX_REPORT_CHARS = 500;
+/** @typedef {{ disabled?: boolean, hidden?: string[], reason?: string, created?: number }} Moderation */
 /** A site's viewer stats, kept 5 s: the editor's globe asks, and each fresh answer counts every view row of the day. @type {ShortCache<any>} */
 const stats_cache = new ShortCache(5_000);
 
@@ -65,6 +72,34 @@ export class SiteState extends DurableObject {
 		/** @type {Map<string, number>} page → counter hits not yet written */
 		this.pending_hits = new Map();
 		this.flush_at = 0;
+		/** @type {Moderation | undefined} the site's marker as last read (undefined: not looked at yet) */
+		this.moderation_cache = undefined;
+	}
+	/** The site's moderation marker, as of the last bump (read once from storage, from the bucket the first time ever). */
+	moderation() {
+		if (this.moderation_cache !== undefined) { return Promise.resolve(this.moderation_cache); }
+		const row = this.ctx.storage.sql.exec("SELECT value FROM meta WHERE key = 'moderation'").toArray()[0];
+		if (row) {
+			try { this.moderation_cache = /** @type {Moderation} */ (JSON.parse(String(row.value))); } catch (_error) { this.moderation_cache = {}; }
+			return Promise.resolve(this.moderation_cache);
+		}
+		return this.refresh_moderation();
+	}
+	/** Re-reads the marker from the bucket (the editor just wrote it, or something was published). */
+	async refresh_moderation() {
+		/** @type {Moderation} */
+		let moderation = {};
+		try {
+			const object = await /** @type {any} */ (this.env).SITES.get(`sites/${this.ctx.id.name}/${MODERATION_FILE}`);
+			if (object) {
+				const raw = JSON.parse(await object.text());
+				moderation = { ...(raw.disabled === true ? { disabled: true } : {}), ...(Array.isArray(raw.hidden) ? { hidden: raw.hidden.filter((/** @type {unknown} */ p) => typeof p === "string") } : {}), ...(typeof raw.reason === "string" ? { reason: raw.reason } : {}), ...(typeof raw.created === "number" ? { created: raw.created } : {}) };
+			}
+		} catch (_error) { /* an unreadable marker is no marker */ }
+		this.moderation_cache = moderation;
+		// (meta.value is INTEGER-typed but SQLite stores what it's given; the marker is small)
+		this.ctx.storage.sql.exec("INSERT INTO meta (key, value) VALUES ('moderation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(moderation));
+		return moderation;
 	}
 	/** Views and hits are written together, VIEW_FLUSH_MS after the first one pending (an alarm), not per page load. */
 	async schedule_flush() {
@@ -100,10 +135,11 @@ export class SiteState extends DurableObject {
 		}
 		return this.generation_cache;
 	}
-	bump() {
+	async bump() {
 		const next = this.generation() + 1;
 		this.ctx.storage.sql.exec("INSERT INTO meta (key, value) VALUES ('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", next);
 		this.generation_cache = next;
+		await this.refresh_moderation(); // (a publish, a delete, or the editor's admin wrote the marker)
 		return next;
 	}
 	/**
@@ -115,7 +151,7 @@ export class SiteState extends DurableObject {
 	 */
 	async view(ip_hash, page) {
 		if (ip_hash) { await this.record_view(ip_hash, page); }
-		return { generation: this.generation(), hits: this.get_hits(page) };
+		return { generation: this.generation(), hits: this.get_hits(page), moderation: await this.moderation() };
 	}
 	/**
 	 * Someone opened a page (the editor's globe shows "N viewing"). Pages carry no scripts, so a page load is the
@@ -161,7 +197,7 @@ export class SiteState extends DurableObject {
 		}
 		this.ctx.storage.sql.exec("INSERT INTO guestbook (name, message, ip_hash, created) VALUES (?, ?, ?, ?)", name, message, ip_hash, now);
 		this.ctx.storage.sql.exec("DELETE FROM guestbook WHERE id NOT IN (SELECT id FROM guestbook ORDER BY id DESC LIMIT ?)", GUESTBOOK_MAX_ENTRIES);
-		this.bump(); // (the pages showing the guestbook are remade)
+		void this.bump(); // (the pages showing the guestbook are remade)
 		return true;
 	}
 	/**
@@ -230,9 +266,11 @@ async function handle_action(request, url, env) {
 	} catch (_error) {
 		return html_response("<p>Bad request.</p>", 400);
 	}
+	const state = env.SITE_STATE.getByName(site);
+	if ((await state.moderation())?.disabled) { return unavailable(); }
 	const result = await definition.action({
 		form,
-		context: { site, page: "", page_uploaded: null, state: env.SITE_STATE.getByName(site), request, files: site_files(env.SITES, site), page_html: "" },
+		context: { site, page: "", page_uploaded: null, state, request, files: site_files(env.SITES, site), page_html: "" },
 	});
 	if (result.location) {
 		return new Response(null, { status: result.status || 303, headers: { ...PAGE_HEADERS, Location: result.location } });
@@ -276,6 +314,77 @@ async function handle_preview(request, env, site) {
 		preview: true,
 	});
 	return reply({ html });
+}
+
+/** The admin took the site down: one plain page, never cached. */
+function unavailable() {
+	return new Response(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Unavailable</title></head>
+<body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding-top:80px">
+<h1>451</h1><p>This site is unavailable.</p>
+</body></html>`, { status: 451, headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+/**
+ * Every served page ends with a small "report this page" link (MALICIOUS_ACTOR_PLAN.md phase 2), before </body>.
+ * @param {string} html @param {string} site @param {string} page
+ */
+function with_report_link(html, site, page) {
+	const link = `<p class="cpw-report" style="text-align:right;font:10px/1.4 Verdana,Arial,sans-serif;margin:32px 8px 8px;opacity:.55"><a href="${escape_html(`${site_base(site)}/x/report?page=${encodeURIComponent(page)}`)}" style="color:inherit" rel="nofollow">report this page</a></p>`;
+	const at = html.search(/<\/body\s*>/i);
+	return at === -1 ? html + link : html.slice(0, at) + link + html.slice(at);
+}
+
+/**
+ * GET /~name/x/report?page=… shows the form; POST takes it, and forwards the report to the editor Worker (POST
+ * /api/reports, which keeps three a day per visitor and shows them to the admin). Plain pages, in the 404's style.
+ * @param {Request} request @param {URL} url @param {{ SITE_STATE: DurableObjectNamespace, EDITOR_URL?: string }} env @param {ExecutionContext} ctx @param {string} site
+ */
+async function handle_report(request, url, env, ctx, site) {
+	const page_of = (/** @type {string} */ value) => (valid_path(value) && is_html_path(value) ? value : "index.html");
+	const shell = (/** @type {string} */ title, /** @type {string} */ body, status = 200) => new Response(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape_html(title)}</title></head>
+<body bgcolor="#000000" text="#00ff00" style="font-family:'Courier New',monospace;text-align:center;padding:60px 16px">
+${body}
+</body></html>`, { status, headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
+	if (request.method === "GET") {
+		const page = page_of(url.searchParams.get("page") || "");
+		return shell("Report this page", `<h1>Report this page</h1>
+<p>${escape_html(`${site_base(site)}/${page === "index.html" ? "" : page}`)}</p>
+<form method="post" action="${escape_html(`${site_base(site)}/x/report`)}" style="display:inline-block;text-align:left;max-width:480px">
+<input type="hidden" name="page" value="${escape_html(page)}">
+<p><label>What's wrong with it?<br><textarea name="reason" rows="5" cols="48" maxlength="${MAX_REPORT_CHARS}" required style="width:100%;background:#000;color:#0f0;border:1px solid #0f0;font:inherit"></textarea></label></p>
+<p style="display:none"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></p>
+<p><button type="submit" style="background:#000;color:#0f0;border:1px solid #0f0;font:inherit;padding:4px 12px">Send report</button> <a href="${escape_html(site_home(site))}" style="color:#0f0">never mind</a></p>
+</form>`);
+	}
+	if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") || "")) { return shell("Report", "<p>Bad request.</p>", 400); }
+	const origin = request.headers.get("Origin");
+	if (origin && origin !== url.origin) { return shell("Report", "<p>Forms only work from the page itself.</p>", 403); }
+	let form;
+	try {
+		form = await request.formData();
+	} catch (_error) {
+		return shell("Report", "<p>Bad request.</p>", 400);
+	}
+	const page = page_of(String(form.get("page") || ""));
+	const reason = String(form.get("reason") || "").trim().slice(0, MAX_REPORT_CHARS);
+	if (String(form.get("website") || "")) { return shell("Thanks", "<h1>Thanks</h1><p>Your report was sent.</p>"); } // (the honeypot: pretend)
+	if (reason.length < 3) { return shell("Report", "<p>Say a little about what's wrong.</p>", 400); }
+	const ip_hash = await sha256_hex(`view|${request.headers.get("CF-Connecting-IP") || "unknown"}`);
+	let outcome = "sent";
+	if (env.EDITOR_URL) {
+		try {
+			const response = await fetch(`${env.EDITOR_URL}/api/reports`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ site, page, reason, ip_hash }), signal: AbortSignal.timeout(5000) });
+			outcome = response.ok ? "sent" : response.status === 429 ? "enough" : "failed";
+		} catch (_error) {
+			outcome = "failed";
+		}
+	}
+	void ctx;
+	if (outcome === "enough") { return shell("Report", `<h1>Thanks</h1><p>You've reported enough for today.</p><p><a href="${escape_html(site_home(site))}" style="color:#0f0">back</a></p>`, 429); }
+	if (outcome === "failed") { return shell("Report", `<p>Something went wrong on our side. Please try again in a little while.</p>`, 503); }
+	return shell("Thanks", `<h1>Thanks</h1><p>Your report was sent. Someone will look at it.</p><p><a href="${escape_html(site_home(site))}" style="color:#0f0">back</a></p>`);
 }
 
 /**
@@ -464,6 +573,11 @@ export default {
 			if (await limited(env.LIMIT_IP_10S, `preview:${client_ip(request)}`)) { report_limited(env, ctx, { kind: "preview", worker: "jspaint-sites" }); return too_many(10, { "Access-Control-Allow-Origin": request.headers.get("Origin") || "*" }); }
 			return handle_preview(request, env, site);
 		}
+		const report = /^(?:\/~([^/]+))?\/x\/report$/.exec(url.pathname);
+		if (report && (request.method === "GET" || request.method === "POST")) {
+			const site = report[1] ?? ROOT_SITE;
+			return valid_site_name(site) ? handle_report(request, url, env, ctx, site) : not_found();
+		}
 		if (request.method === "POST") {
 			return handle_action(request, url, env);
 		}
@@ -533,6 +647,7 @@ export default {
 			if (counting) { ctx.waitUntil(Promise.resolve(state.hit(page)).catch(() => { /* a miss is fine */ })); }
 			const shown = seen.hits + (counting ? 1 : 0);
 			const headers = new Headers({ ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "X-Cache": from_cache ? "hit" : "miss" });
+			if (seen.moderation?.created && Date.now() - seen.moderation.created < NOINDEX_MS) { headers.set("X-Robots-Tag", "noindex"); } // (a site's first day)
 			if (request.method === "HEAD") { return new Response(null, { status, headers }); }
 			const filled = new HTMLRewriter().on("span[data-x-counter]", {
 				element(element) { element.setInnerContent(odometer(shown, Number(element.getAttribute("data-x-counter")) || 6), { html: true }); },
@@ -551,22 +666,30 @@ export default {
 			const cached = await cache.match(key);
 			if (cached) { return answer(cached, page, status, seen, true); }
 			const files = site_files(env.SITES, site);
-			const sanitized = await sanitize_html(await object.text());
+			// (links to our own hosts aren't outbound; under a localhost editor — dev, tests — any localhost port is ours too)
+			const own_hosts = [url.host, ...(env.SITES_URL ? [new URL(env.SITES_URL).host] : []), ...(env.EDITOR_URL ? [new URL(env.EDITOR_URL).host] : []), ...(/^http:\/\/localhost/.test(env.EDITOR_URL || "") ? [/^localhost(:\d+)?$/] : [])];
+			const sanitized = await sanitize_html(await object.text(), { own_hosts });
 			let rendered = await render_x_elements(sanitized, { site, page, page_uploaded: object.uploaded, state, request, files, page_html: sanitized, count_slot: true });
 			if (await files.has("site.css")) { rendered = await with_stylesheet(rendered, `${site_base(site)}/site.css`); }
+			rendered = with_report_link(rendered, site, page);
 			const fresh = new Response(rendered, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": `public, max-age=${PAGE_CACHE_S}`, "X-Counter": /data-x-counter=/.test(rendered) ? "1" : "0" } });
 			ctx.waitUntil(cache.put(key, fresh.clone()).catch(() => { /* then the next view renders again */ }));
 			return answer(fresh, page, status, seen, false);
 		};
 		// A page seen before under this generation is answered from the cache before R2 is asked at all
 		let seen = null;
+		let hidden = false;
 		if (is_html_path(path)) {
 			seen = await look(path, request.method === "GET");
-			const cached = await cache.match(cache_key(path, seen.generation, 200));
-			if (cached) { return answer(cached, path, 200, seen, true); }
+			if (seen.moderation?.disabled) { return unavailable(); } // (the admin took the site down)
+			hidden = !!seen.moderation?.hidden?.includes(path); // (…or this page: it's a 404 like any missing one)
+			if (!hidden) {
+				const cached = await cache.match(cache_key(path, seen.generation, 200));
+				if (cached) { return answer(cached, path, 200, seen, true); }
+			}
 		}
-		const object = await env.SITES.get(`sites/${site}/${path}`);
-		if (!object && clean && await env.SITES.head(`sites/${site}/${clean}/index.html`)) {
+		const object = hidden ? null : await env.SITES.get(`sites/${site}/${path}`);
+		if (!object && !hidden && clean && await env.SITES.head(`sites/${site}/${clean}/index.html`)) {
 			return path_redirect(`${url.pathname}/${url.search}`); // (relative addresses inside the folder's index then resolve right)
 		}
 		if (!object) {

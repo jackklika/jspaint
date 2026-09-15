@@ -13,9 +13,23 @@ const LAYOUT_ATTRIBUTES = /^(?:class|style|id|title|data-[a-z0-9-]+)$/;
 
 /**
  * @param {string} html
+ * @param {{ own_hosts?: (string | RegExp)[] }} [options] - hosts that count as ours (the sites host, the editor; a pattern
+ * for local dev's ports): links to them are within the platform and left alone; every other absolute link is
+ * outbound and gets rel="nofollow ugc noopener"
  * @returns {Promise<string>}
  */
-function sanitize_html(html) {
+function sanitize_html(html, { own_hosts = [] } = {}) {
+	/** @param {string} host */
+	const ours = (host) => own_hosts.some((own) => (own instanceof RegExp ? own.test(host) : own.toLowerCase() === host));
+	/** An absolute link to somewhere that isn't ours. @param {string} href */
+	const outbound = (href) => {
+		if (!/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(href) && !/^[a-z][a-z0-9+.-]*:/i.test(href)) { return false; } // (relative: within the site)
+		try {
+			return !ours(new URL(href, "https://x.invalid/").host.toLowerCase());
+		} catch (_error) {
+			return true;
+		}
+	};
 	const rewriter = new HTMLRewriter().on("*", {
 		element(element) {
 			const tag = element.tagName.toLowerCase();
@@ -54,6 +68,15 @@ function sanitize_html(html) {
 			if (tag.startsWith("x-") && !definition) {
 				// Unknown custom element: keep it (browsers treat it as an inert unknown element), attributes and all
 				// were already filtered above for URL/handler risks.
+			}
+			if (tag === "a") {
+				// A link off the site: no search-engine credit for it (spam pages are worth nothing), and no window.opener.
+				// `target` is _blank or nothing. Links within the site (relative, or same-host) are left as written.
+				if (outbound(element.getAttribute("href") || "")) {
+					element.setAttribute("rel", "nofollow ugc noopener");
+				}
+				const target = element.getAttribute("target");
+				if (target !== null && target !== "_blank") { element.removeAttribute("target"); }
 			}
 		},
 		comments(comment) {

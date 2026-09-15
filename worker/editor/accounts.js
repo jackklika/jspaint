@@ -29,8 +29,68 @@ export class Accounts extends DurableObject {
 			sql.exec("CREATE TABLE IF NOT EXISTS usage (site TEXT PRIMARY KEY, bytes INTEGER NOT NULL DEFAULT 0, files INTEGER NOT NULL DEFAULT 0, limit_bytes INTEGER, limit_files INTEGER, updated INTEGER NOT NULL DEFAULT 0)");
 			// What each share key's guests uploaded per UTC day (the key as a hash)
 			sql.exec("CREATE TABLE IF NOT EXISTS guest_uploads (key_hash TEXT NOT NULL, day INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (key_hash, day))");
+			// A locked account can't sign in or act (the admin's lever); `note` is the admin's reason
+			for (const column of ["locked INTEGER NOT NULL DEFAULT 0", "note TEXT"]) {
+				try { sql.exec(`ALTER TABLE users ADD COLUMN ${column}`); } catch (_error) { /* already there */ }
+			}
+			// Visitors' reports of pages (the sites Worker forwards its form), three a day per visitor
+			sql.exec("CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY AUTOINCREMENT, site TEXT NOT NULL, page TEXT NOT NULL, reason TEXT NOT NULL, ip_hash TEXT NOT NULL, created INTEGER NOT NULL, resolved INTEGER NOT NULL DEFAULT 0)");
 			return Promise.resolve();
 		});
+	}
+	// ---- the admin's view and levers ----
+	/** @param {string} id @param {boolean} locked @param {string} [note] */
+	set_locked(id, locked, note = "") {
+		this.ctx.storage.sql.exec("UPDATE users SET locked = ?, note = ? WHERE id = ?", locked ? 1 : 0, note || null, id);
+		if (locked) { this.delete_sessions_of(id); }
+	}
+	/** @param {string} user_id */
+	delete_sessions_of(user_id) {
+		this.ctx.storage.sql.exec("DELETE FROM sessions WHERE user_id = ?", user_id);
+	}
+	/** Every account, newest first. @returns {{ id: string, email: string, name: string, created: number, seen: number, locked: boolean, note: string }[]} */
+	all_users() {
+		return this.ctx.storage.sql.exec("SELECT id, email, name, created, seen, locked, note FROM users ORDER BY created DESC LIMIT 5000").toArray()
+			.map((row) => ({ id: String(row.id), email: String(row.email || ""), name: String(row.name || ""), created: Number(row.created), seen: Number(row.seen), locked: Number(row.locked) === 1, note: String(row.note || "") }));
+	}
+	/** Every site's owner. @returns {{ site: string, user_id: string, claimed: number }[]} */
+	all_owners() {
+		return this.ctx.storage.sql.exec("SELECT site, user_id, claimed FROM owners ORDER BY claimed DESC LIMIT 10000").toArray()
+			.map((row) => ({ site: String(row.site), user_id: String(row.user_id), claimed: Number(row.claimed) }));
+	}
+	/** Every site's usage row. @returns {{ site: string, bytes: number, files: number, limit_bytes: number | null, limit_files: number | null }[]} */
+	all_usage() {
+		return this.ctx.storage.sql.exec("SELECT site, bytes, files, limit_bytes, limit_files FROM usage LIMIT 10000").toArray()
+			.map((row) => ({ site: String(row.site), bytes: Number(row.bytes), files: Number(row.files), limit_bytes: row.limit_bytes === null ? null : Number(row.limit_bytes), limit_files: row.limit_files === null ? null : Number(row.limit_files) }));
+	}
+	/** A site is gone: its owner, usage, and password rows go too. @param {string} site */
+	remove_site(site) {
+		const sql = this.ctx.storage.sql;
+		sql.exec("DELETE FROM owners WHERE site = ?", site);
+		sql.exec("DELETE FROM usage WHERE site = ?", site);
+		sql.exec("DELETE FROM sites WHERE name = ?", site);
+	}
+	/**
+	 * A visitor's report of a page: kept unless this visitor has made three today.
+	 * @param {{ site: string, page: string, reason: string, ip_hash: string }} report
+	 * @returns {{ ok: boolean, id?: number }}
+	 */
+	add_report({ site, page, reason, ip_hash }) {
+		const sql = this.ctx.storage.sql;
+		const now = Date.now();
+		const today = Number(sql.exec("SELECT COUNT(*) AS n FROM reports WHERE ip_hash = ? AND created > ?", ip_hash, now - 24 * 60 * 60 * 1000).one().n);
+		if (today >= 3) { return { ok: false }; }
+		sql.exec("INSERT INTO reports (site, page, reason, ip_hash, created) VALUES (?, ?, ?, ?, ?)", site, page, reason, ip_hash, now);
+		return { ok: true, id: Number(sql.exec("SELECT last_insert_rowid() AS id").one().id) };
+	}
+	/** Newest first. @param {number} limit @returns {{ id: number, site: string, page: string, reason: string, created: number, resolved: boolean }[]} */
+	reports(limit = 200) {
+		return this.ctx.storage.sql.exec("SELECT id, site, page, reason, created, resolved FROM reports ORDER BY id DESC LIMIT ?", limit).toArray()
+			.map((row) => ({ id: Number(row.id), site: String(row.site), page: String(row.page), reason: String(row.reason), created: Number(row.created), resolved: Number(row.resolved) === 1 }));
+	}
+	/** @param {number} id @param {boolean} resolved */
+	resolve_report(id, resolved = true) {
+		this.ctx.storage.sql.exec("UPDATE reports SET resolved = ? WHERE id = ?", resolved ? 1 : 0, id);
 	}
 	// ---- storage: what each site holds, against its quota ----
 	/** @param {string} site @returns {{ bytes: number, files: number, limit_bytes: number | null, limit_files: number | null, updated: number }} */
@@ -82,10 +142,10 @@ export class Accounts extends DurableObject {
 		return existed;
 	}
 	// ---- accounts ----
-	/** @param {string} id @returns {{ id: string, email: string, name: string } | null} */
+	/** @param {string} id @returns {{ id: string, email: string, name: string, locked: boolean } | null} */
 	get_user(id) {
-		const row = this.ctx.storage.sql.exec("SELECT id, email, name FROM users WHERE id = ?", id).toArray()[0];
-		return row ? { id: String(row.id), email: String(row.email || ""), name: String(row.name || "") } : null;
+		const row = this.ctx.storage.sql.exec("SELECT id, email, name, locked FROM users WHERE id = ?", id).toArray()[0];
+		return row ? { id: String(row.id), email: String(row.email || ""), name: String(row.name || ""), locked: Number(row.locked) === 1 } : null;
 	}
 	/**
 	 * Someone signed in with a provider: their user (found by the identity, else by the verified email, else new).
@@ -138,6 +198,10 @@ export class Accounts extends DurableObject {
 			return null;
 		}
 		const user = this.get_user(String(row.user_id));
+		if (user && user.locked) {
+			this.ctx.storage.sql.exec("DELETE FROM sessions WHERE hash = ?", hash); // (a locked account's sessions are over)
+			return null;
+		}
 		return user ? { user, expires: Number(row.expires) } : null;
 	}
 	/** @param {string} hash */

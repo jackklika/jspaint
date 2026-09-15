@@ -136,7 +136,7 @@ export class PageRoom extends DurableObject {
 		/**
 		 * The document at the head. `version` is the last version id given out (ids only ever grow); `head` is the
 		 * version this document is the state of — the newest, unless someone went back in the history.
-		 * @type {{ version: number, head?: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] }, patch_count?: number, patch_bytes?: number, writes_day?: number, writes_today?: number }}
+		 * @type {{ version: number, head?: number, width: number, height: number, page_properties: Record<string, string | number>, layers: { blocks: any[], stickers: any[], text_layers: any[] }, patch_count?: number, patch_bytes?: number, writes_day?: number, writes_today?: number, invite_nonce?: string }}
 		 */
 		this.doc = { version: 0, width: 0, height: 0, page_properties: {}, layers: { blocks: [], stickers: [], text_layers: [] } };
 		this.head = 0;
@@ -336,6 +336,17 @@ export class PageRoom extends DurableObject {
 			bytes -= Number(row.bytes);
 		}
 	}
+	// ---- share keys ----
+	/** The nonce share keys for this page are signed with ("" until the first revoke: older keys keep working). */
+	nonce() {
+		return this.doc.invite_nonce || "";
+	}
+	/** Every share key made so far stops working: a fresh nonce goes into the signature. */
+	revoke_invites() {
+		this.doc.invite_nonce = [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, "0")).join("");
+		this.save_doc();
+		return this.doc.invite_nonce;
+	}
 	// ---- brakes ----
 	/** Past the day's budget of versions? */
 	over_daily_budget() {
@@ -463,7 +474,10 @@ export class PageRoom extends DurableObject {
 		if (!this.allow(ws, String(message.type || ""))) { return; }
 		const info = ws.deserializeAttachment() || {};
 		if (message.type === "hello") {
-			const client_id = String(message.client_id || "").slice(0, 40) || crypto.randomUUID();
+			// The client's id is kept unless another live connection already answers to it (a spoofed cursor or lock);
+			// then it gets a fresh one, and the snapshot's `you` says so
+			let client_id = String(message.client_id || "").slice(0, 40) || crypto.randomUUID();
+			if (this.ctx.getWebSockets().some((other) => other !== ws && other.deserializeAttachment()?.client_id === client_id)) { client_id = crypto.randomUUID(); }
 			const next = { client_id, name: String(message.name || "Someone").slice(0, 40), color: /^#[0-9a-f]{6}$/i.test(message.color || "") ? message.color : "#000080" };
 			ws.serializeAttachment(next);
 			this.send(ws, {
@@ -503,7 +517,7 @@ export class PageRoom extends DurableObject {
 				if (id === this.head) { this.send(ws, { type: "restored", version: id, client_id: info.client_id, name: info.name }); return; }
 				const state = this.state_at(id);
 				if (!state) { this.send(ws, { type: "state", id, error: "That version is too old to bring back." }); return; }
-				this.doc = { version: this.doc.version, ...state.doc, patch_count: undefined, patch_bytes: undefined }; // (the chain is recounted on the next look)
+				this.doc = { ...this.doc, ...state.doc, patch_count: undefined, patch_bytes: undefined }; // (the room's own fields — head, counters, the invite nonce — stay; the chain is recounted on the next look)
 				this.head = id;
 				this.save_doc(); // (the head pointer rides along)
 				this.broadcast({ type: "restored", version: id, client_id: info.client_id, name: info.name });

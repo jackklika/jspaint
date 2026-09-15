@@ -34,6 +34,17 @@ function valid_site_name(name) {
 	return SITE_NAME.test(name);
 }
 
+/**
+ * Names a newcomer may not claim (MALICIOUS_ACTOR_PLAN.md phase 2): ours, the platform's, and the words a phishing
+ * page hides behind. Existing sites keep whatever they have; the master key may still assign one.
+ */
+const RESERVED_NAMES = new Set(["root", "www", "admin", "administrator", "api", "mail", "email", "support", "help", "security", "abuse", "login", "signin", "sign-in", "signup", "sign-up", "account", "accounts", "auth", "official", "staff", "team", "coolpaint", "coolpaintworld", "jspaint", "paint", "cloudflare", "google", "gmail", "apple", "icloud", "microsoft", "outlook", "facebook", "instagram", "twitter", "tiktok", "youtube", "discord", "paypal", "venmo", "cashapp", "stripe", "amazon", "netflix", "steam", "roblox", "minecraft", "bank", "irs", "gov"]);
+const RESERVED_WORDS = /(?:^|-)(?:login|log-in|signin|sign-in|verify|verification|wallet|password|passwd|secure|support|official|helpdesk)(?:-|$)/;
+/** @param {string} name - a valid site name */
+function reserved_site_name(name) {
+	return RESERVED_NAMES.has(name) || RESERVED_WORDS.test(name);
+}
+
 /** @param {string} path - without a leading slash */
 function valid_path(path) {
 	if (!path || path.length > 200) { return false; }
@@ -88,4 +99,4 @@ function site_home(site) {
 	return `${site_base(site)}/`;
 }
 
-export { ALLOWED_EXTENSIONS, ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, sniff_type, valid_path, valid_site_name };
+export { ALLOWED_EXTENSIONS, ROOT_SITE, content_type_for, extension_of, is_html_path, reserved_site_name, site_base, site_home, sniff_type, valid_path, valid_site_name };

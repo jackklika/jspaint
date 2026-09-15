@@ -10,6 +10,7 @@
 import { $DialogWindow } from "./$ToolWindow.js";
 import { HTML_FORMAT_ID } from "./collage-format.js";
 import { update_title } from "./functions.js";
+import { showMessageBox } from "./msgbox.js";
 import { $G, E } from "./helpers.js";
 import { qr_modules, render_qr_canvas } from "./qr.js";
 import { preview_path, render_share_preview } from "./share-preview.js";
@@ -215,7 +216,24 @@ function show_share_dialog() {
 	$days?.on("change", () => { refresh(); });
 	$link.on("focus", () => { /** @type {HTMLInputElement} */ ($link[0]).select(); });
 
-	if (!guest) { $w.$Button(localize("New Link"), () => { refresh(); }); }
+	if (!guest) {
+		$w.$Button(localize("New Link"), () => { refresh(); });
+		// Every link made so far for this page stops working (the room's invite nonce changes — page-room.js)
+		$w.$Button(localize("Revoke Links"), async () => {
+			const { promise } = showMessageBox({ message: localize("Every share link for this page stops working, including the one shown here. Continue?"), buttons: [{ label: localize("Revoke"), value: "revoke" }, { label: localize("Cancel"), value: "cancel", default: true }] });
+			if (await promise !== "revoke") { return; }
+			$status.text(localize("Revoking…"));
+			try {
+				const response = await fetch(`${get_site_editor_url()}/api/sites/${encodeURIComponent(site)}/rooms/${encodeURIComponent(page)}/invite/revoke`, authorized({ method: "POST" }));
+				if (!response.ok) { throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`); }
+				$link.val("");
+				$qr.empty();
+				$status.text(localize("Every earlier link stopped working. New Link makes a fresh one."));
+			} catch (error) {
+				$status.text(`${localize("Couldn't revoke:")} ${error.message}`);
+			}
+		});
+	}
 	$w.$Button(localize("Close"), () => { $w.close(); });
 	$w.$content.css({ width: "min(440px, 92vw)" });
 	$w.center();

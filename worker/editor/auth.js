@@ -26,14 +26,25 @@
 // twice. When it's missing or an hour old, the session cookie is looked up as before and a fresh claims cookie
 // rides back on the response. Signing out deletes the session row and clears both; a claims cookie can outlive
 // that by at most its hour. Routes that need the account's email or name ask for a fresh lookup.
-import { valid_site_name } from "../shared/names.js";
+import { reserved_site_name, valid_site_name } from "../shared/names.js";
 import { report_limited } from "../shared/limits.js";
+import { write_moderation } from "./moderation.js";
 
 const SESSION_COOKIE = "coolpaint_session";
 const CLAIMS_COOKIE = "coolpaint_id";
 const CLAIMS_TTL_S = 60 * 60;
 const MAX_SITES = 5; // per account (the master key can hand out more)
 const SITE_CREATION_HOURLY = 50; // platform-wide: more new sites than this in an hour is a farm, and new ones wait (the master key still may)
+
+/**
+ * The admin accounts: ADMIN_EMAILS in wrangler.jsonc (comma-separated). An admin's session acts as the master key
+ * (every site, the admin page at /admin, MALICIOUS_ACTOR_PLAN.md phase 2.5).
+ * @param {any} env @param {string} email
+ */
+function is_admin(env, email) {
+	if (!email) { return false; }
+	return String(env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean).includes(email.toLowerCase());
+}
 const STATE_COOKIE = "coolpaint_auth_state";
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const STATE_TTL_S = 10 * 60;
@@ -100,7 +111,7 @@ function signing_secret(env) {
 }
 
 /**
- * @typedef {{ u: string, h: string, s: string[], e: number }} Claims - user id, session hash, sites owned, expiry (ms)
+ * @typedef {{ u: string, h: string, s: string[], e: number, a?: number }} Claims - user id, session hash, sites owned, expiry (ms), admin (1)
  */
 
 /** `v1.<claims>.<signature>` @param {any} env @param {Claims} claims */
@@ -126,8 +137,12 @@ async function verify_claims(env, cookie) {
 
 /** A fresh claims cookie for a user (asks Accounts which sites are theirs). @param {URL} url @param {any} env @param {string} user_id @param {string} hash */
 async function claims_cookie(url, env, user_id, hash) {
-	const sites = (await accounts_of(env).sites_of(user_id)).slice(0, 50);
-	return set_cookie(url, env, CLAIMS_COOKIE, await sign_claims(env, { u: user_id, h: hash, s: sites, e: Date.now() + CLAIMS_TTL_S * 1000 }), CLAIMS_TTL_S);
+	const accounts = accounts_of(env);
+	const [sites, user] = await Promise.all([accounts.sites_of(user_id), accounts.get_user(user_id)]);
+	/** @type {Claims} */
+	const claims = { u: user_id, h: hash, s: sites.slice(0, 50), e: Date.now() + CLAIMS_TTL_S * 1000 };
+	if (user && is_admin(env, user.email)) { claims.a = 1; }
+	return set_cookie(url, env, CLAIMS_COOKIE, await sign_claims(env, claims), CLAIMS_TTL_S);
 }
 
 /** Requests whose response should carry a fresh claims cookie (a session was looked up, or a site changed hands). @type {WeakMap<Request, Promise<string>>} */
@@ -213,13 +228,13 @@ function capture_event(env, ctx, event, distinct_id, properties) {
  * Accounts and the response gets a fresh claims cookie. `fresh: true` skips the claims (routes that need the
  * email or name, or must see a sign-out at once).
  * @param {Request} request @param {any} env @param {{ fresh?: boolean }} [options]
- * @returns {Promise<{ id: string, email: string, name: string, hash: string, sites: string[] | null, claimed: boolean } | null>}
+ * @returns {Promise<{ id: string, email: string, name: string, hash: string, sites: string[] | null, claimed: boolean, admin: boolean } | null>}
  */
 async function session_of(request, env, { fresh = false } = {}) {
 	if (!cookie_request_allowed(request, env)) { return null; }
 	if (!fresh) {
 		const claims = await verify_claims(env, cookie_of(request, CLAIMS_COOKIE));
-		if (claims) { return { id: claims.u, email: "", name: "", hash: claims.h, sites: claims.s, claimed: true }; }
+		if (claims) { return { id: claims.u, email: "", name: "", hash: claims.h, sites: claims.s, claimed: true, admin: claims.a === 1 }; }
 	}
 	const token = cookie_of(request, SESSION_COOKIE);
 	if (!token || !/^[0-9a-f]{64}$/.test(token)) { return null; }
@@ -227,7 +242,9 @@ async function session_of(request, env, { fresh = false } = {}) {
 	const session = await accounts_of(env).get_session(hash);
 	if (!session) { return null; }
 	refresh_claims(request, env, session.user.id, hash); // the next hour of requests won't need this lookup
-	return { ...session.user, hash, sites: null, claimed: false };
+	const { locked, ...user } = session.user;
+	void locked; // (a locked account has no session: get_session already said so)
+	return { ...user, hash, sites: null, claimed: false, admin: is_admin(env, user.email) };
 }
 
 /**
@@ -329,6 +346,10 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		if (!profile_response.ok || !identity.subject) { return json({ error: `${name} didn't say who you are` }, 502, { "Set-Cookie": clear_state }); }
 		if (!identity.verified || !identity.email) { return json({ error: `Your ${name} account has no verified email address` }, 403, { "Set-Cookie": clear_state }); }
 		const { user, created } = await accounts_of(env).sign_in_identity({ provider: name, subject: identity.subject, email: identity.email, name: identity.name });
+		if (user.locked) {
+			// The admin locked this account: no session, one plain sentence
+			return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Locked</title></head><body style="font-family:'Comic Sans MS',cursive;text-align:center;padding-top:60px"><p>This account is locked.</p><p><a href="/">Back to Paint</a></p></body></html>`, { status: 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Set-Cookie": clear_state } });
+		}
 		if (created) {
 			capture_event(env, ctx, "signup", user.id, { email: user.email || "", name: user.name || "", provider: name });
 		}
@@ -360,6 +381,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		const owner = await accounts.owner_of(site);
 		if (owner === session.id) { return json({ ok: true, site, yours: true }); }
 		if (owner) { return json({ error: "That name is taken" }, 409); }
+		if (reserved_site_name(site) && !session.admin) { return json({ error: "That name is reserved. Pick another." }, 400); }
 		if ((await accounts.sites_of(session.id)).length >= MAX_SITES) { return json({ error: `An account can have up to ${MAX_SITES} sites`, limit: MAX_SITES }, 409); }
 		if ((await accounts.claims_since(Date.now() - 60 * 60 * 1000)) >= SITE_CREATION_HOURLY && (await role_of(request, env)) !== "master") {
 			report_limited(env, ctx, { kind: "site-creation-surge", worker: "jspaint-editor" }, { always: true });
@@ -370,6 +392,7 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		if (listing.objects.length) { return json({ error: "That name is taken" }, 409); }
 		await accounts.claim_site(site, session.id);
 		refresh_claims(request, env, session.id, session.hash); // (the claims cookie names the new site at once)
+		await write_moderation(env, ctx, site, { created: Date.now() }, session.email || "system"); // (its first day is noindex)
 		capture_event(env, ctx, "site_claimed", session.id, { site, email: session.email || "" });
 		return json({ ok: true, site, yours: true });
 	}
@@ -461,4 +484,4 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 	return json({ error: "Not found" }, 404);
 }
 
-export { CLAIMS_COOKIE, SESSION_COOKIE, accounts_of, cookie_request_allowed, editor_origin, handle_auth, session_of, with_refreshed_claims };
+export { CLAIMS_COOKIE, SESSION_COOKIE, accounts_of, capture_event, cookie_request_allowed, editor_origin, handle_auth, is_admin, session_of, with_refreshed_claims };

@@ -13,8 +13,15 @@ bucket crawl (2 a second) rather than refuse, because a refused version would be
 the room's brake never drops a version, only cursors, stroke pieces, pings, and history reads; the failed-token brake
 counts failures (an address over the line is refused for a minute from isolate memory); the presence route consults
 20 pages, not 50. Tests: `limits`, `rate-limits`, `room-limits`, `quota` (and `gif-stats`, `page-cache`).
-Phases 2 and 3 are still the plan. Facts about the code below are as of 2026-09-14; the built items name their files
-in docs/DESIGN.md ("Brakes", "Quotas").
+**Phase 2 is built too (2026-09-15)** — reserved names, the report link and form, the disable flag (as a marker file in
+the bucket the sites Worker re-reads at every bump, rather than a route with a secret: the sites Worker still keeps
+none), `rel="nofollow ugc noopener"`, noindex for a site's first day, revocable share links, server-assigned ids on
+collision, locked accounts; Turnstile is left for when spam appears. **Phase 2.5, the admin's page, is built** (Jack:
+"a 'global page viewer' only available to [the admin account] … which can see all pages, grouped by site, and grouped
+by user, in a compact interface, and allows admin actions"): `/admin` (`worker/editor/admin.js`), `ADMIN_EMAILS`, an
+admin's session acting as the master key. Test: `moderation`. Phase 3 is still the plan. Facts about the code below
+are as of 2026-09-14; the built items name their files in docs/DESIGN.md ("Brakes", "Quotas", "Moderation", "The
+admin").
 
 ## Principles
 
@@ -170,7 +177,7 @@ test environment the helper treats it as unlimited so the rest of the suite is u
    50 an hour, emit `site_creation_surge` to PostHog and require the master key until the hour passes. Existing users
    are unaffected; a bot farm is stopped at the door.
 
-## Phase 2 — content and access abuse
+## Phase 2 — content and access abuse — built 2026-09-15
 
 1. **Reserved names** in `worker/shared/names.js`: a list (`admin, login, signin, account, api, www, mail, support,
    help, security, paypal, google, apple, microsoft, facebook, instagram, coolpaint, root…`) refused by
@@ -197,6 +204,14 @@ test environment the helper treats it as unlimited so the rest of the suite is u
    attachment it already holds; presence and locks use the server's id.
 8. **Guestbook Turnstile**, only if spam appears despite the cooldowns: Cloudflare Turnstile is free; the widget is a
    plain `<div>` the sanitizer would need to allow on the sites host only.
+
+## Phase 2.5 — the admin's page — built 2026-09-15
+
+One account (`ADMIN_EMAILS`) sees everything and holds every lever: `/admin` lists every page grouped by site and every
+account with its sites, plus the visitors' reports, in one compact table with a filter box. Actions: hide or unhide a
+page, hide or unhide a site (with a reason), delete a page, delete a site (typed name to confirm), set a site's quota,
+lock or unlock an account (its sessions end and it can't sign in), hide all of an account's sites, resolve a report.
+Every action is a route the master key can call too (`admin.js`), so a terminal works when the page doesn't.
 
 ## Phase 3 — resilience and operations
 
