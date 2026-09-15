@@ -111,6 +111,28 @@ async function render_block_to_canvas(snapshot) {
 	});
 }
 
+/**
+ * The last "Move Element" step and which element it moved. A drag's pointer moves and a run of arrow-key nudges of
+ * that element fold into it (one undo step per move); another element's move — or anything else in between — starts
+ * a new step, so Ctrl+Z reverts one action at a time. The step is a full one: undo stops at it (not `soft`, which
+ * upstream reserves for the Text tool's in-between states — undo skips those).
+ * @type {{ node: HistoryNode, id: string } | null}
+ */
+let last_move = null;
+/**
+ * @param {OnCanvasBlock} block
+ * @param {() => void} action
+ */
+function move_undoable(block, action) {
+	make_or_update_undoable({
+		match: (history_node) => !!last_move && history_node === last_move.node && last_move.id === block.id,
+		name: "Move Element",
+		update_name: true,
+		icon: kind_icon(block.kind.id),
+	}, action);
+	last_move = { node: current_history_node, id: block.id };
+}
+
 class OnCanvasBlock extends OnCanvasObject {
 	/**
 	 * @param {BlockSnapshot} snapshot
@@ -146,7 +168,7 @@ class OnCanvasBlock extends OnCanvasObject {
 			outset: 2,
 			get_rect: () => ({ x: this.x, y: this.y, width: this.width, height: this.height }),
 			set_rect: ({ x, y, width, height }) => {
-				undoable({ name: `Resize ${this.kind.label}`, icon: kind_icon(this.kind.id), soft: true }, () => {
+				undoable({ name: `Resize ${this.kind.label}`, icon: kind_icon(this.kind.id) }, () => {
 					this.x = x;
 					this.y = y;
 					this.width = Math.max(1, width);
@@ -163,14 +185,7 @@ class OnCanvasBlock extends OnCanvasObject {
 		let mox = 0, moy = 0;
 		let moves_column = false; // decided when the drag starts: the first section drags the column, the others reorder
 		const pointermove = (/** @type {JQuery.TriggeredEvent} */ e) => {
-			make_or_update_undoable({
-				// XXX: Localization hazard: logic based on English action names
-				match: (history_node) => history_node.name === "Move Element",
-				name: "Move Element",
-				update_name: true,
-				icon: kind_icon(this.kind.id),
-				soft: true,
-			}, () => {
+			move_undoable(this, () => {
 				const m = to_canvas_coords(e);
 				if (this.flow) {
 					if (moves_column) {
@@ -856,13 +871,7 @@ function nudge_selected_block(dx, dy) {
 		if (dy) { reorder_section(block, dy > 0 ? 1 : -1); }
 		return true;
 	}
-	make_or_update_undoable({
-		match: (history_node) => history_node.name === "Move Element",
-		name: "Move Element",
-		update_name: true,
-		icon: kind_icon(block.kind.id),
-		soft: true,
-	}, () => {
+	move_undoable(block, () => {
 		block.x += dx;
 		block.y += dy;
 		block.position();

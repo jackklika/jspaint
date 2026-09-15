@@ -1,6 +1,6 @@
 // @ts-check
 /* global selection:writable */
-/* global $canvas_area, main_canvas, main_ctx, magnification */
+/* global $canvas_area, current_history_node, main_canvas, main_ctx, magnification */
 // Stickers: animated GIFs that live on top of the bitmap as their own layer instead of being rasterized.
 //
 // Pasting or dropping an animated GIF creates an OnCanvasSticker (see paste_image_from_file and the drop
@@ -110,6 +110,26 @@ function get_sticker_source(source_id) {
 	return sticker_sources.get(source_id);
 }
 
+/**
+ * The last "Move Sticker" step and which sticker it moved: a drag's pointer moves and a run of nudges of that sticker
+ * fold into it; another sticker's move starts a new step (one Ctrl+Z, one action). Not `soft`: undo stops here.
+ * @type {{ node: HistoryNode, id: string } | null}
+ */
+let last_move = null;
+/**
+ * @param {OnCanvasSticker} sticker
+ * @param {() => void} action
+ */
+function move_undoable(sticker, action) {
+	make_or_update_undoable({
+		match: (history_node) => !!last_move && history_node === last_move.node && last_move.id === sticker.id,
+		name: "Move Sticker",
+		update_name: true,
+		icon: sticker_icon(),
+	}, action);
+	last_move = { node: current_history_node, id: sticker.id };
+}
+
 class OnCanvasSticker extends OnCanvasObject {
 	/**
 	 * @param {StickerSnapshot} snapshot
@@ -138,7 +158,6 @@ class OnCanvasSticker extends OnCanvasObject {
 				undoable({
 					name: "Resize Sticker",
 					icon: sticker_icon(),
-					soft: true,
 				}, () => {
 					this.x = x;
 					this.y = y;
@@ -155,14 +174,7 @@ class OnCanvasSticker extends OnCanvasObject {
 		// Dragging: bound to the image (a child) rather than $el, so the handles (siblings) don't start a drag.
 		let mox = 0, moy = 0;
 		const pointermove = (/** @type {JQuery.TriggeredEvent} */ e) => {
-			make_or_update_undoable({
-				// XXX: Localization hazard: logic based on English action names
-				match: (history_node) => history_node.name === "Move Sticker",
-				name: "Move Sticker",
-				update_name: true,
-				icon: sticker_icon(),
-				soft: true,
-			}, () => {
+			move_undoable(this, () => {
 				const m = to_canvas_coords(e);
 				this.x = m.x - mox;
 				this.y = m.y - moy;
@@ -351,13 +363,7 @@ function nudge_selected_sticker(dx, dy) {
 	if (!sticker) {
 		return false;
 	}
-	make_or_update_undoable({
-		match: (history_node) => history_node.name === "Move Sticker",
-		name: "Move Sticker",
-		update_name: true,
-		icon: sticker_icon(),
-		soft: true,
-	}, () => {
+	move_undoable(sticker, () => {
 		sticker.x += dx;
 		sticker.y += dy;
 		sticker.position();

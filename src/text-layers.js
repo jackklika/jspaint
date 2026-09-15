@@ -1,6 +1,6 @@
 // @ts-check
 /* global textbox:writable, tool_transparent_mode:writable */
-/* global $canvas_area, main_ctx, magnification, selected_colors, text_tool_font */
+/* global $canvas_area, current_history_node, main_ctx, magnification, selected_colors, text_tool_font */
 // Text layers: text that stays text. With "Web text" on in the Text tool's options, finishing a textbox
 // creates an OnCanvasText layer instead of drawing pixels: a positioned element in the browser's own font
 // rendering, movable and resizable, editable again on double-click (it turns back into the Text tool's
@@ -70,6 +70,26 @@ function render_text_layer_to_canvas(snapshot) {
 	});
 }
 
+/**
+ * The last "Move Text" step and which layer it moved: a drag's pointer moves and a run of nudges of that layer fold
+ * into it; another layer's move starts a new step (one Ctrl+Z, one action). Not `soft`: undo stops here.
+ * @type {{ node: HistoryNode, id: string } | null}
+ */
+let last_move = null;
+/**
+ * @param {OnCanvasText} layer
+ * @param {() => void} action
+ */
+function move_undoable(layer, action) {
+	make_or_update_undoable({
+		match: (history_node) => !!last_move && history_node === last_move.node && last_move.id === layer.id,
+		name: "Move Text",
+		update_name: true,
+		icon: text_icon(),
+	}, action);
+	last_move = { node: current_history_node, id: layer.id };
+}
+
 class OnCanvasText extends OnCanvasObject {
 	/**
 	 * @param {TextLayerSnapshot} snapshot
@@ -94,7 +114,7 @@ class OnCanvasText extends OnCanvasObject {
 			outset: 2,
 			get_rect: () => ({ x: this.x, y: this.y, width: this.width, height: this.height }),
 			set_rect: ({ x, y, width, height }) => {
-				undoable({ name: "Resize Text", icon: text_icon(), soft: true }, () => {
+				undoable({ name: "Resize Text", icon: text_icon() }, () => {
 					this.x = x;
 					this.y = y;
 					this.width = Math.max(1, width);
@@ -110,14 +130,7 @@ class OnCanvasText extends OnCanvasObject {
 
 		let mox = 0, moy = 0;
 		const pointermove = (/** @type {JQuery.TriggeredEvent} */ e) => {
-			make_or_update_undoable({
-				// XXX: Localization hazard: logic based on English action names
-				match: (history_node) => history_node.name === "Move Text",
-				name: "Move Text",
-				update_name: true,
-				icon: text_icon(),
-				soft: true,
-			}, () => {
+			move_undoable(this, () => {
 				const m = to_canvas_coords(e);
 				this.x = m.x - mox;
 				this.y = m.y - moy;
@@ -237,7 +250,7 @@ function edit_text_layer(layer) {
 		return; // finish the current text first
 	}
 	const snapshot = layer.snapshot();
-	undoable({ name: "Edit Text", icon: text_icon(), soft: true }, () => {
+	undoable({ name: "Edit Text", icon: text_icon(), soft: true }, () => { // (soft on purpose: an in-between state — the layer gone, the text box open — like the Text tool's own; undo skips it)
 		text_layers = text_layers.filter((other) => other !== layer);
 		layer.destroy();
 		for (const key of ["family", "size", "line_scale", "bold", "italic", "underline"]) {
@@ -335,13 +348,7 @@ function nudge_selected_text_layer(dx, dy) {
 	if (!layer) {
 		return false;
 	}
-	make_or_update_undoable({
-		match: (history_node) => history_node.name === "Move Text",
-		name: "Move Text",
-		update_name: true,
-		icon: text_icon(),
-		soft: true,
-	}, () => {
+	move_undoable(layer, () => {
 		layer.x += dx;
 		layer.y += dy;
 		layer.position();
