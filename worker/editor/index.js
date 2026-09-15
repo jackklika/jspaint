@@ -445,7 +445,7 @@ async function restore_version(bucket, prefix, page, version) {
  * @param {{ SITES: R2Bucket, SITES_URL: string, SITE_EDIT_SECRET?: string }} env
  * @param {{ page: string } | null} [invite] - the request is a guest's, allowed only within their page
  */
-async function handle_site_files(request, url, env, invite = null) {
+async function handle_site_files(request, url, env, invite = null, ctx = null) {
 	const match = /^\/api\/sites\/([^/]+)\/files(?:\/(.+))?$/.exec(url.pathname);
 	if (!match) { return json({ error: "Not found" }, 404); }
 	const name = match[1];
@@ -493,6 +493,7 @@ async function handle_site_files(request, url, env, invite = null) {
 	}
 	if (request.method === "DELETE") {
 		await env.SITES.delete(key);
+		await notify_published(env, ctx, name, path);
 		return json({ ok: true, deleted: path });
 	}
 	if (request.method === "PUT") {
@@ -527,9 +528,27 @@ async function handle_site_files(request, url, env, invite = null) {
 		}
 		await archive_before_overwrite(env.SITES, prefix, path, key, bytes);
 		const object = await env.SITES.put(key, body, { httpMetadata: { contentType: content_type } });
+		await notify_published(env, ctx, name, path);
 		return json({ ok: true, path, size: object.size, etag: object.httpEtag, url: public_url(path) });
 	}
 	return json({ error: "Method not allowed" }, 405);
+}
+
+/**
+ * Tells the sites Worker a site changed, so the served pages it cached are remade: POST /~site/x/published bumps
+ * the site's generation (sites/index.js). Media under hashed or per-save names (gifs/, midi/, collages/, previews/,
+ * versions/) doesn't change what a page renders to. Awaited, so the page is fresh by the time the save is
+ * reported done; a failure only leaves the cache to age out (an hour).
+ * @param {{ SITES_URL?: string }} env @param {ExecutionContext | null} ctx @param {string} site @param {string} path
+ */
+async function notify_published(env, ctx, site, path) {
+	if (!env.SITES_URL || /^(gifs|midi|collages|previews|versions)\//.test(path)) { return; }
+	try {
+		await fetch(`${env.SITES_URL}/~${site}/x/published`, { method: "POST", signal: AbortSignal.timeout(3000) });
+	} catch (error) {
+		console.warn(`published ping for ${site} failed:`, error);
+		void ctx;
+	}
 }
 
 // --- GifCities proxy (see src/gif-picker.js) ---
@@ -712,7 +731,7 @@ const editor = {
 			}
 			// Reading site files needs no secret: they're public on the sites Worker anyway. Writing does.
 			if ((request.method === "GET" || request.method === "HEAD") && /^\/api\/sites\/[^/]+\/files\/./.test(url.pathname)) {
-				return handle_site_files(request, url, env);
+				return handle_site_files(request, url, env, null, ctx);
 			}
 			if (url.pathname === "/api/debug/exception" && request.method === "POST") {
 				// Support: proves the error pipeline end to end — sends a test $exception to PostHog and answers with
@@ -782,6 +801,7 @@ const editor = {
 					const version = String(body.version || "");
 					if (!valid_path(page) || !is_html_path(page) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9-]+Z$/.test(version)) { return json({ error: "page (a .html path) and version (a stamp from the list) are needed" }, 400); }
 					const result = await restore_version(env.SITES, prefix, page, version);
+					if (result.ok) { await notify_published(env, ctx, name, page); } // (the served page is remade at once)
 					return json(result, result.ok ? 200 : 404);
 				}
 				const page = url.searchParams.get("page") || "";
@@ -793,12 +813,12 @@ const editor = {
 				const name = files_match[1];
 				if (!valid_site_name(name)) { return json({ error: "Site names are 1–32 lowercase letters, digits, or hyphens" }, 400); }
 				if (await role_of(request, env, name)) {
-					return handle_site_files(request, url, env);
+					return handle_site_files(request, url, env, null, ctx);
 				}
 				// A guest with a share key may list the site and save their page (handle_site_files scopes the writes).
 				const guest_page = request.headers.get("X-Invite-Page") || "";
 				if (valid_path(guest_page) && is_html_path(guest_page) && await invite_valid(invite_key_of(request), env.SITE_EDIT_SECRET, name, guest_page)) {
-					return handle_site_files(request, url, env, { page: guest_page });
+					return handle_site_files(request, url, env, { page: guest_page }, ctx);
 				}
 				return json({ error: "Unauthorized: send Authorization: Bearer <password>" }, 401);
 			}

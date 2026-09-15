@@ -7,12 +7,17 @@
 // POST /~name/x/<element> (or /x/<element> for root) runs an <x-*> element's action (the guestbook form), also here.
 // POST /~name/x/preview {page, tag, attrs, page_html?} renders one <x-*> element as the page would show it right now
 // (the editor puts that on the canvas: the real count, the folder's pages) — a look, not a visit; CORS open.
+// Served pages are cached (Cache API) under the site's *generation*, a counter in its Durable Object that every
+// publish, delete (the editor POSTs /~name/x/published), and guestbook signing bumps: a view is one trip to that
+// object (the visit recorded, the generation and the page's hit count back), then the cached page with the count
+// filled into the counter's slot — no R2 read, no sanitize, no rendering. A miss renders and stores.
 import { DurableObject } from "cloudflare:workers";
 import { ROOT_SITE, content_type_for, extension_of, is_html_path, site_base, site_home, valid_path, valid_site_name } from "../shared/names.js";
 import { capture_exception } from "../shared/exceptions.js";
 import { find_sections, text_of } from "../shared/sections.js";
 import { sanitize_html } from "../shared/sanitize.js";
 import { render_x_element, render_x_elements, x_elements } from "../shared/x-elements/index.js";
+import { odometer } from "../shared/x-elements/counter.js";
 
 const PAGE_HEADERS = {
 	"Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -34,6 +39,7 @@ async function sha256_hex(text) {
 	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 const GUESTBOOK_MAX_ENTRIES = 2000; // per site
+const PAGE_CACHE_S = 60 * 60; // a rendered page's life in the cache if no change ever bumps the generation (a missed ping)
 
 /** Per-site state for <x-*> elements: visitor counters and guestbook entries. */
 export class SiteState extends DurableObject {
@@ -44,8 +50,39 @@ export class SiteState extends DurableObject {
 			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS guestbook (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, message TEXT NOT NULL, ip_hash TEXT NOT NULL, created INTEGER NOT NULL)");
 			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS views (ip_hash TEXT NOT NULL, page TEXT NOT NULL, at INTEGER NOT NULL)");
 			this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS views_at ON views (at)");
+			this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)");
 			return Promise.resolve();
 		});
+		/** @type {number | undefined} */
+		this.generation_cache = undefined;
+	}
+	/**
+	 * The site's generation: the key its served pages are cached under. Bumped by every publish and delete (the editor
+	 * pings /x/published) and every guestbook signing, so a cached page is never stale — a new generation is a new key.
+	 */
+	generation() {
+		if (this.generation_cache === undefined) {
+			const row = this.ctx.storage.sql.exec("SELECT value FROM meta WHERE key = 'generation'").toArray()[0];
+			this.generation_cache = row ? Number(row.value) : 1;
+		}
+		return this.generation_cache;
+	}
+	bump() {
+		const next = this.generation() + 1;
+		this.ctx.storage.sql.exec("INSERT INTO meta (key, value) VALUES ('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", next);
+		this.generation_cache = next;
+		return next;
+	}
+	/**
+	 * One trip per page view: records the visit (when `ip_hash` is given — a GET of a page) and returns what serving
+	 * needs — the generation (the cache key) and the page's hit count (for its counter, if it has one; the Worker
+	 * adds the visit with `hit()` after answering).
+	 * @param {string} ip_hash - "" for a look that isn't a visit (HEAD, a 404)
+	 * @param {string} page
+	 */
+	view(ip_hash, page) {
+		if (ip_hash) { this.record_view(ip_hash, page); }
+		return { generation: this.generation(), hits: this.get_hits(page) };
 	}
 	/**
 	 * Someone opened a page (the editor's globe shows "N viewing"). Pages carry no scripts, so a page load is the
@@ -84,6 +121,7 @@ export class SiteState extends DurableObject {
 		}
 		this.ctx.storage.sql.exec("INSERT INTO guestbook (name, message, ip_hash, created) VALUES (?, ?, ?, ?)", name, message, ip_hash, now);
 		this.ctx.storage.sql.exec("DELETE FROM guestbook WHERE id NOT IN (SELECT id FROM guestbook ORDER BY id DESC LIMIT ?)", GUESTBOOK_MAX_ENTRIES);
+		this.bump(); // (the pages showing the guestbook are remade)
 		return true;
 	}
 	/**
@@ -353,6 +391,14 @@ export default {
 		if (url.pathname === "/" && url.searchParams.has("join") && env.EDITOR_URL) {
 			return Response.redirect(`${new URL(env.EDITOR_URL).origin}/${url.search}`, 302);
 		}
+		// The editor says a site changed (a page written or deleted, its settings, its stylesheet): its cached pages are done for
+		const published = /^(?:\/~([^/]+))?\/x\/published$/.exec(url.pathname);
+		if (published && request.method === "POST") {
+			const site = published[1] ?? ROOT_SITE;
+			if (!valid_site_name(site)) { return not_found(); }
+			await env.SITE_STATE.getByName(site).bump();
+			return new Response(null, { status: 204, headers: PAGE_HEADERS });
+		}
 		const preview = /^(?:\/~([^/]+))?\/x\/preview$/.exec(url.pathname);
 		if (preview && request.method === "POST") {
 			const site = preview[1] ?? ROOT_SITE;
@@ -401,30 +447,60 @@ export default {
 		if (!valid_path(path) || path.startsWith("versions/")) {
 			return not_found(); // (versions/: earlier saves, only reachable through the editor)
 		}
+		const state = env.SITE_STATE.getByName(site);
+		const cache = caches.default;
+		/** Rendered pages live in the cache under the site's generation, by page (every address of a page shares one copy). @param {string} page @param {number} generation @param {number} status */
+		const cache_key = (page, generation, status) => new Request(`${url.origin}/~${site}/${page}?__page_cache=${generation}&status=${status}`, { method: "GET" });
 		/**
-		 * A page, rendered: sanitized again, its <x-*> elements filled in, the site's stylesheet linked, the view counted.
-		 * @param {R2ObjectBody} object @param {string} page - the page's path (what the counter counts, what relative addresses are from) @param {number} [status]
+		 * One trip to the site's object: a GET of a page is a visit (the visitor by a hash of their address; the count is
+		 * all that's kept for long); back come the generation and the page's hit count.
+		 * @param {string} page @param {boolean} visit
+		 * @returns {Promise<{ generation: number, hits: number }>}
 		 */
-		const serve_page = async (object, page, status = 200) => {
+		const look = async (page, visit) => state.view(visit ? await sha256_hex(`view|${request.headers.get("CF-Connecting-IP") || "unknown"}`) : "", page);
+		/**
+		 * The cached page, answered: the counter's slot gets the count (this visit included, and counted after the answer),
+		 * the visitor's headers go on, HEAD gets no body.
+		 * @param {Response} cached @param {string} page @param {number} status @param {{ generation: number, hits: number }} seen @param {boolean} from_cache
+		 */
+		const answer = (cached, page, status, seen, from_cache) => {
+			const has_counter = cached.headers.get("X-Counter") === "1";
+			const counting = request.method === "GET" && status === 200 && has_counter;
+			if (counting) { ctx.waitUntil(Promise.resolve(state.hit(page)).catch(() => { /* a miss is fine */ })); }
+			const shown = seen.hits + (counting ? 1 : 0);
+			const headers = new Headers({ ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "X-Cache": from_cache ? "hit" : "miss" });
+			if (request.method === "HEAD") { return new Response(null, { status, headers }); }
+			const filled = new HTMLRewriter().on("span[data-x-counter]", {
+				element(element) { element.setInnerContent(odometer(shown, Number(element.getAttribute("data-x-counter")) || 6), { html: true }); },
+			}).transform(cached);
+			return new Response(filled.body, { status, headers });
+		};
+		/**
+		 * A page, rendered and cached: sanitized again, its <x-*> elements filled in (the counter as a slot), the site's
+		 * stylesheet linked; the next view of it under this generation is a cache hit.
+		 * @param {R2ObjectBody} object @param {string} page - the page's path (what the counter counts, what relative addresses are from)
+		 * @param {number} [status] @param {{ generation: number, hits: number } | null} [seen] - from `look`, when it already ran for this page
+		 */
+		const serve_page = async (object, page, status = 200, seen = null) => {
+			seen ??= await look(page, request.method === "GET" && status === 200);
+			const key = cache_key(page, seen.generation, status);
+			const cached = await cache.match(key);
+			if (cached) { return answer(cached, page, status, seen, true); }
 			const files = site_files(env.SITES, site);
 			const sanitized = await sanitize_html(await object.text());
-			let rendered = await render_x_elements(sanitized, {
-				site,
-				page,
-				page_uploaded: object.uploaded,
-				state: env.SITE_STATE.getByName(site),
-				request,
-				files,
-				page_html: sanitized,
-			});
+			let rendered = await render_x_elements(sanitized, { site, page, page_uploaded: object.uploaded, state, request, files, page_html: sanitized, count_slot: true });
 			if (await files.has("site.css")) { rendered = await with_stylesheet(rendered, `${site_base(site)}/site.css`); }
-			if (request.method === "GET" && status === 200) {
-				// A page load is a view (the visitor by a hash of their address; the count is all that's kept for long)
-				const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-				ctx.waitUntil(sha256_hex(`view|${ip}`).then((ip_hash) => env.SITE_STATE.getByName(site).record_view(ip_hash, page)).catch(() => { /* a miss is fine */ }));
-			}
-			return html_response(rendered, status);
+			const fresh = new Response(rendered, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": `public, max-age=${PAGE_CACHE_S}`, "X-Counter": /data-x-counter=/.test(rendered) ? "1" : "0" } });
+			ctx.waitUntil(cache.put(key, fresh.clone()).catch(() => { /* then the next view renders again */ }));
+			return answer(fresh, page, status, seen, false);
 		};
+		// A page seen before under this generation is answered from the cache before R2 is asked at all
+		let seen = null;
+		if (is_html_path(path)) {
+			seen = await look(path, request.method === "GET");
+			const cached = await cache.match(cache_key(path, seen.generation, 200));
+			if (cached) { return answer(cached, path, 200, seen, true); }
+		}
 		const object = await env.SITES.get(`sites/${site}/${path}`);
 		if (!object && clean && await env.SITES.head(`sites/${site}/${clean}/index.html`)) {
 			return path_redirect(`${url.pathname}/${url.search}`); // (relative addresses inside the folder's index then resolve right)
@@ -437,7 +513,7 @@ export default {
 			return not_found(`There's no <b>${site_base(site)}/${path}</b> here.`);
 		}
 		if (is_html_path(path)) {
-			return serve_page(object, path);
+			return serve_page(object, path, 200, seen);
 		}
 		const headers = new Headers(PAGE_HEADERS);
 		headers.set("Content-Type", content_type_for(path));

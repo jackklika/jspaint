@@ -20,6 +20,7 @@ import updated from "./updated.js";
  * @property {{ list_pages: (folder: string) => Promise<{ path: string, uploaded: number }[]>, page_title: (path: string) => Promise<string | null>, page_summary: (path: string) => Promise<string>, settings: () => Promise<any>, has: (path: string) => Promise<boolean> }} files - read-only look at the site's pages and settings
  * @property {string} page_html - the page being rendered (sanitized), for elements that read the page itself (<x-toc>)
  * @property {boolean} [preview] - a look from the editor, not a visit: nothing counts (the counter reads instead of hitting)
+ * @property {boolean} [count_slot] - the page is being rendered for the served-page cache: the counter leaves a slot (`<span data-x-counter>`) the sites Worker fills with the count on every view
  */
 
 /**
