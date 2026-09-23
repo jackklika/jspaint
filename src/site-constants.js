@@ -10,7 +10,7 @@ export const GIF_EXPORT_MAX_DURATION_MS = 10000;
 /** Most frames an animated GIF export will contain; longer timelines are quantized to fit. */
 export const GIF_EXPORT_MAX_FRAMES = 200;
 
-/** The hosted editor Worker (Paint app + publish API + GifCities proxy). Overridable in File > Save to My Site. */
+/** The hosted editor Worker (Paint app + publish API + GifCities proxy). Overridable in the Publish dialog. */
 export const DEFAULT_EDITOR_URL = "https://edit.coolpaint.world";
 
 /**

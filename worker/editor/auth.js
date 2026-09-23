@@ -27,7 +27,7 @@
 // rides back on the response. Signing out deletes the session row and clears both; a claims cookie can outlive
 // that by at most its hour. Routes that need the account's email or name ask for a fresh lookup.
 import { reserved_site_name, valid_site_name } from "../shared/names.js";
-import { report_limited } from "../shared/limits.js";
+import { client_ip, limited, report_limited, too_many } from "../shared/limits.js";
 import { write_moderation } from "./moderation.js";
 import { error_page_html } from "../shared/server-page.js";
 
@@ -368,6 +368,29 @@ async function handle_auth(request, url, env, { role_of, password_hash, site_has
 		response.headers.append("Set-Cookie", set_cookie(url, env, SESSION_COOKIE, "", 0));
 		response.headers.append("Set-Cookie", set_cookie(url, env, CLAIMS_COOKIE, "", 0));
 		return response;
+	}
+	const available_match = /^\/auth\/sites\/([^/]+)\/available$/.exec(path);
+	if (available_match) {
+		// Is this name free? — asked as someone types a site name (my-site.js new_site_form). Public (site names are
+		// public addresses), per-address limited, and only ever a word: free, yours, taken, reserved, claimable, invalid.
+		if (request.method !== "GET") { return json({ error: "Method not allowed" }, 405); }
+		if (await limited(env.LIMIT_IP_10S, `available:${client_ip(request)}`)) { return too_many(10, CORS); }
+		const site = available_match[1].toLowerCase();
+		const answer = async () => {
+			if (!valid_site_name(site)) { return "invalid"; }
+			if (site === "root") { return "reserved"; }
+			const session = await session_of(request, env);
+			const accounts = accounts_of(env);
+			const owner = await accounts.owner_of(site);
+			if (owner && session && owner === session.id) { return "yours"; }
+			if (owner) { return "taken"; }
+			if (reserved_site_name(site) && !session?.admin) { return "reserved"; }
+			if (await site_hash(env, site, { fresh: true })) { return "claimable"; }
+			const listing = await env.SITES.list({ prefix: `sites/${site}/`, limit: 1 });
+			return listing.objects.length ? "taken" : "free";
+		};
+		const reason = await answer();
+		return json({ name: site, available: reason === "free", reason });
 	}
 	if (path === "/auth/sites") {
 		// A signed-in user takes a site that nobody has

@@ -1220,7 +1220,7 @@ function file_save(maybe_saved_callback = () => { }, update_from_saved = true) {
 	const save_file_handle = system_file_handle;
 	if (save_file_handle && typeof save_file_handle === "object" && typeof save_file_handle.site_page === "string") {
 		// A page opened from (or saved to) My Site: Save puts it back on the site (my-site.js).
-		save_page_to_site(save_file_handle.site_page).then((ok) => { if (ok) { maybe_saved_callback(); } });
+		save_page_to_site(save_file_handle.site_page, "ctrl_s").then((ok) => { if (ok) { maybe_saved_callback(); } });
 		return;
 	}
 	if (!save_file_handle || file_name.match(/\.(svg|pdf)$/i)) {

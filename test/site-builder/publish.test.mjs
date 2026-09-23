@@ -18,15 +18,18 @@ await page.waitForSelector(".sticker", { timeout: 5000 });
 await type_text_box(page, "Published text", { x: 300, y: 200, width: 220, height: 60, tool: "Web Text" });
 await page.waitForSelector(".text-layer", { timeout: 5000 });
 
-await click_menu_item(page, "Save to My Site...");
-await page.waitForSelector(".site-publish-window", { timeout: 5000 });
-const fill = (label, value) => page.fill(`.site-publish-window label:has-text("${label}") input`, value);
-await fill("Site name", site);
-await fill("Page file", "index.html");
-await fill("Password", secret);
-await fill("Editor URL", editor);
-await page.click(".site-publish-window button[type=submit]");
+// Publish, signed out: the Sign In dialog first (a site's name and password — plain jspaint has no Google), then the
+// page goes up as index.html on its own, and the Publish window shows it live
+await click_menu_item(page, "Publish...");
+await page.waitForSelector(".my-site-sign-in", { timeout: 5000 });
+const sign_in_field = (label, value) => page.fill(`.my-site-sign-in label:has-text("${label}") input`, value);
+await sign_in_field("Site name", site);
+await sign_in_field("Password", secret);
+await sign_in_field("Editor URL", editor);
+await page.click(".my-site-sign-in button[type=submit]");
+await page.waitForSelector(".site-publish-window", { timeout: 15000 });
 await page.waitForFunction(() => /Done!|Couldn't|rejected|failed/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
+assert.match(await page.$eval(".site-publish-window .site-publish-live", (el) => el.textContent), /It's live!/);
 const log = await page.$eval(".site-publish-log", (el) => el.innerText);
 assert.match(log, /Done!/, log);
 assert.match(log, /2 assets uploaded, 0 reused/, log); // the bitmap and the sticker

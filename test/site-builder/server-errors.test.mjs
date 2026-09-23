@@ -22,7 +22,7 @@ page.on("console", (m) => { console_lines.push(m.text()); });
 
 // The editor over its quota: a 503 with a code — the Sign In dialog says the plain sentence, not the detail
 await page.route("**/api/whoami*", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: PLAIN, code: "storage-quota", detail: DETAIL }) }));
-await click_menu_item(page, "Sign In to My Site...");
+await click_menu_item(page, "Sign In...");
 await page.waitForSelector(".my-site-sign-in-account", { timeout: 10000 });
 await page.click(`.my-site-sign-in-account button[data-site="${site}"]`);
 await page.waitForFunction(() => /Something went wrong on our side/.test(document.querySelector(".my-site-sign-in .my-site-status")?.textContent || ""), null, { timeout: 10000 });
@@ -59,7 +59,7 @@ await page.evaluate(() => { [...document.querySelectorAll(".window button")].fin
 // A 4xx the person can act on keeps the server's words
 await page.evaluate(() => { for (const w of document.querySelectorAll(".window .window-close-button")) { w.click(); } });
 await page.route("**/auth/sites", (route) => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "That name is taken" }) }));
-await click_menu_item(page, "Sign In to My Site...");
+await click_menu_item(page, "Sign In...");
 await page.waitForSelector(".my-site-sign-in-account", { timeout: 10000 });
 await page.evaluate(() => { [...document.querySelectorAll(".my-site-sign-in button")].find((b) => b.textContent === "New Site…")?.click(); });
 await page.waitForSelector(".new-site-window", { timeout: 5000 });

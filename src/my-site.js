@@ -2,14 +2,16 @@
 // eslint-disable-next-line no-unused-vars
 /* global file_format:writable, file_name:writable, saved:writable, system_file_handle:writable */
 /* global $status_text, localize, new_local_session */
-// My Site, inside Paint: File > Sign In to My Site… (site name + edit secret), File > My Site… (the folder:
-// pages and files with Open / New Page / Upload / Delete / View), and Save back to the site with Ctrl+S once
-// a page came from there. Talks to the editor Worker's API (worker/editor/index.js); pages open through
-// collage-format.js with the site's files as the base for relative assets.
+// My Site, inside Paint: Sign In… (Google, or a site name + password), My Site… (the folder: pages and files with
+// Open / New Page / Upload / Delete / View), and Publish (the button in the page bar, File > Publish…, the My Site
+// menu, Ctrl+S) — one path from a stranger's first drawing to a live page: sign in at the moment of publishing, name
+// a site, up it goes (publish_current_page). Talks to the editor Worker's API (worker/editor/index.js); pages open
+// through collage-format.js with the site's files as the base for relative assets.
 import { $DialogWindow } from "./$ToolWindow.js";
 import { add_block } from "./blocks.js";
 import { escape_html, refresh_x_element_kinds } from "./block-kinds.js";
 import { HTML_FORMAT_ID, is_collage_html, open_collage_from_file } from "./collage-format.js";
+import { funnel } from "./funnel.js";
 import { are_you_sure, change_url_param, reset_canvas_and_history, reset_file, reset_selected_colors, set_magnification, show_error_message, update_title } from "./functions.js";
 import { $G, E } from "./helpers.js";
 import { begin_loading } from "./loading-veil.js";
@@ -85,7 +87,7 @@ const PAGE_PATH = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/)*[A-Za-z0-9][A-Za-z0-9.
 /**
  * Opens the site this tab was sent to (see above). Signed in as that site: the page (or the My Site folder).
  * Anyone else: a copy of the page to play with — published pages are public, so anyone may open one in Paint;
- * Save to My Site puts the copy on *your* site, and putting it back at its own address takes that site's password.
+ * Publish puts the copy on *your* site, and putting it back at its own address takes that site's password.
  * No page there at all: the Sign In dialog, prefilled (maybe it's yours and still empty). Read once — a reload
  * doesn't ask again.
  */
@@ -118,13 +120,15 @@ async function open_site_from_url_inner() {
 		sessionStorage.removeItem(NEW_SITE_KEY);
 	} catch (_error) { /* ignore */ }
 	if (just_signed_in) {
-		if (just_signed_in.resume === "save" && just_signed_in.page && await page_restored(just_signed_in.page)) {
-			// A save sent us to Google, and the drawing came back with us (its session is in the address): carry on
-			// saving — to the account's site, or to the one the dialog is about to make
+		const resumed = just_signed_in.resume === "save" && !!just_signed_in.page && await page_restored(just_signed_in.page);
+		funnel("sign_in_returned", { resume: resumed });
+		if (resumed && just_signed_in.page) {
+			// A publish sent us to Google, and the drawing came back with us (its session is in the address): carry on
+			// publishing — to the account's site, or to the one the dialog is about to make
 			await check_sign_in({ probe: true });
 			fresh_visit_loading?.();
 			fresh_visit_loading = null;
-			save_page_to_site(just_signed_in.page);
+			save_page_to_site(just_signed_in.page, "resume");
 			return;
 		}
 		// Back from Google: the account's site (its front page), or — no site yet — the dialog that makes one
@@ -232,15 +236,13 @@ async function open_starter_page() {
 	} else {
 		new_site_page("index.html", { starter: true });
 	}
-	$status_text.text(localize("A fresh page. Draw on it; Save puts it on a site of your own."));
+	$status_text.text(localize("A fresh page. Draw on it, then press Publish to put it on the web."));
 	fresh_visit_loading?.();
 	fresh_visit_loading = null;
+	funnel("starter_opened", { signed_in: is_signed_in(), account: has_account(), from_root });
 	if (!is_signed_in() && !has_account() && !welcome_dismissed()) {
 		const editor = get_site_editor_url();
 		show_welcome({
-			editor,
-			google_url: google_sign_in_url(editor, "index.html"),
-			before_leave: before_leaving_for_google,
 			homepage_url: `${editor}/~${ROOT_SITE}/`,
 			site_host: new URL(public_url("", ROOT_SITE)).host,
 		});
@@ -285,7 +287,7 @@ async function page_exists(site, path) {
 
 /**
  * Opens someone's published page as a copy: read without signing in (site files are public), assets resolve
- * against that site, no live room. The document remembers whose it was (`copy_of`), and Ctrl+S / Save to My Site
+ * against that site, no live room. The document remembers whose it was (`copy_of`), and Ctrl+S / Publish
  * publishes it to the site you're signed in to (asking you to sign in if you aren't).
  * @param {string} site
  * @param {string} path
@@ -316,7 +318,7 @@ async function open_page_copy(site, path) {
 		system_file_handle = site !== load_settings().site ? { site_page: path, copy_of: site } : { site_page: path, site };
 		update_title();
 		$G.triggerHandler("site-settings-changed"); // the globe's tooltip: whose page this is
-		$status_text.text(localize("Opened a copy of %1. Save to My Site puts it on your own site.", site_public_url(site, path)));
+		$status_text.text(localize("Opened a copy of %1. Publish puts it on your own site.", site_public_url(site, path)));
 	}
 	return opened;
 }
@@ -439,28 +441,68 @@ const SITE_LIMIT = 5; // sites per account (auth.js MAX_SITES says the same)
  * @param {JQuery} $into @param {string} [prefill]
  */
 function new_site_form($into, prefill = "") {
+	// A name to start from: theirs (the account's first name, as a site name), when nothing was asked for
+	const account = load_settings().account;
+	const suggested = prefill || slug_of(account?.name || "") || slug_of((account?.email || "").split("@")[0]);
 	const $name_row = $(E("label")).addClass("my-site-row").text(`${localize("Site name:")} `).appendTo($into);
-	const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", autocapitalize: "off", placeholder: "e.g. yourname", name: "new-site-name" }).val(prefill).appendTo($name_row);
+	const $name = $(E("input")).attr({ type: "text", spellcheck: "false", autocomplete: "off", autocapitalize: "off", placeholder: "e.g. yourname", name: "new-site-name", maxlength: "32" }).val(suggested).appendTo($name_row);
+	// The address it becomes, as they type, and whether it's free (the editor is asked, a moment after typing stops)
+	const host = new URL(public_url("", ROOT_SITE)).host;
+	const $address = $(E("div")).addClass("my-site-address").appendTo($into);
+	$address.append(document.createTextNode(`${localize("Your address:")} `));
+	const $address_link = $(E("b")).addClass("my-site-address-preview").appendTo($address);
+	const $availability = $(E("div")).addClass("my-site-availability").attr({ role: "status" }).appendTo($into);
+	let check_timer = 0;
+	let checked = "";
+	const update_address = () => {
+		const name = String($name.val()).trim().toLowerCase();
+		$address_link.text(`${host}/~${name || "name"}/`).toggleClass("my-site-address-empty", !name);
+		$availability.text("").removeClass("free taken");
+		clearTimeout(check_timer);
+		if (!name) { return; }
+		if (!SITE_NAME_PATTERN.test(name)) { $availability.text(localize("1–32 lowercase letters, digits, or hyphens.")).addClass("taken"); return; }
+		check_timer = window.setTimeout(async () => {
+			checked = name;
+			try {
+				const answer = await (await api(`/auth/sites/${encodeURIComponent(name)}/available`)).json();
+				if (checked !== name) { return; } // (they kept typing)
+				const words = {
+					free: localize("~%1 is free!", name),
+					yours: localize("~%1 is already yours.", name),
+					taken: localize("~%1 is taken. Try another.", name),
+					reserved: localize("~%1 is reserved. Try another.", name),
+					claimable: localize("~%1 has a password from before accounts — enter it below to make it yours.", name),
+					invalid: localize("1–32 lowercase letters, digits, or hyphens."),
+				};
+				$availability.text(words[/** @type {keyof typeof words} */ (answer.reason)] || "").toggleClass("free", answer.available || answer.reason === "yours").toggleClass("taken", !answer.available && answer.reason !== "yours" && answer.reason !== "claimable");
+				if (answer.reason === "claimable") { $claim_row.show(); $claim_password.trigger("focus"); }
+			} catch (_error) { /* the check is a nicety; Create tells for sure */ }
+		}, 350);
+	};
+	$name.on("input change", update_address);
 	const $claim_row = $(E("label")).addClass("my-site-row").text(`${localize("Its password:")} `).hide().appendTo($into);
 	const $claim_password = $(E("input")).attr({ type: "password", autocomplete: "off", name: "claim-password" }).appendTo($claim_row);
+	update_address();
 	return {
 		claiming: () => $claim_row.is(":visible"),
 		/** Makes (or claims) the site; the name when it's theirs, null with the reason in `$status`. @param {JQuery} $status */
 		submit: async ($status) => {
 			const name = String($name.val()).trim().toLowerCase();
-			if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) {
+			if (!SITE_NAME_PATTERN.test(name)) {
 				$status.text(localize("Site names are 1–32 lowercase letters, digits, or hyphens."));
 				$name.trigger("focus");
 				return null;
 			}
 			$status.text(localize("Checking…"));
 			try {
-				if ($claim_row.is(":visible")) {
+				const claiming = $claim_row.is(":visible");
+				if (claiming) {
 					await api(`/auth/sites/${encodeURIComponent(name)}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: String($claim_password.val()) }) });
 				} else {
 					await api("/auth/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
 				}
 				$status.text("");
+				funnel("site_named", { claimed: claiming, suggested: name === suggested });
 				return name;
 			} catch (error) {
 				if (/** @type {any} */ (error).status === 409 && /password/.test(error.message)) {
@@ -477,6 +519,15 @@ function new_site_form($into, prefill = "") {
 	};
 }
 
+const SITE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+/** A person's name as a site name: the first word, lowercase, letters and digits only. @param {string} text */
+function slug_of(text) {
+	const first = String(text || "").trim().split(/\s+/)[0] || "";
+	const slug = first.normalize("NFKD").toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/^-+|-+$/g, "").slice(0, 32);
+	return SITE_NAME_PATTERN.test(slug) ? slug : "";
+}
+
 /**
  * New Site…: a name (up to SITE_LIMIT sites per account).
  * @param {string} [prefill]
@@ -487,7 +538,7 @@ function show_new_site_dialog(prefill = "") {
 		let made = null;
 		const $w = $DialogWindow(localize("New Site"));
 		$w.addClass("new-site-window squish");
-		$(E("p")).addClass("my-site-note").text(localize("Pick a name. It becomes the site's address: …/~name/ (an account can have up to %1 sites).", String(SITE_LIMIT))).appendTo($w.$main);
+		$(E("p")).addClass("my-site-note").text(localize("Pick a name for the site. It becomes the address people visit — short and memorable is best. (An account can have up to %1 sites.)", String(SITE_LIMIT))).appendTo($w.$main);
 		const form = new_site_form($w.$main, prefill);
 		const $status = $(E("div")).addClass("my-site-status").appendTo($w.$main);
 		const $create = $w.$Button(localize("Create"), async () => {
@@ -540,11 +591,12 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 	return new Promise((resolve) => {
 		const settings = load_settings();
 		let done = false;
-		const $w = $DialogWindow(localize("Sign In to My Site"));
+		const $w = $DialogWindow(localize("Sign In"));
 		$w.addClass("my-site-sign-in squish");
 		const $main = $w.$main;
-		const finish = () => {
+		const finish = (via = settings.account ? "google" : "password") => {
 			done = true;
+			funnel("signed_in", { via, resume: !!resume });
 			$w.close();
 			resolve(true);
 		};
@@ -585,8 +637,8 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 					});
 				}
 			} else {
-				// No site yet: the name, right here
-				$(E("p")).addClass("my-site-note").text(localize("No site yet — pick a name. It becomes your address: …/~name/")).appendTo($main);
+				// No site yet: the name, right here — and what it buys them
+				$(E("p")).addClass("my-site-note").text(localize("Almost there. Pick a name for your site — it becomes the address people visit.")).appendTo($main);
 				if (resume) { $(E("p")).addClass("my-site-note my-site-resume").text(localize("Your page is saved to it right after.")).appendTo($main); }
 				const form = new_site_form($main, prefill);
 				$status.appendTo($main);
@@ -644,6 +696,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 		$button.on("click", async (e) => {
 			e.preventDefault();
 			const at = typed_editor();
+			funnel("sign_in_started", { via: "google", resume: !!resume });
 			await before_leaving_for_google();
 			location.href = google_sign_in_url(at, resume);
 		});
@@ -681,7 +734,7 @@ function show_sign_in_dialog({ site: prefill = "", password: password_mode = fal
 			$status.text("Checking…");
 			save_settings({ ...settings, site, secret, editor_url, remember_secret: true, account: null }); // (a password sign-in, not the account's)
 			if (await check_sign_in()) {
-				finish();
+				finish("password");
 			} else {
 				$ok.prop("disabled", false);
 				$status.text(`Couldn't sign in at ${editor_url}: the password was rejected or the editor is unreachable.`);
@@ -718,7 +771,7 @@ function sign_out() {
 // ---- pages: drafts, and switching between them ----
 
 // Every page you open gets its own local session (the #local:… id), and that session is the page's draft: edits are
-// kept there the moment they're made (the autosave), and only Save to My Site publishes them. Switching pages goes
+// kept there the moment they're made (the autosave), and only Publish publishes them. Switching pages goes
 // back to the page's draft session when there is one, else opens the published page.
 const DRAFTS_KEY = "jspaint site drafts"; // localStorage: { "<site>/<page>": { session, at } }
 
@@ -938,10 +991,24 @@ function new_site_page(path, { starter = false } = {}) {
  * @param {string} path
  * @returns {Promise<boolean>}
  */
-async function save_page_to_site(path) {
-	const guest = system_file_handle && typeof system_file_handle === "object" ? system_file_handle.guest : null;
+async function save_page_to_site(path, source = "ctrl_s") {
+	const handle = system_file_handle && typeof system_file_handle === "object" ? system_file_handle : null;
+	const guest = handle ? handle.guest : null;
+	funnel("publish_clicked", { source, signed_in: is_signed_in(), account: has_account(), fresh: !!(handle && handle.fresh), copy: !!(handle && typeof handle.copy_of === "string"), guest: !!guest });
 	if (!guest && !await ensure_signed_in({ page: path })) { return false; }
 	return show_publish_dialog({ auto: true, page: path });
+}
+
+/**
+ * Publish, from anywhere it's offered (the page bar's button, File > Publish…, the My Site menu, the globe's window,
+ * the Share dialog, the nudge): the page this is — the one on the site, the starter page, a copy — goes up as itself
+ * (index.html when it never had a name). Signing in, and naming a site, happen on the way if they have to.
+ * @param {string} source - where the click came from (the funnel)
+ */
+function publish_current_page(source) {
+	const handle = system_file_handle && typeof system_file_handle === "object" ? system_file_handle : null;
+	const path = (handle && typeof handle.site_page === "string" && handle.site_page) || load_settings().page || "index.html";
+	return save_page_to_site(path, source);
 }
 
 /** View > Live Page: the published page in a new tab. */
@@ -1172,7 +1239,7 @@ async function show_my_site_dialog({ tab = "site" } = {}) {
 	const render_files = (files) => {
 		$list.empty();
 		if (files.length === 0) {
-			$(E("li")).addClass("my-site-empty").text(localize("Nothing here yet. New Page… makes your front page (index.html); Save to My Site puts this picture up as it.")).appendTo($list);
+			$(E("li")).addClass("my-site-empty").text(localize("Nothing here yet. New Page… makes your front page (index.html); Publish puts this picture up as it.")).appendTo($list);
 		}
 		for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
 			const $row = $(E("li")).addClass("my-site-row").attr({ role: "option", tabindex: "0", "data-path": file.path }).appendTo($list);
@@ -1355,6 +1422,28 @@ $("<style>").text(`
 		align-items: center;
 		gap: 6px;
 	}
+	.my-site-address {
+		margin: 2px 0 0;
+		font-size: 12px;
+	}
+	.my-site-address-preview {
+		font-family: 'Courier New', monospace;
+		font-size: 13px;
+	}
+	.my-site-address-preview.my-site-address-empty {
+		color: var(--GrayText, #808080);
+	}
+	.my-site-availability {
+		min-height: 1.3em;
+		margin: 2px 0 4px;
+		font-size: 11px;
+	}
+	.my-site-availability.free {
+		color: #007000;
+	}
+	.my-site-availability.taken {
+		color: #a00000;
+	}
 	.my-site-sign-in .my-site-row {
 		margin-bottom: 6px;
 	}
@@ -1518,4 +1607,4 @@ $("<style>").text(`
 	}
 `).appendTo(document.head);
 
-export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, list_site_folders, open_live_page, open_page_from_site, public_url, save_page_to_site, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, sites_url_known, switch_page, switch_site, upload_asset, write_file };
+export { SITE_LIMIT, check_sign_in, current_role, current_site_page_path, open_site_from_url, ensure_signed_in, list_files, list_site_folders, open_live_page, open_page_from_site, public_url, publish_current_page, save_page_to_site, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, sites_url_known, switch_page, switch_site, upload_asset, write_file };

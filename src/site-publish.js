@@ -2,7 +2,7 @@
 // eslint-disable-next-line no-unused-vars
 /* global file_format:writable, file_name:writable, saved:writable, system_file_handle:writable */
 /* global localize */
-// File > Save to My Site…: publishes the page (bitmap + elements + stickers + text) on the hosted site
+// Publish (the page bar's button, File > Publish…, Ctrl+S): publishes the page (bitmap + elements + stickers + text) on the hosted site
 // builder (worker/editor). Assets are uploaded content-addressed (gifs/<hash>.gif, collages/<page>.png),
 // then the page itself, through the editor Worker's API with the site's password (or the master key). The page appears at
 // <sites>/~<name>/. Sign-in and the file browser live in my-site.js; the settings are shared from here.
@@ -13,6 +13,7 @@ import { $G, E } from "./helpers.js";
 import { showMessageBox } from "./msgbox.js";
 import { default_editor_url } from "./site-constants.js";
 import { preview_path, render_collage_frame, render_page_thumbnail, render_share_preview, thumb_path } from "./share-preview.js";
+import { funnel } from "./funnel.js";
 
 const SETTINGS_KEY = "jspaint site publish settings";
 const LEGACY_EDITOR_URLS = new Set(["https://coolpaint.world", "https://www.coolpaint.world"]);
@@ -268,7 +269,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 		settings.site = guest.site;
 		settings.invite = { key: guest.key, page: settings.page };
 	}
-	const $w = $DialogWindow(localize("Save to My Site"));
+	const $w = $DialogWindow(localize("Publish"));
 	$w.addClass("site-publish-window squish");
 	const $main = $w.$main;
 	/** @type {(saved: boolean) => void} */
@@ -303,7 +304,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 		for (const $input of [$site, $page, $secret, $editor_url]) { $input.prop("disabled", true); }
 		$secret.closest(".site-publish-row").hide();
 		$remember_row.hide();
-		$(E("div")).addClass("site-publish-row").text(localize("You're editing this page with a share link; Save publishes it for everyone.")).appendTo($main);
+		$(E("div")).addClass("site-publish-row").text(localize("You're editing this page with a share link; Publish puts it up for everyone.")).appendTo($main);
 	}
 	const $log = $(E("div")).addClass("site-publish-log inset-deep").appendTo($main);
 	const log = (/** @type {string} */ line) => {
@@ -311,7 +312,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 		$log[0].scrollTop = $log[0].scrollHeight;
 	};
 
-	const $save = $w.$Button(localize("Save"), async () => {
+	const $save = $w.$Button(localize("Publish"), async () => {
 		const current = {
 			editor_url: String($editor_url.val()).trim() || default_editor_url(),
 			site: String($site.val()).trim().toLowerCase(),
@@ -340,7 +341,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			return;
 		}
 		if (!current.secret && !guest && !account) {
-			log("The password is needed to save.");
+			log("The password is needed to publish.");
 			$secret.focus();
 			return;
 		}
@@ -352,13 +353,37 @@ function show_publish_dialog({ auto = false, page } = {}) {
 		}
 		$save.prop("disabled", true);
 		$log.empty();
-		log("Saving…");
+		$main.find(".site-publish-live").remove();
+		log("Publishing…");
+		const handle_before = system_file_handle && typeof system_file_handle === "object" ? system_file_handle : null;
+		const first = !!(handle_before && (handle_before.fresh || typeof handle_before.copy_of === "string")) || !handle_before;
 		try {
 			const url = await publish_collage(current, log);
 			log("Done!");
 			$(E("div")).append($(E("a")).attr({ href: url, target: "_blank", rel: "noopener" }).text(url)).appendTo($log);
+			funnel("published", { first, page: current.page, guest: !!guest, account: !!account });
 			resolve_result(true);
-			$w.$Button(localize("Open Page"), () => { window.open(url, "_blank", "noopener"); }).focus();
+			// It's live: the address, big, and what to do with it
+			const $live = $(E("div")).addClass("site-publish-live").insertBefore($log);
+			$(E("div")).addClass("site-publish-live-title").text(first ? localize("It's live!") : localize("Published!")).appendTo($live);
+			$(E("a")).addClass("site-publish-live-url").attr({ href: url, target: "_blank", rel: "noopener" }).text(url.replace(/^https?:\/\//, "")).appendTo($live);
+			$(E("div")).addClass("site-publish-live-note").text(localize("Anyone with the address can see it. Keep drawing — Publish again puts up your changes.")).appendTo($live);
+			if (!$w.$content.find(".site-publish-after").length) {
+				const $open = $w.$Button(localize("Open Page"), () => { window.open(url, "_blank", "noopener"); }).addClass("site-publish-after");
+				$w.$Button(localize("Copy Link"), async () => {
+					try {
+						await navigator.clipboard.writeText(url);
+						log(localize("Copied!"));
+					} catch (_error) {
+						log(localize("Select the address and copy it."));
+					}
+				}).addClass("site-publish-after");
+				$w.$Button(localize("Share…"), async () => {
+					$w.close();
+					(await import("./share.js")).show_share_dialog(); // (share.js imports this module: no static cycle)
+				}).addClass("site-publish-after");
+				$open.focus();
+			}
 		} catch (error) {
 			log(String(error.message || error));
 			if (/^Not saved:/.test(String(error.message || ""))) {
@@ -366,7 +391,7 @@ function show_publish_dialog({ auto = false, page } = {}) {
 			} else if (error && error.server) {
 				show_error_message(error.message); // (plain: the detail is in the console and in PostHog, not for the screen)
 			} else {
-				show_error_message("Couldn't save to the site.", error);
+				show_error_message("Couldn't publish the page.", error);
 			}
 		} finally {
 			$save.prop("disabled", false);

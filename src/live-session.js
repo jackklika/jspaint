@@ -8,7 +8,7 @@
 // bitmap's dirty rectangle goes out as a PNG patch, elements go out as per-id set/remove/order operations.
 // Remote changes are applied in place — and to every node of the undo tree, so undoing your own work never
 // erases someone else's. Presence (cursors, who's editing which text) is relayed but not stored. Publishing
-// (Save to My Site) remains explicit; the room is the shared draft, so the page looks the same wherever you sign in.
+// (Publish) remains explicit; the room is the shared draft, so the page looks the same wherever you sign in.
 // The room keeps every change as a version (who, what, when — the label sent with each change is the undoable's
 // name); page-history.js shows that tree and can take everyone back to any version (`restore`).
 import { get_editing_block, get_selected_block, order_blocks, remove_block_by_id, set_remote_editor_lookup, snapshot_blocks, upsert_block_from_snapshot } from "./blocks.js";

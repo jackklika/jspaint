@@ -8,11 +8,12 @@ import { $DialogWindow } from "./$ToolWindow.js";
 import { $G, E } from "./helpers.js";
 import { live_sync_state } from "./live-session.js";
 import { end_all_loading } from "./loading-veil.js";
-import { SITE_LIMIT, list_files, open_site_from_url, public_url, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site } from "./my-site.js";
+import { SITE_LIMIT, list_files, open_site_from_url, public_url, publish_current_page, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_page, switch_site } from "./my-site.js";
+import { init_publish_button } from "./publish-button.js";
 import { show_page_history } from "./page-history.js";
 import { current_site_page, guest_info, show_share_dialog } from "./share.js";
 import { ROOT_SITE, site_public_url } from "./site-constants.js";
-import { get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
+import { get_site_editor_url, is_signed_in, load_settings } from "./site-publish.js";
 
 const GLOBE = 32; // px
 const RADIUS = 15.5;
@@ -134,10 +135,10 @@ async function show_site_view() {
 	});
 	if (guest) {
 		const page_url = site_public_url(guest.site, page || "index.html");
-		$(E("p")).addClass("site-view-blurb").text(localize("You're drawing on this page as a guest, through a share link. Ctrl+S saves it to the site.")).appendTo($main);
+		$(E("p")).addClass("site-view-blurb").text(localize("You're drawing on this page as a guest, through a share link. Publish puts it up for everyone.")).appendTo($main);
 		row(localize("Page:"), page ? link(page_url, page) : $(E("span")).text("—"));
 		$w.$Button(localize("Share Page…"), () => { $w.close(); show_share_dialog(); }, { type: "submit" });
-		$w.$Button(localize("Sign In to My Site…"), async () => {
+		$w.$Button(localize("Sign In…"), async () => {
 			$w.close();
 			if (await show_sign_in_dialog()) { show_site_view(); }
 		});
@@ -171,10 +172,10 @@ async function show_site_view() {
 		row(localize("Editor:"), $(E("span")).text(get_site_editor_url()));
 		const copy_of = system_file_handle && typeof system_file_handle === "object" && typeof system_file_handle.copy_of === "string" ? system_file_handle.copy_of : "";
 		row(localize("This page:"), copy_of ?
-			$(E("span")).text(localize("%1 — a copy of %2. Save to My Site puts it on your site.", page, site_public_url(copy_of, page || "index.html"))) :
-			page ? link(public_url(page), page) : $(E("span")).text(localize("not saved to the site yet")));
+			$(E("span")).text(localize("%1 — a copy of %2. Publish puts it on your site.", page, site_public_url(copy_of, page || "index.html"))) :
+			page ? link(public_url(page), page) : $(E("span")).text(localize("not published yet")));
 		$w.$Button(localize("My Site…"), () => { $w.close(); show_my_site_dialog(); }, { type: "submit" });
-		$w.$Button(page ? localize("Save Page…") : localize("Save to My Site…"), () => { $w.close(); show_publish_dialog(); });
+		$w.$Button(localize("Publish…"), () => { $w.close(); publish_current_page("globe"); });
 		if (page) { $w.$Button(localize("Share…"), () => { $w.close(); show_share_dialog(); }); }
 		if (page && live_sync_state().room) { $w.$Button(localize("History…"), () => { $w.close(); show_page_history(); }); }
 		$w.$Button(localize("Sign Out"), () => {
@@ -190,7 +191,8 @@ async function show_site_view() {
 
 /**
  * The bar right above the canvas area: the site's pages as tabs (the current one pressed), so switching is a click —
- * each page keeps its edits in its own draft session, and only Save to My Site publishes (my-site.js switch_page).
+ * each page keeps its edits in its own draft session, and only Publish publishes (my-site.js switch_page). At the bar's
+ * far end, always: the Publish button (publish-button.js).
  * Pages that don't fit go behind a "…" that opens My Pages. A guest's page, a copy of someone's page, or a picture
  * that isn't on a site shows as one label instead. Never over the page, and there on a phone too.
  */
@@ -226,6 +228,7 @@ function init_page_label() {
 	const $label = $(E("button")).attr({ type: "button", title: localize("This page — click for the site view") }).addClass("page-path-label").appendTo($bar);
 	$label.on("mousedown", keep_focus);
 	$label.on("click", () => { show_site_view(); });
+	init_publish_button($bar);
 
 	/** @type {{ site: string, pages: string[], at: number }} */
 	let listed = { site: "", pages: [], at: 0 };
@@ -290,7 +293,7 @@ function init_page_label() {
 			rendered = "";
 			const text = guest ? `~${guest.site}/${page || "…"} ${localize("(guest)")}` :
 				page && copy_of ? localize("%1 — a copy of ~%2's", page, copy_of) :
-					page && !settings.site ? `${page} — ${localize("not saved to a site yet")}` : // (the starter page, before signing in)
+					page && !settings.site ? `${page} — ${localize("not published yet")}` : // (the starter page, before signing in)
 						page ? `${site_label}/${page}` : `${file_name || localize("untitled")} — ${localize("not on a site")}`;
 			$label.show().text(text);
 			return;
@@ -378,7 +381,7 @@ function init_site_button() {
 			background: var(--ButtonFace, #c0c0c0);
 		}
 		.page-path-label {
-			max-width: 100%;
+			max-width: calc(100% - 80px); /* (room for Publish at the far end) */
 			min-width: 0;
 			height: 16px;
 			padding: 0 6px;

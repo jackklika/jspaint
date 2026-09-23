@@ -1,5 +1,5 @@
 // The tabs above the canvas: the site's pages, a click switches, and every page keeps its edits in its own draft
-// session — leaving a page asks nothing and publishes nothing; coming back finds the edits; only Save to My Site
+// session — leaving a page asks nothing and publishes nothing; coming back finds the edits; only Publish
 // publishes. Too many pages: a "…" opens My Pages. Needs both Workers running locally, like publish.test.mjs.
 import { assert, canvas_box, open_paint, select_tool } from "./helpers.mjs";
 

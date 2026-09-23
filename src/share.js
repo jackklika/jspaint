@@ -14,7 +14,8 @@ import { showMessageBox } from "./msgbox.js";
 import { $G, E } from "./helpers.js";
 import { qr_modules, render_qr_canvas } from "./qr.js";
 import { preview_path, render_share_preview } from "./share-preview.js";
-import { authorized, current_site, get_site_editor_url, is_signed_in, load_settings, show_publish_dialog } from "./site-publish.js";
+import { authorized, current_site, get_site_editor_url, is_signed_in, load_settings } from "./site-publish.js";
+import { publish_current_page } from "./my-site.js";
 
 const JOIN_KEY = "jspaint join"; // sessionStorage: the share link this tab opened with (survives the app's own reloads)
 // <site>/<page>/<key>; the page may itself contain slashes (encoded in links, decoded by URLSearchParams).
@@ -141,8 +142,8 @@ function show_share_dialog() {
 	$w.addClass("share-window squish");
 	const $main = $w.$main;
 	if (!page || (!guest_info() && !is_signed_in())) {
-		$(E("p")).text(localize("Sharing works on a page of your site. Save this picture to My Site first, then share it — or sign in and open a page.")).appendTo($main);
-		$w.$Button(localize("Save to My Site…"), () => { $w.close(); show_publish_dialog(); }, { type: "submit" });
+		$(E("p")).text(localize("Sharing works on a page of your site. Publish this picture first, then share it — or sign in and open a page.")).appendTo($main);
+		$w.$Button(localize("Publish…"), () => { $w.close(); publish_current_page("share"); }, { type: "submit" });
 		$w.$Button(localize("Close"), () => { $w.close(); });
 		$w.center();
 		return;

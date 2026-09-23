@@ -180,6 +180,15 @@ try {
 	assert.equal(me.role, "site");
 	assert.deepEqual(me.sites, [site, older]);
 
+	// Is a name free? — what the name step asks as someone types
+	const available = async (name, c = {}) => (await call(`/auth/sites/${name}/available`, {}, c)).json();
+	assert.deepEqual(await available(`g-${stamp}-free`), { name: `g-${stamp}-free`, available: true, reason: "free" });
+	assert.deepEqual(await available(site), { name: site, available: false, reason: "taken" });
+	assert.deepEqual(await available(site, cookies), { name: site, available: false, reason: "yours" });
+	assert.deepEqual(await available("paypal"), { name: "paypal", available: false, reason: "reserved" });
+	assert.deepEqual(await available("Bad_Name"), { name: "bad_name", available: false, reason: "invalid" });
+	assert.deepEqual(await available("root"), { name: "root", available: false, reason: "reserved" });
+
 	// The same Google account again: the same user; another Google account with the same verified email: also the same user
 	const again = async () => {
 		const start = await call("/auth/google");
@@ -289,7 +298,7 @@ try {
 	// A newcomer at the editor: the starter page, a stroke, Save → Sign In → Google → back on the same drawing, with
 	// the save waiting: a site name → the page goes up as that site's index.html
 	person = { sub: `sub-${stamp}-newcomer`, email: `newcomer-${stamp}@example.com`, email_verified: true, name: "New Pat" };
-	const { page: newcomer, close: close_newcomer } = await open_paint({ url: `${editor}/` });
+	const { page: newcomer, close: close_newcomer } = await open_paint({ url: `${editor}/`, init: () => { window.__events = []; window.posthog = { capture: (name, props) => { window.__events.push([name, props]); } }; } });
 	await newcomer.waitForFunction(() => system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
 	await newcomer.waitForSelector(".welcome-window", { timeout: 10000 });
 	await newcomer.evaluate(() => { [...document.querySelectorAll(".welcome-window button")].find((b) => b.textContent === "Start drawing").click(); });
@@ -300,18 +309,35 @@ try {
 	const stroke = await newcomer.evaluate(() => main_ctx.getImageData(600, 500, 1, 1).data.join(","));
 	const drawing_session = await newcomer.evaluate(() => location.hash);
 	assert.match(drawing_session, /^#local:/);
-	await newcomer.keyboard.press("Control+s");
+	await newcomer.click(".page-publish"); // (the button; Ctrl+S, File > Publish…, the My Site menu, and the globe do the same)
 	await newcomer.waitForSelector(".my-site-sign-in .google-sign-in", { timeout: 10000 });
+	assert.deepEqual(await newcomer.evaluate(() => window.__events.filter((e) => e[0] === "publish_clicked").map((e) => [e[1].source, e[1].signed_in, e[1].fresh])), [["button", false, true]]);
 	await newcomer.click(".my-site-sign-in .google-sign-in");
-	await newcomer.waitForSelector(".my-site-sign-in-account", { timeout: 20000 }); // back, with an account and no site — and the save waiting
+	await newcomer.waitForSelector(".my-site-sign-in-account", { timeout: 20000 }); // back, with an account and no site — and the publish waiting
 	assert.equal(await newcomer.evaluate(() => location.hash), drawing_session, "the same drawing's session");
 	await newcomer.waitForFunction((stroke) => main_ctx.getImageData(600, 500, 1, 1).data.join(",") === stroke, stroke, { timeout: 30000 }); // (the drawing comes back from IndexedDB; slow under load)
 	assert.match(await newcomer.$eval(".my-site-sign-in-account", (el) => el.textContent), /Your page is saved to it right after/);
+	// The name step sells the address: a suggestion from the account's name, the address as typed, and whether it's free
+	assert.equal(await newcomer.$eval('.my-site-sign-in-account input[name="new-site-name"]', (el) => el.value), "new", "suggested from the account's first name");
+	assert.match(await newcomer.$eval(".my-site-sign-in-account .my-site-address-preview", (el) => el.textContent), /\/~new\/$/);
 	const newcomer_site = `g-${stamp}-new`;
+	await newcomer.fill('.my-site-sign-in-account input[name="new-site-name"]', site);
+	await newcomer.waitForFunction((site) => new RegExp(`~${site} is taken`).test(document.querySelector(".my-site-sign-in-account .my-site-availability")?.textContent || ""), site, { timeout: 10000 });
+	await newcomer.fill('.my-site-sign-in-account input[name="new-site-name"]', "paypal");
+	await newcomer.waitForFunction(() => /~paypal is reserved/.test(document.querySelector(".my-site-sign-in-account .my-site-availability")?.textContent || ""), null, { timeout: 10000 });
 	await newcomer.fill('.my-site-sign-in-account input[name="new-site-name"]', newcomer_site);
+	await newcomer.waitForFunction((name) => new RegExp(`~${name} is free!`).test(document.querySelector(".my-site-sign-in-account .my-site-availability")?.textContent || ""), newcomer_site, { timeout: 10000 });
+	assert.match(await newcomer.$eval(".my-site-sign-in-account .my-site-address-preview", (el) => el.textContent), new RegExp(`/~${newcomer_site}/$`));
 	await newcomer.click(".my-site-sign-in-account button[type=submit]");
 	await newcomer.waitForFunction(() => /Done!|Couldn't|rejected|failed/i.test(document.querySelector(".site-publish-log")?.textContent || ""), null, { timeout: 60000 });
-	assert.match(await newcomer.$eval(".site-publish-log", (el) => el.innerText), /Done!/, "saved right after the name");
+	assert.match(await newcomer.$eval(".site-publish-log", (el) => el.innerText), /Done!/, "published right after the name");
+	// It's live: the address, big, with Open Page / Copy Link / Share… — and the funnel saw every step
+	assert.match(await newcomer.$eval(".site-publish-live", (el) => el.textContent), /It's live!/);
+	assert.match(await newcomer.$eval(".site-publish-live-url", (el) => el.getAttribute("href") || ""), new RegExp(`/~${newcomer_site}/$`));
+	assert.deepEqual(await newcomer.evaluate(() => [...document.querySelectorAll(".site-publish-window button")].map((b) => b.textContent).filter((t) => /Open Page|Copy Link|Share/.test(t))), ["Open Page", "Copy Link", "Share…"]);
+	const newcomer_events = await newcomer.evaluate(() => window.__events.map((e) => e[0]));
+	for (const step of ["sign_in_returned", "publish_clicked", "signed_in", "site_named", "published"]) { assert.ok(newcomer_events.includes(step), `${step} in ${newcomer_events.join(",")}`); }
+	assert.deepEqual(await newcomer.evaluate(() => window.__events.filter((e) => e[0] === "published").map((e) => e[1].first)), [true]);
 	const newcomer_files = (await (await fetch(`${editor}/api/sites/${newcomer_site}/files`, { headers: { Authorization: `Bearer ${master}` } })).json()).files.map((f) => f.path);
 	assert.ok(newcomer_files.includes("index.html") && newcomer_files.includes("collages/index.png"), newcomer_files.join(","));
 	assert.deepEqual(await newcomer.evaluate(() => system_file_handle), { site_page: "index.html", site: newcomer_site }, "their page now");
@@ -323,7 +349,7 @@ try {
 	person = { sub: `sub-${stamp}-browser`, email: `browser-${stamp}@example.com`, email_verified: true, name: "Browser Pat" };
 	const { page: paint, close } = await open_paint({ url: `${editor}/` });
 	await paint.waitForFunction(() => system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
-	await click_menu_item(paint, "Sign In to My Site...");
+	await click_menu_item(paint, "Sign In...");
 	await paint.waitForSelector(".my-site-sign-in .google-sign-in", { timeout: 10000 });
 	assert.match(await paint.getAttribute(".my-site-sign-in .google-sign-in", "href") || "", /\/auth\/google\?next=/);
 	await paint.click(".my-site-sign-in .google-sign-in");

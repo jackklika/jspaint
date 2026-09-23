@@ -18,7 +18,7 @@ assert.match(minted.password, /^[a-z2-9]{4}(-[a-z2-9]{4}){3}$/);
 const { page, close } = await open_paint();
 
 // Sign in
-await click_menu_item(page, "Sign In to My Site...");
+await click_menu_item(page, "Sign In...");
 await page.waitForSelector(".my-site-sign-in", { timeout: 5000 });
 await page.fill('.my-site-sign-in input[name="editor-url"]', editor);
 await page.waitForSelector(".my-site-sign-in .google-sign-in", { timeout: 5000 }); // that editor has Google sign-in set up: the button is offered

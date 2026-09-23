@@ -10,11 +10,13 @@ import { show_page_history } from "./page-history.js";
 import { show_help } from "./help.js";
 import { $G, get_rgba_from_color, is_discord_embed } from "./helpers.js";
 import { show_imgur_uploader } from "./imgur.js";
-import { show_publish_dialog } from "./site-publish.js";
 import { export_collage_gif } from "./gif-export.js";
 import { is_gif_picker_open, toggle_gif_picker } from "./gif-picker.js";
 import { is_layers_window_open, toggle_layers_window } from "./layers-window.js";
-import { open_live_page, show_my_site_dialog, show_sign_in_dialog } from "./my-site.js";
+import { open_live_page, publish_current_page, show_my_site_dialog, show_new_page_prompt, show_new_site_dialog, show_sign_in_dialog, sign_out, switch_site } from "./my-site.js";
+import { show_site_view } from "./site-button.js";
+import { current_site_page } from "./share.js";
+import { has_account, is_signed_in } from "./site-publish.js";
 import { is_live_sync_enabled, set_live_sync_enabled } from "./live-session.js";
 import { show_share_dialog } from "./share.js";
 import { BLOCK_KINDS, add_block, copy_section_link, delete_selected_block, edit_selected_block, flatten_block, flatten_blocks, get_blocks, get_selected_block, is_editing_block, reorder_block, show_block_html_dialog, show_block_properties_dialog, show_text_link_dialog } from "./blocks.js";
@@ -115,22 +117,22 @@ const menus = {
 		},
 		MENU_DIVIDER,
 		{
-			label: localize("Sign In to My Sit&e..."),
+			label: localize("&Publish..."),
+			speech_recognition: ["publish", "publish page", "publish this page", "publish to my site", "put this on my site", "put this on the web", "save to my site", "save to the web"],
+			action: () => { publish_current_page("menu"); },
+			description: localize("Puts this page on the web (picture, elements, GIFs, text). Signs you in and names your site on the way, if need be. Ctrl+S once it's up."),
+		},
+		{
+			label: localize("Sign &In..."),
 			speech_recognition: ["sign in", "sign in to my site", "log in", "log in to my site", "sign into my site"],
 			action: () => { show_sign_in_dialog(); },
-			description: localize("Signs in to your site with its name and password."),
+			description: localize("Signs in with Google, or with a site's name and password."),
 		},
 		{
 			label: localize("M&y Site..."),
 			speech_recognition: ["my site", "open my site", "show my site", "my files", "site files", "open from my site", "open a page from my site", "manage my site"],
 			action: () => { show_my_site_dialog(); },
 			description: localize("Shows the pages and files on your site: open a page, make a new one, upload, delete."),
-		},
-		{
-			label: localize("Save to &My Site..."),
-			speech_recognition: ["save to my site", "publish to my site", "put this on my site", "upload to my site", "save to the web", "publish page"],
-			action: () => { show_publish_dialog(); },
-			description: localize("Publishes this page (picture, elements, GIFs, text) on your site."),
 		},
 		{
 			label: localize("Sha&re Page..."),
@@ -1036,6 +1038,89 @@ const menus = {
 			enabled: () => !!get_selected_block(),
 			action: () => { delete_selected_block(); },
 			description: localize("Removes the selected element from the page."),
+		},
+	],
+	// Everything about the site in one place (Jack, 2026-09-23: "multiple places the user could discover 'publish'")
+	[localize("My &Site")]: [
+		{
+			label: localize("&Publish..."),
+			speech_recognition: ["publish", "publish page", "publish this page", "put this on the web"],
+			action: () => { publish_current_page("menu"); },
+			description: localize("Puts this page on the web. Signs you in and names your site on the way, if need be."),
+		},
+		{
+			label: localize("Open &Live Page"),
+			speech_recognition: ["open live page", "open the live page", "view live page", "see the page on the web", "open my page on the web"],
+			enabled: () => is_signed_in() && !!current_site_page(),
+			action: () => { open_live_page(); },
+			description: localize("Opens this page as the web shows it, in a new tab."),
+		},
+		{
+			label: localize("Sha&re Page..."),
+			speech_recognition: ["share", "share page", "share this page", "share link", "qr code", "invite someone", "invite a friend", "let someone join"],
+			action: () => { show_share_dialog(); },
+			description: localize("Shows a link and QR code anyone can use to draw on this page with you, right away."),
+		},
+		MENU_DIVIDER,
+		{
+			label: localize("My &Pages..."),
+			speech_recognition: ["my pages", "show my pages", "all pages", "open a page", "open another page"],
+			enabled: () => is_signed_in(),
+			action: () => { show_my_site_dialog({ tab: "pages" }); },
+			description: localize("Your site's pages, as tiles: open one, make one, see its versions."),
+		},
+		{
+			label: localize("&New Page..."),
+			speech_recognition: ["new page", "make a new page", "add a page", "another page"],
+			enabled: () => is_signed_in(),
+			action: () => { show_new_page_prompt(); },
+			description: localize("Starts another page of your site."),
+		},
+		{
+			label: localize("My &Files..."),
+			speech_recognition: ["my files", "site files", "upload a file", "manage files"],
+			enabled: () => is_signed_in(),
+			action: () => { show_my_site_dialog({ tab: "files" }); },
+			description: localize("Every file on your site: upload, delete, view."),
+		},
+		{
+			label: localize("Page &History..."),
+			speech_recognition: ["page history", "show page history", "show everyone's changes"],
+			enabled: () => is_signed_in() && !!current_site_page(),
+			action: () => { show_page_history(); },
+			description: localize("Every change to this page by everyone editing it; go back to any version."),
+		},
+		MENU_DIVIDER,
+		{
+			label: localize("Site &Stats..."),
+			speech_recognition: ["site stats", "who's viewing", "visitors", "how many people are looking", "site view"],
+			action: () => { show_site_view(); },
+			description: localize("Who's viewing and editing your site right now, its address, and your sites."),
+		},
+		MENU_DIVIDER,
+		{
+			label: localize("Sign &In..."),
+			speech_recognition: ["sign in", "log in", "sign in with google"],
+			enabled: () => !is_signed_in(),
+			action: () => { show_sign_in_dialog(); },
+			description: localize("Signs in with Google, or with a site's name and password."),
+		},
+		{
+			label: localize("New Si&te..."),
+			speech_recognition: ["new site", "make a new site", "another site", "create a site"],
+			enabled: () => has_account(),
+			action: async () => {
+				const name = await show_new_site_dialog();
+				if (name) { await switch_site(name); }
+			},
+			description: localize("Another site for your account, at its own …/~name/ address."),
+		},
+		{
+			label: localize("Sign &Out"),
+			speech_recognition: ["sign out", "log out"],
+			enabled: () => is_signed_in() || has_account(),
+			action: () => { sign_out(); $G.triggerHandler("site-settings-changed"); },
+			description: localize("Signs out of your site on this computer. Your drawing stays."),
 		},
 	],
 	[localize("&Colors")]: [

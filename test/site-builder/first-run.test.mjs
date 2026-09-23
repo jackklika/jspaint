@@ -30,15 +30,27 @@ const windows = (page) => page.evaluate(() => [...document.querySelectorAll(".wi
 	assert.match(await page.$eval(".welcome-window", (el) => el.textContent), /This is Paint, and this page is yours/);
 	assert.match(await page.$eval(".welcome-window", (el) => el.textContent), /~name\//);
 	assert.match(await page.$eval(".welcome-window a", (el) => el.getAttribute("href")), /\/~root\/$/, "a way to the site's own homepage");
-	await page.waitForSelector(".welcome-window .google-sign-in:visible", { timeout: 10000 }); // (this editor has Google set up)
 	const next_of = (href) => decodeURIComponent(new URL(href).searchParams.get("next") || "");
-	assert.match(next_of(await page.$eval(".welcome-window .google-sign-in", (el) => el.getAttribute("href"))), /^\/\?signed_in=1&resume=save&page=index\.html#local:[a-z0-9]+$/, "Google comes back to this drawing and the save");
+	assert.match(await page.$eval(".welcome-window", (el) => el.textContent), /press\s*Publish/, "the Welcome points at Publish, not at signing in");
+	assert.equal(await page.evaluate(() => !!document.querySelector(".welcome-window .google-sign-in")), false, "signing in belongs to the moment of publishing");
 	assert.equal(await page.$eval(".site-globe-name", (el) => el.textContent), "sign in");
-	assert.equal(await page.$eval(".page-path-label", (el) => el.textContent), "index.html — not saved to a site yet");
+	assert.equal(await page.$eval(".page-path-label", (el) => el.textContent), "index.html — not published yet");
 	assert.equal(await page.evaluate(() => document.querySelector(".page-loading-panel")), null, "the veil is gone");
-	// Start drawing closes it; Ctrl+S asks to sign in (the page is still there behind the dialog)
+	// The Publish button, always in view at the far end of the page bar, in its first-time look
+	assert.equal(await page.$eval(".page-publish", (el) => el.textContent), "Publish");
+	assert.equal(await page.$eval(".page-publish", (el) => el.classList.contains("page-publish-first")), true);
+	assert.match(await page.$eval(".page-publish", (el) => el.getAttribute("title") || ""), /pick a name/);
+	// Start drawing closes it; the Publish button asks to sign in (the page is still there behind the dialog), and the
+	// funnel saw the click; Ctrl+S does the same
+	await page.evaluate(() => { window.__events = []; window.posthog = { capture: (name, props) => { window.__events.push([name, props]); } }; });
 	await page.evaluate(() => { [...document.querySelectorAll(".welcome-window button")].find((b) => b.textContent === "Start drawing").click(); });
 	await page.waitForSelector(".welcome-window", { state: "detached", timeout: 5000 });
+	await page.click(".page-publish");
+	await page.waitForSelector(".my-site-sign-in .google-sign-in", { timeout: 10000 });
+	assert.match(next_of(await page.$eval(".my-site-sign-in .google-sign-in", (el) => el.getAttribute("href"))), /^\/\?signed_in=1&resume=save&page=index\.html#local:[a-z0-9]+$/, "Google comes back to this drawing and the publish");
+	assert.deepEqual(await page.evaluate(() => window.__events.map((e) => [e[0], e[1].source])), [["publish_clicked", "button"]], "the funnel saw the click");
+	await page.evaluate(() => { [...document.querySelectorAll(".my-site-sign-in button")].find((b) => b.textContent === "Cancel")?.click(); });
+	await page.waitForSelector(".my-site-sign-in", { state: "detached", timeout: 5000 });
 	await select_tool(page, "Brush");
 	const c = await canvas_box(page);
 	await page.mouse.click(c.x + 500, c.y + 500);
@@ -46,13 +58,47 @@ const windows = (page) => page.evaluate(() => [...document.querySelectorAll(".wi
 	await page.waitForSelector(".my-site-sign-in", { timeout: 10000 });
 	assert.match(next_of(await page.$eval(".my-site-sign-in .google-sign-in", (el) => el.getAttribute("href"))), /^\/\?signed_in=1&resume=save&page=index\.html#local:[a-z0-9]+$/);
 	assert.deepEqual(await handle(page), { site_page: "index.html", fresh: true });
+	assert.deepEqual(await page.evaluate(() => window.__events.filter((e) => e[0] === "publish_clicked").map((e) => e[1].source)), ["button", "ctrl_s"]);
 	// "Show this next time" unchecked: it stays away
 	await page.evaluate(() => { [...document.querySelectorAll(".my-site-sign-in button")].find((b) => b.textContent === "Cancel")?.click(); });
+	// The nudge, once: after enough drawing on an unpublished page (the wait shortened for the test), a balloon under
+	// Publish; its button publishes (the funnel says so); it never shows again in this browser
+	await page.waitForSelector(".my-site-sign-in", { state: "detached", timeout: 5000 });
+	await page.evaluate(() => { localStorage.setItem("jspaint publish nudge delay ms", "0"); window.__events = []; });
+	await select_tool(page, "Pencil");
+	for (let i = 0; i < 7; i++) {
+		await page.mouse.move(c.x + 40 + i * 20, c.y + 300);
+		await page.mouse.down();
+		await page.mouse.move(c.x + 50 + i * 20, c.y + 320, { steps: 2 });
+		await page.mouse.up();
+	}
+	await page.waitForSelector(".publish-nudge", { timeout: 10000 });
+	assert.match(await page.$eval(".publish-nudge", (el) => el.textContent), /Like it\? Publish it/);
+	assert.equal(await page.evaluate(() => localStorage.getItem("jspaint publish nudge shown")), "1");
+	await page.click(".publish-nudge-go");
+	await page.waitForSelector(".my-site-sign-in", { timeout: 10000 });
+	assert.equal(await page.evaluate(() => !!document.querySelector(".publish-nudge")), false, "the balloon went with the click");
+	const seen = await page.evaluate(() => window.__events.map((e) => e[0]));
+	assert.ok(seen.includes("nudge_shown") && seen.includes("nudge_clicked") && seen.includes("publish_clicked"), seen.join(","));
+	assert.equal(await page.evaluate(() => window.__events.find((e) => e[0] === "publish_clicked")[1].source), "nudge");
+	await page.evaluate(() => { [...document.querySelectorAll(".my-site-sign-in button")].find((b) => b.textContent === "Cancel")?.click(); });
+	await page.waitForSelector(".my-site-sign-in", { state: "detached", timeout: 5000 });
 	await page.evaluate(() => { localStorage.setItem("jspaint welcome seen", "1"); });
 	await page.goto(`${editor}/`, { waitUntil: "domcontentloaded" });
 	await page.waitForFunction(() => system_file_handle && system_file_handle.fresh === true, null, { timeout: 20000 });
 	await page.waitForTimeout(1500);
 	assert.equal(await page.evaluate(() => !!document.querySelector(".welcome-window")), false, "not shown again");
+	await page.evaluate(() => { localStorage.setItem("jspaint publish nudge delay ms", "0"); });
+	await select_tool(page, "Pencil");
+	const rb = await canvas_box(page);
+	for (let i = 0; i < 7; i++) {
+		await page.mouse.move(rb.x + 40 + i * 20, rb.y + 340);
+		await page.mouse.down();
+		await page.mouse.move(rb.x + 50 + i * 20, rb.y + 360, { steps: 2 });
+		await page.mouse.up();
+	}
+	await page.waitForTimeout(400);
+	assert.equal(await page.evaluate(() => !!document.querySelector(".publish-nudge")), false, "the nudge is once per browser");
 	await close();
 }
 
